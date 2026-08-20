@@ -1,0 +1,52 @@
+name: validate
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Test config + dummy secrets
+        run: |
+          cp config.example.yaml config.yaml
+          sed -i 's#install_dir: ~/AI#install_dir: /tmp/sparklab-ci#' config.yaml
+          printf 'LITELLM_MASTER_KEY=sk-ci-dummy\nLITELLM_SALT_KEY=sk-ci-dummy\nLITELLM_DB_PASSWORD=cidb\nGRAFANA_ADMIN_PASSWORD=cigraf\nHF_TOKEN=\nCF_TUNNEL_TOKEN=\n' > .env
+
+      - name: Dry-run apply (renders every template; fails on undefined vars)
+        run: ./bin/spark-lab apply --dry-run
+
+      - name: Validate rendered YAML + docker compose
+        run: |
+          .venv/bin/python - <<'PY'
+          from lib import config, render
+          from pathlib import Path
+          import yaml, glob
+          cfg = config.load('config.yaml')
+          render.render(cfg, Path('deploy'))
+          files = glob.glob('deploy/**/*.yml', recursive=True) + glob.glob('deploy/**/*.yaml', recursive=True)
+          for f in files:
+              yaml.safe_load(open(f))
+              print('yaml ok:', f)
+          PY
+          (cd deploy/litellm && docker compose -f docker-compose.yml config -q && echo "compose ok")
+
+      - name: shellcheck
+        run: shellcheck bin/spark-lab scripts/capture.sh
+
+      - name: yamllint (example config + templates)
+        run: |
+          pip install yamllint
+          yamllint -d '{extends: default, rules: {line-length: {max: 120}, truthy: disable, comments: disable, comments-indentation: disable}}' config.example.yaml templates
+
+      - name: Secret leak audit (committed files only)
+        run: |
+          ! grep -rInE 'hf_oauth_|sk-[a-f0-9]{40,}|-----BEGIN [A-Z ]*PRIVATE KEY-----' . \
+            --exclude-dir=.venv --exclude-dir=deploy --exclude-dir=.git
