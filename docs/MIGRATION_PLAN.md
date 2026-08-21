@@ -122,4 +122,5 @@ Owner = domain role; work on the feature branch. "Depends On" = phases/interface
 
 ## Execution Log
 - **2026-08-21** — Plan approved. Feature branch `feature/python-cli` opened from `main`.
-- **Phase 1 (in progress):** delegating ADR + interface-spec authoring to subagents (INTEGRATION_ARCHITECT: module layout, runtime seam, discovery plugin interface, config schema v2 · CODE_REVIEWER: CLI framework decision).
+- **Phase 1 (complete):** 6 ADRs authored + committed to `feature/python-cli` (`01c9129`) — 0001 module layout, 0002 runtime seam, 0003 discovery plugin interface, 0004 config schema v2, 0005 CLI framework (decision: keep argparse), 0006 CLI best-practices. Contract gate passed: interface-level only, no implementation code, legacy shell path intact. (Note: subagents ran on the local `qwen3-8-27b` model — slow; one ADR was authored by the orchestrator after its subagent stalled.)
+- **Phase 2 (next):** test harness + shell↔Python regression parity + CI coverage, built against the ADR 0002 runtime seam.
