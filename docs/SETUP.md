@@ -21,8 +21,14 @@ Fresh install of spark-lab on a single DGX Spark, end to end. Assumes Ubuntu
 ```bash
 git clone <this-repo> spark-lab
 cd spark-lab
+git config core.hooksPath .githooks   # install the pre-commit secret gate (once)
 ./bin/spark-lab init
 ```
+
+> **No secrets, ever.** The pre-commit hook (`.githooks/pre-commit`) runs
+> `scripts/secret-scan.sh` on every commit and blocks any that would introduce
+> a secret. See [AGENTS.md](../AGENTS.md) for the full rule and the
+> `git config core.hooksPath .githooks` step for fresh clones.
 
 `init` creates `config.yaml` (from `config.example.yaml`) and `.env`
 (generating the LiteLLM master/salt keys, DB password, and Grafana password).

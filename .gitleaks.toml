@@ -1,0 +1,17 @@
+# gitleaks config for spark-lab (used only if gitleaks is installed;
+# scripts/secret-scan.sh falls back to built-in grep patterns otherwise).
+#
+# The allowlist below keeps gitleaks from flagging the gitignored secret sinks
+# where real values legitimately live, plus the generated deploy/ output.
+
+title = "spark-lab secret scan"
+
+[allowlist]
+  description = "gitignored secret sinks and generated output"
+  paths = [
+    '(^|/)\.env$',
+    '(^|/)config\.ya?ml$',
+    '(^|/)deploy/',
+    '(^|/)\.sparklab-state/',
+    '(^|/)\.venv/',
+  ]

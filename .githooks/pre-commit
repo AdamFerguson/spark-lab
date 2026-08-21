@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+#
+# spark-lab pre-commit gate: no secrets, ever.
+#
+# Runs the full secret scan over tracked + staged files. If anything looks like
+# a secret, the commit is BLOCKED. This is the mechanical guarantee that no
+# secret reaches the repo, independent of whether a human or an agent is
+# committing.
+#
+# Install (once per clone):  git config core.hooksPath .githooks
+#
+# Bypass ONLY after you have personally verified the repo is clean:
+#   git commit --no-verify        # and note why in the commit message or PR
+
+set -uo pipefail
+repo="$(git rev-parse --show-toplevel)"
+
+if ! bash "$repo/scripts/secret-scan.sh"; then
+  echo "" >&2
+  echo "COMMIT BLOCKED — spark-lab secret scan found potential secrets (above)." >&2
+  echo "  Fix them (move values to the gitignored .env / config.yaml) and re-stage." >&2
+  echo "  Or, after personally verifying cleanliness: git commit --no-verify" >&2
+  exit 1
+fi

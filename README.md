@@ -31,6 +31,17 @@ the new state.
 | **Tailscale** | Private-network access to the gateway from any of your devices. |
 | **Cloudflare Tunnel** | *(optional)* public access for selected friends/colleagues. |
 
+## Getting started
+
+```bash
+git clone <your-fork> spark-lab && cd spark-lab
+git config core.hooksPath .githooks      # install the pre-commit secret gate (once)
+./bin/spark-lab init                       # copy config.example.yaml -> config.yaml, .env.example -> .env
+cp config.example.yaml config.yaml         # (init already did this; edit config.yaml to taste)
+./bin/spark-lab apply --dry-run            # see the plan; touches nothing
+./bin/spark-lab apply --apply              # materialize: converge the node(s)
+```
+
 ## Layout
 
 ```
@@ -57,6 +68,17 @@ scripts/capture.sh    # capture read-only terminal output (for docs/blog)
 **not** restart the running model unless you pass `--apply` (or `--yes`).
 `--dry-run` prints the plan and touches nothing. Secrets live only in the
 gitignored `.env` and on the node — the repo contains no credentials.
+
+### Secret gate (no secrets, ever)
+
+A `pre-commit` hook (`.githooks/pre-commit`) runs `scripts/secret-scan.sh` on
+every commit and **blocks** it if a secret-looking value would be committed. It
+scans only tracked/staged files, so the gitignored `.env`/`config.yaml` are never
+flagged. Run it manually anytime with `scripts/secret-scan.sh` (install
+`gitleaks` for broader coverage; the built-in grep scan is the fallback).
+
+The full rule — including that `--no-verify` is off-limits — is in
+[AGENTS.md](AGENTS.md), which every agent working in this repo loads.
 
 ## License
 
