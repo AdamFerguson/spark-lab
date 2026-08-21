@@ -69,8 +69,8 @@ def cmd_init(args) -> int:
 
 def cmd_apply(args) -> int:
     cfg = load(args.config)
-    dry = args.dry_run
-    allow_restart = args.apply or args.yes
+    dry = getattr(args, "dry_run", False)
+    allow_restart = bool(getattr(args, "apply", False) or getattr(args, "yes", False))
 
     print(f"== spark-lab apply {'[dry-run]' if dry else ''} ==")
     print(f"   config     : {cfg.config_path}")
@@ -83,7 +83,7 @@ def cmd_apply(args) -> int:
     out_dir = Path(tempfile.mkdtemp(prefix="sparklab-dry-")) if dry else cfg.deploy_dir
     rendered = render.render(cfg, out_dir)
     state = state_mod.State(cfg.state_dir)
-    plan = converge.build_plan(cfg, rendered, state.files, allow_restart)
+    plan = converge.build_plan(cfg, rendered, state.files, state.model, allow_restart)
 
     print("\nFile changes vs last apply:")
     if plan.file_changes:
@@ -108,11 +108,16 @@ def cmd_apply(args) -> int:
         print(f"\nWrote {len(written)} file(s) to {cfg.install_dir}")
     rc = converge.execute(plan, dry_run=False)
     if rc == 0:
-        new_files = dict(state.files)
-        for rel, data in rendered.items():
-            new_files[rel] = state_mod.sha256_bytes(data)
-        state.set_files(new_files)
+        new_files = converge.compute_files_after_apply(rendered)
+        has_model = plan.current_hash is not None
+        converged_after = (not plan.model_restart_pending) if has_model else allow_restart
+        new_model = converge.compute_model_after_apply(
+            state.model, cfg.recipe_name, plan.current_hash, converged_after)
+        state.set_state(new_files, new_model)
         print("\nConverged. State updated.")
+        if plan.model_restart_pending:
+            print("NOTE: a model change is still pending (not restarted). "
+                  "Re-run with `spark-lab apply --apply` to restart the model.")
     return rc
 
 
@@ -157,14 +162,19 @@ def cmd_teardown(args) -> int:
 
 def cmd_upgrade(args) -> int:
     cfg = load(args.config)
+    repo_root = Path(__file__).resolve().parent.parent
+    req = repo_root / "requirements.txt"
+    if req.is_file():
+        print("Updating spark-lab engine dependencies...")
+        _run([sys.executable, "-m", "pip", "install", "-U", "-r", str(req)], ok=True)
     sparkrun = converge.find_sparkrun()
     compose_file = str(Path(cfg.install_dir) / "litellm" / "docker-compose.yml")
     print("Updating sparkrun + recipe registries...")
     _run([sparkrun, "update"], ok=True)
     print("Pulling latest stack images...")
     _run(["docker", "compose", "-f", compose_file, "pull"], ok=True)
-    print("Re-applying...")
-    args.apply_flag = True
+    print("Re-applying (model restart allowed)...")
+    args.apply = True
     return cmd_apply(args)
 
 

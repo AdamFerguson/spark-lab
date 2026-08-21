@@ -69,6 +69,26 @@ scripts/capture.sh    # capture read-only terminal output (for docs/blog)
 `--dry-run` prints the plan and touches nothing. Secrets live only in the
 gitignored `.env` and on the node — the repo contains no credentials.
 
+### Converges to the declared state
+
+`apply` is declarative: it renders your config, diffs against the last applied
+state, and only acts on the difference — so **changing `config.yaml` (or pulling
+newer templates) and re-running `apply` converges the node to the new state**,
+including the running model:
+
+- **Add / change** a recipe or service → detected and applied.
+- **Switch or drop** a model → the old workload is stopped (gated) and the new
+  one started; a removed service is reconciled via `docker compose up --remove-orphans`.
+- **Files-on-disk vs model-running are tracked separately.** A recipe change that
+  hasn't been restarted stays *pending* and keeps prompting you to run
+  `apply --apply` — it does **not** silently record the new recipe as applied.
+- **No-op** re-runs are idempotent (no model restart).
+- `spark-lab upgrade` refreshes the engine deps, `sparkrun`, and the stack images,
+  then re-applies with the model restart allowed.
+
+The converge decisions are pinned by `tests/test_converge.py` (add / remove /
+switch / no-op / pending), which runs in CI.
+
 ### Secret gate (no secrets, ever)
 
 A `pre-commit` hook (`.githooks/pre-commit`) runs `scripts/secret-scan.sh` on

@@ -1,8 +1,17 @@
-"""Persistent, per-file hash state so `apply` converges instead of re-doing work.
+"""Persistent state so `apply` converges instead of re-doing work.
 
-State lives in ``.sparklab-state/state.json`` (gitignored). It maps each target
-file (relative to ``install_dir``) to the sha256 of the content last applied.
-Re-running ``apply`` only re-acts on files whose hash changed.
+State lives in ``.sparklab-state/state.json`` (gitignored):
+
+    {
+      "files": { "<rel>": "<sha256>", ... },
+      "model": { "name": "<recipe>", "hash": "<sha256 of that recipe>" }   # optional
+    }
+
+``files`` tracks which rendered files have been written to the install dir.
+``model`` tracks the recipe the model is *confirmed running* with. These are
+deliberately separate: files-on-disk and model-running are different things, and
+tracking them separately is what lets a "recipe changed but not restarted" state
+stay visibly dirty instead of silently drifting.
 """
 
 from __future__ import annotations
@@ -37,5 +46,13 @@ class State:
     def files(self) -> dict:
         return self.load().get("files", {})
 
-    def set_files(self, files: dict) -> None:
-        self.save({"files": files})
+    @property
+    def model(self):
+        """The recipe the model is confirmed running with, or None."""
+        return self.load().get("model")
+
+    def set_state(self, files: dict, model) -> None:
+        data = {"files": files}
+        if model:
+            data["model"] = model
+        self.save(data)

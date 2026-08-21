@@ -41,6 +41,9 @@ jobs:
       - name: shellcheck
         run: shellcheck bin/spark-lab scripts/capture.sh scripts/secret-scan.sh .githooks/pre-commit
 
+      - name: Unit tests (converge logic: add/remove/switch/no-op/pending)
+        run: .venv/bin/python tests/test_converge.py
+
       - name: yamllint (example config + templates)
         run: |
           pip install yamllint
