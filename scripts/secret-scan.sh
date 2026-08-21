@@ -19,7 +19,7 @@ if ! git rev-parse --show-toplevel >/dev/null 2>&1; then
   echo "secret-scan: not inside a git repository" >&2
   exit 2
 fi
-cd "$(git rev-parse --show-toplevel)"
+cd "$(git rev-parse --show-toplevel)" || exit 2
 
 # Files that are tracked or staged. Union, de-duped, with gitignored sinks removed.
 files="$( { git ls-files; git diff --cached --name-only --diff-filter=ACMR; } \
@@ -53,7 +53,7 @@ while IFS= read -r f; do
   [ -f "$f" ] || continue
   if matches="$(grep -aI -nE "$BIGRE" -- "$f" 2>/dev/null)" && [ -n "$matches" ]; then
     echo "secret-scan: potential secret in $f:"
-    echo "$matches" | sed 's/^/    /'
+    sed 's/^/    /' <<< "$matches"
     found=1
   fi
 done <<< "$files"
