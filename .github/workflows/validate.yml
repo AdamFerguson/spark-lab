@@ -39,14 +39,20 @@ jobs:
           (cd deploy/litellm && docker compose -f docker-compose.yml config -q && echo "compose ok")
 
       - name: shellcheck
-        run: shellcheck bin/spark-lab scripts/capture.sh
+        run: shellcheck bin/spark-lab scripts/capture.sh scripts/secret-scan.sh .githooks/pre-commit
 
       - name: yamllint (example config + templates)
         run: |
           pip install yamllint
           yamllint -d '{extends: default, rules: {line-length: {max: 120}, truthy: disable, comments: disable, comments-indentation: disable}}' config.example.yaml templates
 
-      - name: Secret leak audit (committed files only)
+      - name: Install gitleaks (pinned)
         run: |
-          ! grep -rInE 'hf_oauth_|sk-[a-f0-9]{40,}|-----BEGIN [A-Z ]*PRIVATE KEY-----' . \
-            --exclude-dir=.venv --exclude-dir=deploy --exclude-dir=.git
+          set -euo pipefail
+          ver=8.30.1
+          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${ver}/gitleaks_${ver}_linux_x64.tar.gz" -o /tmp/gitleaks.tgz
+          tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Secret scan (no secrets, ever - same gate as the pre-commit hook)
+        run: bash scripts/secret-scan.sh
