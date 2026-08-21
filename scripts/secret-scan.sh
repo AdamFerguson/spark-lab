@@ -53,7 +53,7 @@ while IFS= read -r f; do
   [ -f "$f" ] || continue
   if matches="$(grep -aI -nE "$BIGRE" -- "$f" 2>/dev/null)" && [ -n "$matches" ]; then
     echo "secret-scan: potential secret in $f:"
-    sed 's/^/    /' <<< "$matches"
+    while IFS= read -r _m; do printf '    %s\n' "$_m"; done <<< "$matches"
     found=1
   fi
 done <<< "$files"
