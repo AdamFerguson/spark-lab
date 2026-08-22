@@ -16,6 +16,11 @@ __pycache__/
 .coverage
 coverage.xml
 
+# Build / packaging artifacts (pip install -e ., wheel builds)
+build/
+dist/
+*.egg-info/
+
 # OS / editor noise
 .DS_Store
 *.swp

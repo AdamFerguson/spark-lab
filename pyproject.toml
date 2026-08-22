@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spark-lab"
+version = "0.1.0"
+description = "One file + one command to self-host an OpenAI-compatible LLM on an NVIDIA DGX Spark"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "spark-lab contributors" }]
+keywords = ["llm", "dgx-spark", "nvidia", "sglang", "vllm", "sparkrun", "litellm"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+]
+# Runtime deps (mirror requirements.txt, the single source of truth used by
+# bin/spark-lab and `spark-lab upgrade`).
+dependencies = [
+    "PyYAML>=6.0,<7",
+    "Jinja2>=3.1,<4",
+]
+
+[project.scripts]
+spark-lab = "sparklab.cli:main"
+
+[project.optional-dependencies]
+dev = ["coverage>=7.0"]
+
+[tool.setuptools]
+packages = ["sparklab", "sparklab.core", "sparklab.commands"]
+
+[tool.setuptools.package-data]
+# Ship the Jinja templates + verbatim JSON inside the package so the CLI works
+# both from a git checkout and when installed via pip/pipx (ADR 0001).
+sparklab = ["templates/**/*"]

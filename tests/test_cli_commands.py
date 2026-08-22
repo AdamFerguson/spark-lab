@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from sparklab import cli  # noqa: E402
+from sparklab.commands import init, status, teardown, upgrade  # noqa: E402
 from tests.helpers import REFERENCE_ENV, SECRET_DUMMY, FakeRuntime, config_text  # noqa: E402
 
 _AVAIL = {"sparkrun", "docker", "systemctl", "tailscale", "cloudflared", sys.executable}
@@ -46,25 +46,25 @@ class TestCliCommands(unittest.TestCase):
 
     def test_status_issued(self):
         rt = FakeRuntime(available=_AVAIL)
-        self.assertEqual(cli.cmd_status(_args(self.cp, rt)), 0)
+        self.assertEqual(status.run(_args(self.cp, rt)), 0)
         self.assertTrue(any(a[0] == "sparkrun" and a[1] == "status" for a in rt.commands))
         self.assertTrue(any(a[0] == "docker" for a in rt.commands))
         self.assertTrue(any(a[0] == "tailscale" for a in rt.commands))
 
     def test_teardown_without_yes_refuses(self):
         rt = FakeRuntime(available=_AVAIL)
-        self.assertEqual(cli.cmd_teardown(_args(self.cp, rt, yes=False)), 1)
+        self.assertEqual(teardown.run(_args(self.cp, rt, yes=False)), 1)
         self.assertEqual(rt.commands, [])
 
     def test_teardown_with_yes_stops_and_downs(self):
         rt = FakeRuntime(available=_AVAIL)
-        self.assertEqual(cli.cmd_teardown(_args(self.cp, rt, yes=True, purge=True)), 0)
+        self.assertEqual(teardown.run(_args(self.cp, rt, yes=True, purge=True)), 0)
         self.assertTrue(any(a == ["sparkrun", "stop", "qwen"] for a in rt.commands))
         self.assertTrue(any(a[0] == "docker" and "down" in a and "-v" in a for a in rt.commands))
 
     def test_upgrade_runs_pipeline_then_reapplies(self):
         rt = FakeRuntime(available=_AVAIL)
-        self.assertEqual(cli.cmd_upgrade(_args(self.cp, rt)), 0)
+        self.assertEqual(upgrade.run(_args(self.cp, rt)), 0)
         # upgrade: refresh deps -> sparkrun update -> pull images -> re-apply
         self.assertTrue(any("pip" in " ".join(a) for a in rt.commands))
         self.assertTrue(any(a == ["sparkrun", "update"] for a in rt.commands))
@@ -78,7 +78,7 @@ class TestCliCommands(unittest.TestCase):
         (empty / ".env.example").write_text("LITELLM_MASTER_KEY=\nLITELLM_SALT_KEY=\nHF_TOKEN=\n")
         a = types.SimpleNamespace(config=str(empty / "config.yaml"), yes=True,
                                   runtime=None, verbose=False, json=False)
-        self.assertEqual(cli.cmd_init(a), 0)
+        self.assertEqual(init.run(a), 0)
         self.assertTrue((empty / "config.yaml").is_file())
         self.assertRegex((empty / ".env").read_text(), r"LITELLM_MASTER_KEY=sk-[0-9a-f]{40}")
 

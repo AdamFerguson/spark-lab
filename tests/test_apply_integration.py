@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from sparklab import cli  # noqa: E402
+from sparklab.commands import apply  # noqa: E402
 from tests.helpers import REFERENCE_ENV, SECRET_DUMMY, FakeRuntime, config_text  # noqa: E402
 
 
@@ -51,7 +51,7 @@ class TestApplyIntegration(unittest.TestCase):
 
     def test_fresh_apply_writes_files_state_and_runs_commands(self):
         rt = FakeRuntime()
-        self.assertEqual(cli.cmd_apply(_args(self.cfg_path, rt)), 0)
+        self.assertEqual(apply.run(_args(self.cfg_path, rt)), 0)
         # files written into install_dir
         self.assertTrue((self.install / "sparkrun" / "recipes" / "qwen.yaml").is_file())
         self.assertTrue((self.install / "litellm" / "docker-compose.yml").is_file())
@@ -70,10 +70,10 @@ class TestApplyIntegration(unittest.TestCase):
         )
 
     def test_reapply_is_idempotent_no_restart(self):
-        cli.cmd_apply(_args(self.cfg_path, FakeRuntime()))
+        apply.run(_args(self.cfg_path, FakeRuntime()))
         before = self._state()
         rt2 = FakeRuntime()
-        self.assertEqual(cli.cmd_apply(_args(self.cfg_path, rt2)), 0)
+        self.assertEqual(apply.run(_args(self.cfg_path, rt2)), 0)
         # converged: no stop, no restart; only the idempotent "ensure running"
         # is issued. (The engine always ensures the model is up, by design.)
         self.assertEqual(rt2.commands, [["sparkrun", "run", "qwen", "--ensure"]])
@@ -82,26 +82,26 @@ class TestApplyIntegration(unittest.TestCase):
         self.assertEqual(self._state(), before)
 
     def test_recipe_change_stays_pending_without_apply(self):
-        cli.cmd_apply(_args(self.cfg_path, FakeRuntime()))
+        apply.run(_args(self.cfg_path, FakeRuntime()))
         before = self._state()["model"]["hash"]
         # mutate the recipe in config
         self.cfg_path.write_text(
             self.cfg_path.read_text().replace("mem_fraction_static: 0.85",
                                               "mem_fraction_static: 0.90"))
         rt = FakeRuntime()
-        self.assertEqual(cli.cmd_apply(_args(self.cfg_path, rt, apply=False)), 0)
+        self.assertEqual(apply.run(_args(self.cfg_path, rt, apply=False)), 0)
         # no stop issued, and state still records the OLD recipe hash (pending)
         self.assertFalse(any("stop" in argv for argv in rt.commands))
         self.assertEqual(self._state()["model"]["hash"], before)
 
     def test_recipe_change_converges_with_apply(self):
-        cli.cmd_apply(_args(self.cfg_path, FakeRuntime()))
+        apply.run(_args(self.cfg_path, FakeRuntime()))
         before = self._state()["model"]["hash"]
         self.cfg_path.write_text(
             self.cfg_path.read_text().replace("mem_fraction_static: 0.85",
                                               "mem_fraction_static: 0.90"))
         rt = FakeRuntime()
-        self.assertEqual(cli.cmd_apply(_args(self.cfg_path, rt, apply=True)), 0)
+        self.assertEqual(apply.run(_args(self.cfg_path, rt, apply=True)), 0)
         # the running recipe was stopped, then started again
         self.assertTrue(any(argv == ["sparkrun", "stop", "qwen"] for argv in rt.commands))
         self.assertTrue(any(argv == ["sparkrun", "run", "qwen", "--ensure"] for argv in rt.commands))
@@ -110,7 +110,7 @@ class TestApplyIntegration(unittest.TestCase):
 
     def test_dry_run_writes_nothing_and_runs_nothing(self):
         rt = FakeRuntime()
-        self.assertEqual(cli.cmd_apply(_args(self.cfg_path, rt, dry=True)), 0)
+        self.assertEqual(apply.run(_args(self.cfg_path, rt, dry=True)), 0)
         self.assertEqual(rt.commands, [])
         self.assertFalse((self.install / "sparkrun" / "recipes" / "qwen.yaml").exists())
         self.assertFalse(self.state_file.exists())
