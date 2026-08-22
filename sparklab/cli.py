@@ -10,8 +10,8 @@ from __future__ import annotations
 import argparse
 
 from .core import runtime as runtime_mod
-from .commands import (apply, images, init, logs, migrate, recipes, status, system, teardown,
-                       upgrade, validate)
+from .commands import (adopt, apply, images, init, logs, migrate, recipes, status, system,
+                       teardown, upgrade, validate)
 
 
 def main(argv=None) -> int:
@@ -91,6 +91,11 @@ def main(argv=None) -> int:
     p_migrate.add_argument("--dry-run", action="store_true",
                            help="print the v2 form without writing")
     p_migrate.set_defaults(func=migrate.run)
+
+    p_adopt = sub.add_parser("adopt", parents=[common],
+                             help="take over an existing running install (read-only; writes only state)")
+    p_adopt.add_argument("--dry-run", action="store_true", help="report; write no state")
+    p_adopt.set_defaults(func=adopt.run)
 
     p_recipes = sub.add_parser("recipes", help="discover + convert model recipes (ADR 0003)")
     recipes_sub = p_recipes.add_subparsers(dest="recipes_cmd", required=True)

@@ -91,6 +91,26 @@ Click/Typer).
 
 ---
 
+## Post-staging: migrate the existing Spark + cluster the two
+
+Prepared plans + the node-independent enabler, to execute once the new Spark
+passes E2E:
+
+- **`spark-lab adopt`** — take over an existing running install. Read-only against
+  the live install (writes only `.sparklab-state/state.json`, runs no `sparkrun`),
+  records on-disk reality + the running model, and flags drift. A routine
+  `apply` after adopt **never restarts the model** (fail-safe), so migrating the
+  live Spark is zero-downtime by default.
+- **`docs/EXISTING_SPARK_MIGRATION.md`** — capture → reproduce config →
+  `apply --dry-run` (aim byte-identical) → `adopt` → decide (keep the live recipe
+  vs one-time converge). Rollback = the capture; the legacy path stays operational.
+- **`docs/CLUSTERING.md`** — run the two Sparks as one cluster. Builds on the
+  multi-node plumbing already in the converge engine (`sparkrun setup ssh` /
+  `cluster create` / `run --cluster`); `install.hosts` >1 + `model.min_nodes: 2`
+  + `cluster_name` drive it. The open questions (exact sparkrun multi-node CLI,
+  controller selection, image distribution, node placement, inter-node transport)
+  are flagged for confirmation on the real hardware.
+
 ## Also queued (deferred from Phases 3–4, not dropped)
 
 - **`capture` port** — `scripts/capture.sh` still works; port it to

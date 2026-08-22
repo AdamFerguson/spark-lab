@@ -109,6 +109,7 @@ See `config.example.v2.yaml` for a full document.
 |---|---|
 | `init` | create `config.yaml` + `.env`, generate placeholder keys |
 | `apply [--dry-run] [--diff] [--apply]` | render + converge; `--diff` shows what would change on disk |
+| `adopt [--dry-run]` | take over an existing running install: record on-disk state + the running model; read-only vs the install, no restart |
 | `validate` (=`check config`) | read-only pre-flight: schema + render + required binaries |
 | `check images [--probe]` | resolve + report every image the deploy will pull; `--probe` inspects manifests |
 | `doctor` (=`check system`) | detect required/optional tools; `--install` installs the missing ones |
