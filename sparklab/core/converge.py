@@ -9,7 +9,7 @@ rendered set is planned as a "removed" change, and model workloads that are no
 longer current are stopped (gated). Switching or dropping a recipe therefore
 converges instead of leaving orphans running.
 
-Files-on-disk and model-running are tracked separately (see lib.state). A recipe
+Files-on-disk and model-running are tracked separately (see sparklab.core.state). A recipe
 change that has not been restarted therefore stays *pending* and keeps prompting
 until `apply --apply` actually restarts the model — it does not silently drift.
 """

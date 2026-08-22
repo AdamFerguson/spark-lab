@@ -1,7 +1,7 @@
 """The command<->runtime boundary (ADR 0002).
 
 This is the ONLY module that talks to the node (subprocess). Commands obtain a
-Runtime (built once in the CLI layer, see ``lib.cli.main``) and route their
+Runtime (built once in the CLI layer, see ``sparklab.cli.main``) and route their
 side-effecting operations through it instead of calling ``subprocess`` directly.
 
 Why this exists:
@@ -35,7 +35,7 @@ class Runtime:
         """Run ``argv`` (streaming output) and return the ``CompletedProcess``.
 
         Callers that want read-only "skip if the binary is missing" behavior do
-        that check themselves (see ``lib.cli._run``); this is just the seam.
+        that check themselves (see ``sparklab.cli._run``); this is just the seam.
         """
         return subprocess.run(list(argv))
 

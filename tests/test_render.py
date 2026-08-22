@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from lib import config as config_mod, render  # noqa: E402
+from sparklab.core import config as config_mod, render  # noqa: E402
 from tests.helpers import REFERENCE_CONFIG, REFERENCE_ENV, SECRET_DUMMY  # noqa: E402
 
 
@@ -60,7 +60,7 @@ class TestRender(unittest.TestCase):
 
     def test_verbatim_json_copied_byte_identically(self):
         _cfg, rendered = _render()
-        tmpl = ROOT / "templates" / "grafana" / "dashboards" / "sglang-dashboard.json"
+        tmpl = ROOT / "sparklab" / "templates" / "grafana" / "dashboards" / "sglang-dashboard.json"
         self.assertEqual(
             rendered["litellm/grafana/dashboards/sglang-dashboard.json"],
             tmpl.read_bytes(),

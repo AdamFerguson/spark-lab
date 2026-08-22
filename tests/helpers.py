@@ -120,7 +120,7 @@ def config_text(install_dir: str, tailscale_enabled: bool = False) -> str:
 class FakeRuntime:
     """Records the commands that *would* run; returns canned exit codes.
 
-    Mirrors ``lib.runtime.Runtime`` (``available`` + ``run``) so it can stand in
+    Mirrors ``sparklab.core.runtime.Runtime`` (``available`` + ``run``) so it can stand in
     for the real runtime in any command handler.
     """
 

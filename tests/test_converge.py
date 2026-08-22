@@ -17,7 +17,7 @@ from pathlib import Path
 # make `lib` importable when run as a plain script
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lib import converge, state  # noqa: E402
+from sparklab.core import converge, state  # noqa: E402
 
 # Never touch the real sparkrun during tests.
 converge.find_sparkrun = lambda: "sparkrun"

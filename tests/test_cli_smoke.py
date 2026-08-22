@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from lib import cli  # noqa: E402
+from sparklab import cli  # noqa: E402
 from tests.helpers import REFERENCE_CONFIG, REFERENCE_ENV  # noqa: E402
 
 

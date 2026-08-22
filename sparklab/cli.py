@@ -7,9 +7,9 @@ import secrets
 import sys
 from pathlib import Path
 
-from . import config as config_mod
-from . import converge, render, runtime as runtime_mod, state as state_mod
-from .config import load
+from .core import config as config_mod
+from .core import converge, render, runtime as runtime_mod, state as state_mod
+from .core.config import load
 
 
 def _generate_env(config_path: Path, yes: bool) -> None:

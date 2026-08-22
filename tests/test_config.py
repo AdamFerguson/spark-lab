@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from lib.config import load, load_dotenv  # noqa: E402
+from sparklab.core.config import load, load_dotenv  # noqa: E402
 
 
 def _cfg(text):

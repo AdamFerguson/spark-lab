@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from lib import config as config_mod, converge, render  # noqa: E402
+from sparklab.core import config as config_mod, converge, render  # noqa: E402
 from tests.helpers import (  # noqa: E402
     GOLDEN_DIR,
     REFERENCE_CONFIG,
