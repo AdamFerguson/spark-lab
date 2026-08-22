@@ -1,10 +1,28 @@
 """`spark-lab apply` — render + converge to config (idempotent)."""
 from __future__ import annotations
 
+import difflib
 import tempfile
 from pathlib import Path
 
 from ..core import config, converge, render, state
+
+
+def _print_diffs(cfg, rendered, file_changes, limit=200):
+    """Show a unified diff vs the current on-disk install for each change."""
+    base = Path(cfg.install_dir)
+    print("\n--- diff vs current install (a/ = on disk, b/ = would write) ---")
+    for rel, kind in file_changes:
+        new = rendered.get(rel, b"").decode("utf-8", "replace")
+        old_path = base / rel
+        old = old_path.read_text("utf-8", "replace") if old_path.is_file() else ""
+        lines = list(difflib.unified_diff(old.splitlines(), new.splitlines(),
+                                          fromfile=f"a/{rel}", tofile=f"b/{rel}",
+                                          lineterm=""))
+        if not lines:
+            continue
+        print(f"\n### {kind.upper()}: {rel}")
+        print("\n".join(lines[:limit]))
 
 
 def run(args) -> int:
@@ -40,6 +58,8 @@ def run(args) -> int:
         print(f"   - {desc}")
 
     if dry:
+        if getattr(args, "diff", False):
+            _print_diffs(cfg, rendered, plan.file_changes)
         print("\n[dry-run] No files written, no commands executed.")
         return 0
 

@@ -7,6 +7,8 @@ sparkrun. This is the "mocked runtime seam" integration coverage (ADR 0002).
 Tailscale is disabled in these configs so a converged re-apply is a true no-op.
 """
 
+import contextlib
+import io
 import json
 import os
 import sys
@@ -24,9 +26,9 @@ from sparklab.commands import apply  # noqa: E402
 from tests.helpers import REFERENCE_ENV, SECRET_DUMMY, FakeRuntime, config_text  # noqa: E402
 
 
-def _args(config_path, runtime, dry=False, apply=False):
+def _args(config_path, runtime, dry=False, apply=False, diff=False):
     return types.SimpleNamespace(
-        config=str(config_path), dry_run=dry, apply=apply, yes=apply,
+        config=str(config_path), dry_run=dry, apply=apply, yes=apply, diff=diff,
         verbose=False, json=False, runtime=runtime,
     )
 
@@ -114,6 +116,21 @@ class TestApplyIntegration(unittest.TestCase):
         self.assertEqual(rt.commands, [])
         self.assertFalse((self.install / "sparkrun" / "recipes" / "qwen.yaml").exists())
         self.assertFalse(self.state_file.exists())
+
+
+    def test_dry_run_diff_shows_changes(self):
+        apply.run(_args(self.cfg_path, FakeRuntime()))  # seed the on-disk install
+        new_cfg = self.d / "config2.yaml"
+        new_cfg.write_text(self.cfg_path.read_text().replace("qwen", "llama"))
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = apply.run(_args(new_cfg, FakeRuntime(), dry=True, diff=True))
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        self.assertIn("diff vs current install", out)
+        self.assertIn("sparkrun/recipes/", out)
+        # dry-run still wrote nothing new to the install tree
+        self.assertFalse((self.install / "sparkrun" / "recipes" / "llama.yaml").exists())
 
 
 if __name__ == "__main__":

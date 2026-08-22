@@ -36,6 +36,8 @@ def main(argv=None) -> int:
     p_apply.add_argument("--apply", dest="apply", action="store_true",
                          help="allow destructive actions (restart the model on recipe change)")
     p_apply.add_argument("--yes", action="store_true", help="alias for --apply")
+    p_apply.add_argument("--diff", action="store_true",
+                         help="with --dry-run, show a diff of each changed file")
     p_apply.set_defaults(func=apply.run)
 
     p_status = sub.add_parser("status", parents=[common],
