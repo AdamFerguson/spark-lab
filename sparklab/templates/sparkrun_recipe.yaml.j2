@@ -3,7 +3,7 @@
 model: {{ hf_model }}
 runtime: sglang
 min_nodes: {{ min_nodes }}
-container: {{ model.image }}
+container: {{ model_image }}
 executor: docker
 executor_config:
   ipc: host

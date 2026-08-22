@@ -4,6 +4,8 @@ Covers the operational command paths (the thin wrappers around the runtime) so
 the seam is exercised end-to-end for every subcommand, not just ``apply``.
 """
 
+import contextlib
+import io
 import os
 import re
 import sys
@@ -13,11 +15,14 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import yaml
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from sparklab.commands import init, logs, status, teardown, upgrade, validate  # noqa: E402
+from sparklab.commands import (  # noqa: E402
+    init, images, logs, migrate, status, teardown, upgrade, validate)
 from tests.helpers import REFERENCE_ENV, SECRET_DUMMY, FakeRuntime, config_text  # noqa: E402
 
 _AVAIL = {"sparkrun", "docker", "systemctl", "tailscale", "cloudflared", sys.executable}
@@ -106,6 +111,31 @@ class TestCliCommands(unittest.TestCase):
         self.assertEqual(logs.run(a), 0)
         self.assertIn(["docker", "compose", "-f", str(compose), "logs",
                        "--tail", "50", "litellm", "--follow"], rt.commands)
+
+    def test_check_images_reports_resolved(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = images.run(_args(self.cp, FakeRuntime(available=_AVAIL), probe=False))
+        self.assertEqual(rc, 0)
+        self.assertIn("check images", buf.getvalue())
+        self.assertIn("litellm", buf.getvalue())
+
+    def test_check_images_missing_model_refuses(self):
+        bad = self.d / "noimg.yaml"
+        bad.write_text("install_dir: %s\nversion: 2\nmodels:\n  m:\n    active: true\n"
+                       "    hf_model: x\n" % self.install)
+        self.assertEqual(images.run(_args(bad, FakeRuntime(available=_AVAIL), probe=False)), 1)
+
+    def test_migrate_v1_to_v2_is_idempotent(self):
+        v1 = self.d / "v1.yaml"
+        v1.write_text("model:\n  recipe_name: q\n  hf_model: x\n  image: mm:1\n")
+        a = lambda: types.SimpleNamespace(config=str(v1), dry_run=False, runtime=None,
+                                          verbose=False, json=False)
+        self.assertEqual(migrate.run(a()), 0)
+        data = yaml.safe_load(v1.read_text())
+        self.assertEqual(data["version"], 2)
+        self.assertIn("q", data["models"])
+        self.assertEqual(migrate.run(a()), 0)  # already v2 -> no-op
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 
 from .core import runtime as runtime_mod
-from .commands import apply, init, logs, status, teardown, upgrade, validate
+from .commands import apply, images, init, logs, migrate, status, teardown, upgrade, validate
 
 
 def main(argv=None) -> int:
@@ -55,9 +55,26 @@ def main(argv=None) -> int:
                                help="update sparkrun + images, re-apply")
     p_upgrade.set_defaults(func=upgrade.run)
 
-    p_validate = sub.add_parser("validate", aliases=["check"], parents=[common],
+    p_validate = sub.add_parser("validate", parents=[common],
                                 help="pre-flight: confirm the config is usable (read-only)")
     p_validate.set_defaults(func=validate.run)
+
+    p_check = sub.add_parser("check", help="pre-execution checks")
+    check_sub = p_check.add_subparsers(dest="check_cmd", required=True)
+    p_check_config = check_sub.add_parser("config", parents=[common],
+                                          help="config pre-flight (same as `validate`)")
+    p_check_config.set_defaults(func=validate.run)
+    p_check_images = check_sub.add_parser("images", parents=[common],
+                                          help="resolve + report every image the deploy will pull")
+    p_check_images.add_argument("--probe", action="store_true",
+                                help="probe each image (docker manifest inspect) via the runtime")
+    p_check_images.set_defaults(func=images.run)
+
+    p_migrate = sub.add_parser("migrate", parents=[common],
+                               help="rewrite a v1 config.yaml to schema v2 (idempotent)")
+    p_migrate.add_argument("--dry-run", action="store_true",
+                           help="print the v2 form without writing")
+    p_migrate.set_defaults(func=migrate.run)
 
     p_logs = sub.add_parser("logs", parents=[common],
                             help="tail logs from a stack service")

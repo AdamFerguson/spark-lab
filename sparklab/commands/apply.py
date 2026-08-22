@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import difflib
+import sys
 import tempfile
 from pathlib import Path
 
@@ -27,6 +28,12 @@ def _print_diffs(cfg, rendered, file_changes, limit=200):
 
 def run(args) -> int:
     cfg = config.load(args.config)
+    # fail-safe (ADR 0004): a model with no image can't be served -- refuse early
+    # rather than converge on an unresolvable image.
+    if not cfg.image_model():
+        print(f"[ERROR] no image for active model '{cfg.active_alias}' "
+              f"(set models.<alias>.image or SPARKLAB_IMAGE_MODEL).", file=sys.stderr)
+        return 1
     dry = getattr(args, "dry_run", False)
     allow_restart = bool(getattr(args, "apply", False) or getattr(args, "yes", False))
     runtime = getattr(args, "runtime", None)

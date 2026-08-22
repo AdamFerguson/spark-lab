@@ -72,3 +72,45 @@ How the pieces fit together, and why each one exists.
 
 This is why "edit the config, run `apply`" reliably brings the node to the new
 state without manually restarting the right services.
+
+## Config schema (v2, ADR 0004)
+
+`config.yaml` is versioned and strictly **additive**. A file with no `version:`
+key is **v1** (a single `model:` block) and still works; it renders
+byte-identically. **v2** adds multi-model, an explicit image map, and profiles:
+
+- **`models:`** — a keyed map from *alias* → model definition. Each def is the
+  v1 `model:` block plus `active:` (which one is live under sparkrun) and
+  `resources:` (allocation: `mem_fraction_static`, `node_assignment`,
+  `priority`, `concurrency`). A top-level `active_models:` list names the live
+  alias and wins over the per-model `active:` flags. Exactly one model is
+  active on a single node; switching it + `apply` is the gated model-restart
+  path.
+- **`images:`** — every container image declared in config. Resolution
+  precedence (high → low): env `SPARKLAB_IMAGE_<KEY>` → active `profile:`
+  override → the `images:` map → the v1 per-service field → the historical
+  default. Model images stay on each model def (`models.<alias>.image`).
+- **`profile:` / `profiles:`** — e.g. `profile: dev` selects a `profiles.dev`
+  override block (dev/test vs prod). The active model's memory ceiling comes
+  from `resources.mem_fraction_static` when present, else `params.mem_fraction_static`.
+
+`spark-lab migrate` rewrites a v1 file to v2 on disk (idempotent, value-
+preserving); the compat loader makes the on-disk format optional.
+See `config.example.v2.yaml` for a full document.
+
+## Commands
+
+| Command | Purpose |
+|---|---|
+| `init` | create `config.yaml` + `.env`, generate placeholder keys |
+| `apply [--dry-run] [--diff] [--apply]` | render + converge; `--diff` shows what would change on disk |
+| `validate` (=`check config`) | read-only pre-flight: schema + render + required binaries |
+| `check images [--probe]` | resolve + report every image the deploy will pull; `--probe` inspects manifests |
+| `migrate [--dry-run]` | rewrite a v1 config to schema v2 (idempotent) |
+| `logs <service> [--lines N] [-f]` | tail stack service logs |
+| `status` | workloads + stack + network status |
+| `teardown [--yes] [--purge]` | stop the model + remove the stack |
+| `upgrade` | refresh engine deps + sparkrun + images, then re-apply |
+
+`apply` is fail-safe: it refuses to converge when the active model has no
+resolvable image (ADR 0004).
