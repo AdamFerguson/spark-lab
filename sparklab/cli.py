@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 
 from .core import runtime as runtime_mod
-from .commands import apply, init, status, teardown, upgrade
+from .commands import apply, init, logs, status, teardown, upgrade, validate
 
 
 def main(argv=None) -> int:
@@ -52,6 +52,18 @@ def main(argv=None) -> int:
     p_upgrade = sub.add_parser("upgrade", parents=[common],
                                help="update sparkrun + images, re-apply")
     p_upgrade.set_defaults(func=upgrade.run)
+
+    p_validate = sub.add_parser("validate", aliases=["check"], parents=[common],
+                                help="pre-flight: confirm the config is usable (read-only)")
+    p_validate.set_defaults(func=validate.run)
+
+    p_logs = sub.add_parser("logs", parents=[common],
+                            help="tail logs from a stack service")
+    p_logs.add_argument("service",
+                        help="compose service (litellm, db, redis, prometheus, grafana)")
+    p_logs.add_argument("--lines", type=int, default=100, help="lines to tail (default 100)")
+    p_logs.add_argument("-f", "--follow", action="store_true", help="follow the log")
+    p_logs.set_defaults(func=logs.run)
 
     args = parser.parse_args(argv)
     args.runtime = runtime_mod.default_runtime()

@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from sparklab.commands import init, status, teardown, upgrade  # noqa: E402
+from sparklab.commands import init, logs, status, teardown, upgrade, validate  # noqa: E402
 from tests.helpers import REFERENCE_ENV, SECRET_DUMMY, FakeRuntime, config_text  # noqa: E402
 
 _AVAIL = {"sparkrun", "docker", "systemctl", "tailscale", "cloudflared", sys.executable}
@@ -81,6 +81,31 @@ class TestCliCommands(unittest.TestCase):
         self.assertEqual(init.run(a), 0)
         self.assertTrue((empty / "config.yaml").is_file())
         self.assertRegex((empty / ".env").read_text(), r"LITELLM_MASTER_KEY=sk-[0-9a-f]{40}")
+
+    def test_validate_ok_on_good_config(self):
+        self.assertEqual(validate.run(_args(self.cp, FakeRuntime())), 0)
+
+    def test_validate_fails_on_missing_secret(self):
+        bad = self.d / "bad.yaml"
+        # references a secret that is in neither .env nor the (pinned) env
+        bad.write_text("install_dir: %s\nmodel:\n  recipe_name: qwen\n"
+                       "litellm:\n  master_key_env: NOPE_MISSING_KEY\n" % self.install)
+        self.assertEqual(validate.run(_args(bad, FakeRuntime())), 1)
+
+    def test_logs_refuses_without_compose_file(self):
+        a = _args(self.cp, FakeRuntime(available=_AVAIL),
+                  service="litellm", lines=50, follow=False)
+        self.assertEqual(logs.run(a), 1)
+
+    def test_logs_builds_correct_argv(self):
+        (self.install / "litellm").mkdir(parents=True, exist_ok=True)
+        compose = self.install / "litellm" / "docker-compose.yml"
+        compose.write_text("services: {}\n")
+        rt = FakeRuntime(available=_AVAIL)
+        a = _args(self.cp, rt, service="litellm", lines=50, follow=True)
+        self.assertEqual(logs.run(a), 0)
+        self.assertIn(["docker", "compose", "-f", str(compose), "logs",
+                       "--tail", "50", "litellm", "--follow"], rt.commands)
 
 
 if __name__ == "__main__":
