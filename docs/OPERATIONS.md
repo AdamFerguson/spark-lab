@@ -4,7 +4,7 @@
 
 ```bash
 ./bin/spark-lab status                 # workloads + stack + tailscale at a glance
-sparkrun logs <job-id>                 # follow SGLang logs (id from `sparkrun status`)
+sparkrun logs <job-id>                 # follow the engine's logs (id from `sparkrun status`)
 docker compose -f <install_dir>/litellm/docker-compose.yml logs -f litellm
 ```
 

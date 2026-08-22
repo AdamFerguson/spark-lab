@@ -9,5 +9,5 @@
   "litellm/model_config.yaml": "56dfd0ec95d401f08669b0416e3e7e47ee6805b0b6a4bce96eaf0f3938c46680",
   "litellm/prometheus.yml": "141ede6cbfec8ee0d014dcf7e51c64c99045b31818a21d3095751861206e25cf",
   "litellm/scripts/nvidia-gpu-textfile.sh": "44fe78928bd981f0868afe33993772f3802eafa3d52167412b2dea49958a9cba",
-  "sparkrun/recipes/qwen.yaml": "6b335df1a1b0ecbedc7d460a93e343ddebc59b749d5cfe4ffd2cc777bc50090a"
+  "sparkrun/recipes/qwen.yaml": "c57a0e90f428f80ece4b47c0f17e5c4c2bf40ff83a4e3bcc852ce58ec665f147"
 }

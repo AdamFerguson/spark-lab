@@ -29,15 +29,20 @@ How the pieces fit together, and why each one exists.
 
 ## Why each piece
 
-- **sparkrun** is the workload orchestrator. It launches the model as a Docker
-  container with the right flags for GB10 (see [MODEL_RECIPES](MODEL_RECIPES.md))
-  and knows how to run it on one node or fan out across a cluster via a
-  passwordless SSH mesh. `spark-lab` drives it; you rarely call it directly.
-- **SGLang** is the actual model server. It exposes an OpenAI-compatible
-  endpoint on `:30000` and, crucially, a Prometheus `/metrics` endpoint
-  (enabled by `--enable-metrics`) that the dashboards read.
+- **sparkrun** is the critical dependency + workload orchestrator. It launches
+  the model as a Docker container with the right flags for GB10 and knows how
+  to run it on one node or fan out across a cluster via a passwordless SSH
+  mesh. `spark-lab` drives it; you rarely call it directly. The inference
+  engine is **whatever the recipe declares** (the recipe's `runtime:` + serve
+  command) -- SGLang is the default, not a requirement.
+- **The inference engine (SGLang by default)** is the actual model server. The
+  default SGLang build exposes an OpenAI-compatible endpoint on `:30000` and,
+  crucially, a Prometheus `/metrics` endpoint (enabled by `--enable-metrics`)
+  that the dashboards read. Any engine that serves an OpenAI-compatible API +
+  exposes metrics fits the same shape (see the `runtime:` / `serve_command`
+  config fields + the registry path for non-SGLang recipes).
 - **LiteLLM** sits in front as the thing you actually talk to. You don't point
-  clients at the raw SGLang port — you point them at LiteLLM (`:4000`), which
+  clients at the raw engine port — you point them at LiteLLM (`:4000`), which
   gives you API keys, per-key spend tracking (stored in Postgres), caching
   (Redis), and a stable model name that survives model swaps.
 - **Postgres** (with `pgvector`) stores LiteLLM's models, virtual keys, and

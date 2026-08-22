@@ -29,23 +29,32 @@ install:
 model:
   # Base name of the recipe file written to <install_dir>/sparkrun/recipes/.
   recipe_name: qwen38-27b
-  # Hugging Face model id used as the SGLang --model-path. (EXAMPLE — a public
-  # model; point this at whatever you serve.)
+  # The inference engine. spark-lab is engine-agnostic: this + the recipe's
+  # command decide the engine. `sglang` is the default; set `vllm` (or anything)
+  # and, for non-SGLang engines, supply `serve_command` below to override the
+  # generated serve block.
+  runtime: sglang
+  # Hugging Face model id used as the engine's model path (e.g. SGLang --model-path).
+  # (EXAMPLE -- a public model; point this at whatever you serve.)
   hf_model: RadixArk/Qwen3.8-27B-NVFP4
-  # SGLang container image that serves the model.
+  # Container image that serves the model (the SGLang build here; any engine image works).
   image: lmsysorg/sglang:qwen38-27b
   # Name of the env var (in .env) holding your Hugging Face token. Leave null
   # for open models that don't need one.
   hf_token_env: HF_TOKEN
-  # Host + port the SGLang server binds to. `port` is also what the LiteLLM
+  # Host + port the inference server binds to. `port` is also what the LiteLLM
   # gateway uses to reach it.
   host: 0.0.0.0
   port: 30000
   # Number of nodes the recipe needs. 1 for a single Spark; raise for a cluster.
   min_nodes: 1
-  # SGLang serve parameters. Each key becomes a `defaults:` entry in the recipe
-  # and an `--<key-with-dashes> {key}` flag on the server. Working example for a
-  # ~27B NVFP4 model with DSPARK speculative decoding + fp8 KV cache.
+  # Optional: a verbatim serve command that overrides the generated block
+  # (for non-SGLang engines). Uses the same {placeholder} values as defaults.
+  # serve_command: |
+  #   vllm serve {model} --port {port}
+  # Inference-engine serve parameters. Each key becomes a `defaults:` entry in the recipe
+  # and an `--<key-with-dashes> {key}` flag on the server (SGLang flags in this example).
+  # Working example for a ~27B NVFP4 model with DSPARK speculative decoding + fp8 KV cache.
   params:
     kv_cache_dtype: fp8_e4m3
     mem_fraction_static: 0.85
@@ -61,11 +70,11 @@ model:
     speculative_draft_attention_backend: flashinfer
     mamba_radix_cache_strategy: extra_buffer_lazy
     mamba_ssm_dtype: float32
-  # Map a param key to a non-obvious sglang flag name (default is key with
+  # Map a param key to a non-obvious flag name (default is key with
   # underscores -> dashes). Only needed where the flag differs.
   flag_map:
     speculative_draft_model: speculative-draft-model-path
-  # Extra sglang flags added verbatim to the serve command.
+  # Extra engine flags added verbatim to the serve command.
   extra_flags:
     - --enable-metrics
     - --enable-mfu-metrics

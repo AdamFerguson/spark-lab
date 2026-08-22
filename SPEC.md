@@ -58,7 +58,9 @@ Authoritative in `config.example.yaml`. Sections: `install`, `model`, `litellm`,
   means "read `$HF_TOKEN` from `.env`". `init` writes `.env` from `.env.example`
   and generates keys with `openssl rand -hex 32`.
 - `install.hosts` drives single-node vs cluster. One host → local; >1 → cluster.
-- `model.params` maps 1:1 to SGLang serve flags; `extra_flags` appended verbatim.
+- `model.params` maps 1:1 to the inference engine's serve flags (SGLang by
+  default; override with `model.serve_command` for a different engine);
+  `extra_flags` appended verbatim.
 - `litellm.db.*`, `redis`, `monitoring.*`, `network.*` gate which services render
   into the compose file.
 

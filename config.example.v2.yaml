@@ -24,22 +24,25 @@ install:
 # -----------------------------------------------------------------------------
 # Models: a keyed map. Exactly one is `active` on a single-node Spark; the
 # others are stored definitions you switch to (switch + `apply` = the gated
-# model-restart path).
+# model-restart path). spark-lab is engine-agnostic: `runtime` + the recipe's
+# command pick the engine (SGLang here). For a non-SGLang engine set `runtime`
+# and supply `serve_command` to override the generated serve block.
 # -----------------------------------------------------------------------------
 models:
   qwen38-27b:                       # alias -- used in logs, status, recipe target
     active: true
+    runtime: sglang                 # inference engine (SGLang by default)
     hf_model: RadixArk/Qwen3.8-27B-NVFP4
     image: lmsysorg/sglang:qwen38-27b
     hf_token_env: HF_TOKEN
     host: 0.0.0.0
     port: 30000
     min_nodes: 1
-    resources:                      # allocation knobs, distinct from SGLang flags
+    resources:                      # allocation knobs, distinct from engine flags
       mem_fraction_static: 0.85     # GPU-memory ceiling (wins over params below)
       node_assignment: auto
       priority: normal
-    params:                         # SGLang serve flags (unchanged v1 semantics)
+    params:                         # inference-engine serve flags (SGLang here)
       kv_cache_dtype: fp8_e4m3
       attention_backend: flashinfer
       chunked_prefill_size: 2048

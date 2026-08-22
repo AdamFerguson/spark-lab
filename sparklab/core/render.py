@@ -62,6 +62,8 @@ def build_context(cfg: config_mod.Config) -> dict:
         "hf_model": model.get("hf_model", ""),
         "model_host": model.get("host", "0.0.0.0"),
         "min_nodes": model.get("min_nodes", 1),
+        "runtime": model.get("runtime", "sglang"),
+        "serve_command": model.get("serve_command", ""),
         "params": cfg.effective_params(),
         "extra_flags": model.get("extra_flags", []),
         "flag_map": model.get("flag_map", {}),
