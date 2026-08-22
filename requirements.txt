@@ -1,9 +1,0 @@
-# Runtime dependencies for the spark-lab engine.
-#
-# Single source of truth for what the CLI needs to run. Installed into the
-# managed `.venv` by `bin/spark-lab` and refreshed by `spark-lab upgrade`.
-# (Test-only dependencies live in `requirements-dev.txt`.)
-#
-# Pinned to compatible-release ranges for reproducibility without churn.
-PyYAML>=6.0,<7
-Jinja2>=3.1,<4

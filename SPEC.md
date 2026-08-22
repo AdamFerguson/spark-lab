@@ -63,8 +63,9 @@ Authoritative in `config.example.yaml`. Sections: `install`, `model`, `litellm`,
   into the compose file.
 
 ## 4. CLI contract (`bin/spark-lab`)
-Bash wrapper: ensures a managed venv (prefer `uv venv`+`uv pip install pyyaml
-jinja2`; fallback `python3 -m venv`+`pip`), then `exec .venv/bin/python -m lib.cli "$@"`.
+Bash wrapper: ensures a managed env via **uv** (`uv sync --no-default-groups`
+from `pyproject.toml` + `uv.lock`; falls back to `python3 -m venv` +
+`pip install -e .` when uv is absent), then `exec .venv/bin/python -m sparklab.cli "$@"`.
 Commands (Typer-style or argparse — implementer's choice, but keep these verbs):
 
 | Command | Behavior |

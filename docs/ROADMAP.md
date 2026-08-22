@@ -8,7 +8,13 @@ behind it.
 
 ---
 
-## 1. `requirements.txt` → `uv`
+## 1. `requirements.txt` → `uv` — **DONE** (Phase 6a.5)
+
+**Status: shipped.** `pyproject.toml` is the single source of truth; `uv.lock` is
+committed; `bin/spark-lab` is uv-first (`uv sync --no-default-groups`, fallback
+`pip install -e .`); `spark-lab upgrade` re-resolves the lock; CI installs uv and
+runs `uv sync`. `requirements.txt` / `requirements-dev.txt` are retired. The design
+record below is kept for reference.
 
 **Note.** Replace the pip-based dependency flow with **`uv`** as the package +
 venv manager, and add a committed lockfile (`uv.lock`).

@@ -16,18 +16,24 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
 ]
-# Runtime deps (mirror requirements.txt, the single source of truth used by
-# bin/spark-lab and `spark-lab upgrade`).
+# Runtime deps. The single source of truth for the environment is this file:
+# `uv lock` pins it into `uv.lock`, and `bin/spark-lab` / `spark-lab upgrade` /
+# CI all install from it (uv first, with a `pip install -e .` fallback).
 dependencies = [
     "PyYAML>=6.0,<7",
     "Jinja2>=3.1,<4",
 ]
 
+# Test-only / dev deps (PEP 735 dependency groups -- the uv-native way).
+# Not installed into the runtime venv; used by the test + lint tooling.
+[dependency-groups]
+dev = [
+    "coverage>=7.0",
+    "yamllint>=1.35",
+]
+
 [project.scripts]
 spark-lab = "sparklab.cli:main"
-
-[project.optional-dependencies]
-dev = ["coverage>=7.0"]
 
 [tool.setuptools]
 packages = ["sparklab", "sparklab.core", "sparklab.commands"]

@@ -68,14 +68,22 @@ class TestCliCommands(unittest.TestCase):
         self.assertTrue(any(a[0] == "docker" and "down" in a and "-v" in a for a in rt.commands))
 
     def test_upgrade_runs_pipeline_then_reapplies(self):
-        rt = FakeRuntime(available=_AVAIL)
+        rt = FakeRuntime(available=_AVAIL)  # no uv -> pip refresh path
         self.assertEqual(upgrade.run(_args(self.cp, rt)), 0)
-        # upgrade: refresh deps -> sparkrun update -> pull images -> re-apply
-        self.assertTrue(any("pip" in " ".join(a) for a in rt.commands))
+        # upgrade: refresh deps (pip, uv absent) -> sparkrun update -> pull -> re-apply
+        self.assertTrue(any("pip" in " ".join(a) and "install" in " ".join(a)
+                            for a in rt.commands))
         self.assertTrue(any(a == ["sparkrun", "update"] for a in rt.commands))
         self.assertTrue(any(a[0] == "docker" and "pull" in a for a in rt.commands))
         # and the re-apply ensured the model
         self.assertTrue(any(a == ["sparkrun", "run", "qwen", "--ensure"] for a in rt.commands))
+
+    def test_upgrade_refreshes_deps_via_uv_when_available(self):
+        rt = FakeRuntime(available=_AVAIL | {"uv"})
+        self.assertEqual(upgrade.run(_args(self.cp, rt)), 0)
+        self.assertTrue(any(a[:2] == ["uv", "lock"] for a in rt.commands))
+        self.assertTrue(any(a[:2] == ["uv", "sync"] for a in rt.commands))
+        self.assertFalse(any("pip" in " ".join(a) for a in rt.commands))
 
     def test_init_creates_config_and_generates_env(self):
         empty = Path(tempfile.mkdtemp())

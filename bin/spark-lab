@@ -1,32 +1,29 @@
 #!/usr/bin/env bash
-# spark-lab — entrypoint. Manages a Python venv and execs the CLI.
+# spark-lab — entrypoint. Manages the Python env (uv-first, falls back to pip)
+# and execs the CLI. The dependency source of truth is `pyproject.toml`, pinned
+# by `uv.lock`.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 VENV=".venv"
 
-have_deps() { "$VENV/bin/python" -c "import yaml, jinja2" >/dev/null 2>&1; }
+have_deps() { [ -x "$VENV/bin/python" ] && "$VENV/bin/python" -c "import yaml, jinja2" >/dev/null 2>&1; }
 
-setup_venv() {
+setup_env() {
+  have_deps && return
   if command -v uv >/dev/null 2>&1; then
-    [ -d "$VENV" ] || uv venv "$VENV" >/dev/null
-    if ! have_deps; then
-      echo "spark-lab: installing dependencies into $VENV (via uv)..." >&2
-      uv pip install --quiet -r "$ROOT/requirements.txt"
-    fi
+    # Runtime-only: skip the dev/test group so the runtime env stays lean.
+    # `uv sync` honours uv.lock for reproducible, pinned resolutions.
+    echo "spark-lab: syncing runtime deps with uv (from uv.lock)..." >&2
+    uv sync --no-default-groups >/dev/null
   else
-    if [ ! -d "$VENV" ]; then
-      echo "spark-lab: creating $VENV via python3 -m venv..." >&2
-      python3 -m venv "$VENV"
-    fi
-    if ! have_deps; then
-      echo "spark-lab: installing dependencies into $VENV (via pip)..." >&2
-      "$VENV/bin/python" -m pip install --quiet --upgrade pip >/dev/null 2>&1 || true
-      "$VENV/bin/python" -m pip install --quiet -r "$ROOT/requirements.txt"
-    fi
+    echo "spark-lab: uv not found -- creating $VENV + installing from pyproject (pip)..." >&2
+    [ -d "$VENV" ] || python3 -m venv "$VENV"
+    "$VENV/bin/python" -m pip install --quiet --upgrade pip >/dev/null 2>&1 || true
+    "$VENV/bin/python" -m pip install --quiet -e "$ROOT"
   fi
 }
 
-setup_venv
+setup_env
 exec "$VENV/bin/python" -m sparklab.cli "$@"

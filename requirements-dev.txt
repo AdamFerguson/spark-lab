@@ -1,4 +1,0 @@
-# Test-only dependencies (NOT installed into the runtime .venv that ships with
-# the CLI). Installed in CI / local test runs to execute the suite + measure
-# coverage. See the "Unit tests" + "Coverage" steps in .github/workflows/validate.yml.
-coverage>=7.0

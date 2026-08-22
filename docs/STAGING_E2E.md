@@ -20,8 +20,9 @@ regression + merge-gate definition) is already done — see `docs/AUDIT-P6.md`.
 ## Preconditions
 
 1. A **staging** Spark (not the live node). A distinct `install_dir` + host.
-2. The repo checked out on `feature/python-cli`; `spark-lab` on PATH
-   (`pip install -e .` in a venv, or use `bin/spark-lab`).
+2. The repo checked out on `feature/python-cli`; `spark-lab` available
+   (run `scripts/staging.sh` from a checkout — `bin/spark-lab` sets up the env
+   with uv automatically, or `uv sync` once and use `uv run spark-lab`).
 3. A staging `.env` with test values for the `*_env` vars the config names
    (`LITELLM_MASTER_KEY`, `LITELLM_SALT_KEY`, `LITELLM_DB_PASSWORD`,
    `GRAFANA_ADMIN_PASSWORD`, `HF_TOKEN` if gated).
