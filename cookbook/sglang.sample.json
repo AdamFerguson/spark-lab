@@ -1,0 +1,29 @@
+{
+  "collection": "sglang-cookbook-sample",
+  "updated": "2026-08-22",
+  "note": "Sample entries for the `sglang-cookbook` discovery source. An entry is a curated SGLang model record, NOT a sparkrun document -- `recipes show` returns it as-is, and `recipes convert` normalizes it into a sparkrun candidate.",
+  "entries": [
+    {
+      "slug": "qwen3-8b",
+      "name": "Qwen3 8B",
+      "model": "Qwen/Qwen3-8B",
+      "image": "lmsysorg/sglang:latest",
+      "hardware": "DGX Spark / GB10",
+      "description": "Qwen3 8B on SGLang with fp8 KV cache.",
+      "tags": ["qwen", "8b", "single-node"],
+      "flags": { "kv_cache_dtype": "fp8_e4m3", "mem_fraction_static": 0.85 },
+      "notes": "Good default for single-node dev."
+    },
+    {
+      "slug": "deepseek-v3-lite",
+      "name": "DeepSeek V3 (lite)",
+      "model": "deepseek-ai/DeepSeek-V3-Lite",
+      "image": "lmsysorg/sglang:deepseek",
+      "hardware": "DGX Spark / GB10",
+      "description": "DeepSeek V3 lite with speculative decoding.",
+      "tags": ["deepseek", "speculative"],
+      "flags": { "mem_fraction_static": 0.9, "kv_cache_dtype": "fp8_e5m2" },
+      "notes": "Needs the DeepSeek SGLang build."
+    }
+  ]
+}

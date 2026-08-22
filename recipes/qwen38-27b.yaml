@@ -1,0 +1,41 @@
+name: qwen38-27b
+model: RadixArk/Qwen3.8-27B-NVFP4
+runtime: sglang
+min_nodes: 1
+container: lmsysorg/sglang:qwen38-27b
+executor: docker
+executor_config:
+  ipc: host
+  shm_size: 32g
+  privileged: true
+  cap_add:
+    - SYS_PTRACE
+  security_opt:
+    - seccomp=unconfined
+env:
+  PYTORCH_CUDA_ALLOC_CONF: ""
+  # Gated model -- the token is injected at deploy time from your .env.
+  HF_TOKEN: "{env:HF_TOKEN}"
+
+metadata:
+  description: "mylab -- RadixArk/Qwen3.8-27B-NVFP4 served by SGLang"
+
+defaults:
+  host: 0.0.0.0
+  port: 30000
+  kv_cache_dtype: fp8_e4m3
+  mem_fraction_static: 0.85
+  attention_backend: flashinfer
+  speculative_algorithm: DSPARK
+
+command: |
+  sglang serve \
+    --enable-metrics \
+    --trust-remote-code \
+    --model-path {model} \
+    --kv-cache-dtype {kv_cache_dtype} \
+    --mem-fraction-static {mem_fraction_static} \
+    --attention-backend {attention_backend} \
+    --speculative-algorithm {speculative_algorithm} \
+    --host {host} \
+    --port {port}

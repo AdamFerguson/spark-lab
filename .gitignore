@@ -6,6 +6,9 @@ config.yaml
 deploy/
 .sparklab-state/
 
+# Generated recipe candidates (`spark-lab recipes convert`) -- review + promote manually
+recipes/candidates/
+
 # Managed Python venv
 .venv/
 .venv-test/

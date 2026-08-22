@@ -97,6 +97,24 @@ profiles:
       grafana: grafana/grafana:latest
 
 # -----------------------------------------------------------------------------
+# Discovery: which recipe sources `spark-lab recipes` searches (ADR 0003).
+# Enabling / redirecting a source is a config change, not a code change.
+# -----------------------------------------------------------------------------
+discovery:
+  enabled: true
+  cache_dir: .sparklab-state/discovery   # optional: cache fetched bodies
+  sources:
+    - kind: sparkrun-registry
+      alias: local                        # in-repo .sparkrun/registry.yaml + recipes/
+    - kind: sglang-cookbook
+      alias: cookbook                     # cookbook/sglang.sample.json
+  convert:
+    llm: false                            # opt-in LLM-assisted `recipes convert`
+    # endpoint: http://localhost:4000/v1/chat/completions
+    # model: my-spark-model
+    # key_env: LITELLM_MASTER_KEY
+
+# -----------------------------------------------------------------------------
 # Everything below is unchanged from v1.
 # -----------------------------------------------------------------------------
 litellm:

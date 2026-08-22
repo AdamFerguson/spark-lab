@@ -10,7 +10,8 @@ from __future__ import annotations
 import argparse
 
 from .core import runtime as runtime_mod
-from .commands import apply, images, init, logs, migrate, status, teardown, upgrade, validate
+from .commands import (apply, images, init, logs, migrate, recipes, status, teardown,
+                       upgrade, validate)
 
 
 def main(argv=None) -> int:
@@ -75,6 +76,29 @@ def main(argv=None) -> int:
     p_migrate.add_argument("--dry-run", action="store_true",
                            help="print the v2 form without writing")
     p_migrate.set_defaults(func=migrate.run)
+
+    p_recipes = sub.add_parser("recipes", help="discover + convert model recipes (ADR 0003)")
+    recipes_sub = p_recipes.add_subparsers(dest="recipes_cmd", required=True)
+    p_r_search = recipes_sub.add_parser("search", parents=[common],
+                                        help="fan a query out to enabled sources")
+    p_r_search.add_argument("query", help="free-text / tag query")
+    p_r_search.add_argument("--source", help="limit to one source alias")
+    p_r_search.set_defaults(func=recipes.search)
+    p_r_list = recipes_sub.add_parser("list", parents=[common],
+                                      help="enumerate one source (or all)")
+    p_r_list.add_argument("source", nargs="?", help="source alias (default: all)")
+    p_r_list.set_defaults(func=recipes.list_)
+    p_r_show = recipes_sub.add_parser("show", parents=[common],
+                                      help="resolve <source://ref>, print metadata + body")
+    p_r_show.add_argument("reference", help="<source://reference> (or just <reference>)")
+    p_r_show.set_defaults(func=recipes.show)
+    p_r_convert = recipes_sub.add_parser("convert", parents=[common],
+                                         help="produce a sparkrun candidate recipe (never applied)")
+    p_r_convert.add_argument("reference", help="<source://reference>")
+    p_r_convert.add_argument("--out", help="output path (default recipes/candidates/<ref>.yaml)")
+    p_r_convert.add_argument("--dry-run", action="store_true",
+                             help="print the candidate without writing")
+    p_r_convert.set_defaults(func=recipes.convert)
 
     p_logs = sub.add_parser("logs", parents=[common],
                             help="tail logs from a stack service")

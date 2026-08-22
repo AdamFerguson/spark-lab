@@ -1,6 +1,9 @@
-# Design note — In-repo `sparkrun` recipe registry
+# In-repo `sparkrun` recipe registry
 
-**Status:** design note (decision captured; implementation lands in Phase 4/5).
+**Status:** **implemented in Phase 5** (in-repo registry + discovery + conversion).
+The sections below are the original design notes; the "Phase 5 status" section at
+the bottom records what actually shipped and where the manifest shape differs from
+the sketch here.
 **Supersedes part of:** ADR 0003 (discovery) and ADR 0004 (config schema) where they touch recipe sourcing.
 
 ## The idea
@@ -130,3 +133,46 @@ Open questions to settle in Phase 4/5:
   contribute recipes upstream, but this repo stands alone).
 - Building a registry host / web UI; a git repo + `.sparkrun/registry.yaml` is
   sufficient.
+
+## Phase 5 status — what shipped
+
+The discovery framework (ADR 0003) is implemented and the in-repo registry is
+live:
+
+- **Framework** (`sparklab/core/discovery/`): the source-agnostic
+  `DiscoveredRecipe` record, the `RecipeSource` contract, the
+  `DiscoveryRegistry` (config-driven source construction + per-source error
+  isolation + optional on-disk body cache), and two built-in adapters:
+  `sparkrun-registry` and `sglang-cookbook`.
+- **In-repo registry**: `.sparkrun/registry.yaml` (index) + `recipes/*.yaml`
+  (two real, runnable sparkrun recipes: `qwen38-27b`, `llama31-8b`).
+- **Sample cookbook**: `cookbook/sglang.sample.json`.
+- **Commands**: `recipes search <q>` / `list [src]` / `show <ref>` / `convert
+  <ref>` (the last produces a validated, never-applied sparkrun **candidate**;
+  LLM-assisted refinement is opt-in and falls back to the deterministic
+  transform on any failure).
+- **Config**: the `discovery:` section (see `config.example.v2.yaml`) declares
+  which sources are enabled; enabling/redirecting one is a config change only.
+
+**Manifest shape (as shipped).** The index is a flat map, not the `registries:`
+list sketched above:
+
+```yaml
+registry: spark-lab
+updated: "2026-08-22"
+recipes:
+  qwen38-27b:
+    name: Qwen3.8-27B (NVFP4)
+    model: RadixArk/Qwen3.8-27B-NVFP4
+    image: lmsysorg/sglang:qwen38-27b
+    tags: [ qwen, 27b, speculative ]
+    hardware: DGX Spark / GB10
+    description: ...
+    file: recipes/qwen38-27b.yaml     # the runnable recipe
+```
+
+**Open question (carried from the design notes):** whether to align the on-disk
+index with the exact stock-sparkrun `.sparkrun/registry.yaml` manifest spec
+(`registries:` list + `@spark-lab/<recipe>` scoped refs) so the repo is directly
+`sparkrun registry add`-able. The current shape is what spark-lab's
+`sparkrun-registry` adapter reads; reconciling the two is a follow-up.

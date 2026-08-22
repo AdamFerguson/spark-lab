@@ -107,6 +107,10 @@ See `config.example.v2.yaml` for a full document.
 | `validate` (=`check config`) | read-only pre-flight: schema + render + required binaries |
 | `check images [--probe]` | resolve + report every image the deploy will pull; `--probe` inspects manifests |
 | `migrate [--dry-run]` | rewrite a v1 config to schema v2 (idempotent) |
+| `recipes search <q>` | fan a query out to enabled discovery sources, merge + dedup |
+| `recipes list [src]` | enumerate one source (or all) |
+| `recipes show <ref>` | resolve `<source://ref>`, print metadata + native body |
+| `recipes convert <ref>` | produce a sparkrun *candidate* recipe (validated, never applied) |
 | `logs <service> [--lines N] [-f]` | tail stack service logs |
 | `status` | workloads + stack + network status |
 | `teardown [--yes] [--purge]` | stop the model + remove the stack |
@@ -114,3 +118,24 @@ See `config.example.v2.yaml` for a full document.
 
 `apply` is fail-safe: it refuses to converge when the active model has no
 resolvable image (ADR 0004).
+
+## Recipe discovery + auto-conversion (Phase 5, ADR 0003)
+
+Discovery is **plugin-based and config-driven**. A `RecipeSource` emits
+source-agnostic `DiscoveredRecipe` records; the framework (registry + contract +
+record type) lives in `sparklab/core/discovery/`, and which sources exist comes
+entirely from the `discovery:` section of `config.yaml`. Two built-in adapters
+ship today:
+
+- **`sparkrun-registry`** — a registry of ready-to-run sparkrun recipes. Default
+  is the in-repo one: `.sparkrun/registry.yaml` (index) + `recipes/*.yaml`.
+- **`sglang-cookbook`** — a curated collection of SGLang model entries (not
+  sparkrun documents). Default sample: `cookbook/sglang.sample.json`.
+
+Adding/redirecting a source is a config change; a brand-new *kind* is a package
+installed under the `sparklab.recipe_sources` entry point + a config entry. Each
+source is read-only, non-disruptive, and errors are isolated per-source. `recipes
+convert` turns a discovered record into a sparkrun **candidate** (deterministic
+normalization, with an opt-in LLM-assisted refinement that falls back to
+deterministic on any failure) -- always validated, written to a file the user
+reviews, and **never auto-applied**. See `docs/REGISTRY.md`.

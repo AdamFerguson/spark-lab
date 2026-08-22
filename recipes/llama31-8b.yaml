@@ -1,0 +1,29 @@
+name: llama31-8b
+model: huggingface/llama31-8b
+runtime: sglang
+min_nodes: 1
+container: lmsysorg/sglang:latest
+executor: docker
+executor_config:
+  ipc: host
+  shm_size: 16g
+  privileged: true
+
+metadata:
+  description: "mylab -- llama31-8b served by SGLang"
+
+defaults:
+  host: 0.0.0.0
+  port: 30010
+  kv_cache_dtype: fp8_e4m3
+  mem_fraction_static: 0.60
+
+command: |
+  sglang serve \
+    --enable-metrics \
+    --trust-remote-code \
+    --model-path {model} \
+    --kv-cache-dtype {kv_cache_dtype} \
+    --mem-fraction-static {mem_fraction_static} \
+    --host {host} \
+    --port {port}
