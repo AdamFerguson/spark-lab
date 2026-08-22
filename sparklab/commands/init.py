@@ -1,12 +1,17 @@
-"""`spark-lab init` — create config.yaml + .env, generate placeholder keys."""
+"""`spark-lab init` -- system precheck, then create config.yaml + .env."""
 from __future__ import annotations
 
 import secrets
 import sys
 from pathlib import Path
 
+from . import system
+
 
 def run(args) -> int:
+    runtime = getattr(args, "runtime", None)
+    _system_precheck(args, runtime)
+
     cfg_path = Path(args.config).expanduser()
     if not cfg_path.is_absolute():
         cfg_path = Path.cwd() / cfg_path
@@ -26,6 +31,31 @@ def run(args) -> int:
     print("  3. Run `spark-lab apply --dry-run` to preview the plan.")
     print("  4. Run `spark-lab apply` (add --apply to restart the model on recipe change).")
     return 0
+
+
+def _system_precheck(args, runtime) -> None:
+    """Detect required/optional tools; report, and (interactively) offer to install
+    the missing required ones. Never blocks config creation."""
+    if runtime is None:
+        return
+    results = system.detect(runtime)
+    system.print_table(results)
+    req_missing = system.missing(results, required_only=True)
+    if not req_missing:
+        print("All required tools present.")
+        return
+    print("Missing required tool(s): " + ", ".join(r["name"] for r in req_missing))
+    if getattr(args, "yes", False):
+        print("To install them, run: `spark-lab check system --install`")
+        return
+    try:
+        ans = input("Install the missing required tools now? [y/N] ")
+    except (EOFError, OSError):
+        ans = "n"
+    if ans.strip().lower() in ("y", "yes"):
+        system.install(results, runtime)
+    else:
+        print("Skipped. You can install later with `spark-lab check system --install`.")
 
 
 def _generate_env(config_path: Path, yes: bool) -> None:

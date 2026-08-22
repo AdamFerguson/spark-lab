@@ -106,6 +106,7 @@ See `config.example.v2.yaml` for a full document.
 | `apply [--dry-run] [--diff] [--apply]` | render + converge; `--diff` shows what would change on disk |
 | `validate` (=`check config`) | read-only pre-flight: schema + render + required binaries |
 | `check images [--probe]` | resolve + report every image the deploy will pull; `--probe` inspects manifests |
+| `doctor` (=`check system`) | detect required/optional tools; `--install` installs the missing ones |
 | `migrate [--dry-run]` | rewrite a v1 config to schema v2 (idempotent) |
 | `recipes search <q>` | fan a query out to enabled discovery sources, merge + dedup |
 | `recipes list [src]` | enumerate one source (or all) |

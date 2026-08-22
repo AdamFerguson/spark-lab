@@ -10,7 +10,7 @@ from __future__ import annotations
 import argparse
 
 from .core import runtime as runtime_mod
-from .commands import (apply, images, init, logs, migrate, recipes, status, teardown,
+from .commands import (apply, images, init, logs, migrate, recipes, status, system, teardown,
                        upgrade, validate)
 
 
@@ -70,6 +70,21 @@ def main(argv=None) -> int:
     p_check_images.add_argument("--probe", action="store_true",
                                 help="probe each image (docker manifest inspect) via the runtime")
     p_check_images.set_defaults(func=images.run)
+
+    p_check_system = check_sub.add_parser("system", parents=[common],
+                                          help="detect + optionally install required/optional tools")
+    p_check_system.add_argument("--install", action="store_true",
+                                help="install the missing required tools now")
+    p_check_system.add_argument("--all", action="store_true",
+                                help="also install missing optional tools")
+    p_check_system.set_defaults(func=system.check)
+
+    p_doctor = sub.add_parser("doctor", parents=[common],
+                              help="system precheck (== `check system`)")
+    p_doctor.add_argument("--install", action="store_true",
+                          help="install the missing required tools now")
+    p_doctor.add_argument("--all", action="store_true", help="also install missing optional tools")
+    p_doctor.set_defaults(func=system.check)
 
     p_migrate = sub.add_parser("migrate", parents=[common],
                                help="rewrite a v1 config.yaml to schema v2 (idempotent)")
