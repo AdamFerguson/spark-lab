@@ -1,0 +1,91 @@
+# =============================================================================
+# STAGING config for the Phase 6 E2E + rollback runbook (scripts/staging.sh)
+# -----------------------------------------------------------------------------
+# SAFETY: use a STAGING node + a distinct install_dir + host. This file must NOT
+# point at the live model's install_dir/host. Set LIVE_INSTALL_DIR=... when running
+# scripts/staging.sh so it refuses to run against the live dir.
+#
+# Copy to config.staging.yaml, fill the .env, then:
+#   scripts/staging.sh all --config config.staging.yaml
+# =============================================================================
+version: 2
+
+install:
+  name: staging-spark
+  install_dir: ~/staging-spark        # MUST differ from the live install_dir
+  hosts:
+    - 127.0.0.1                       # or the staging host (never the live one)
+  cluster_name: staging
+
+# Two small models so the "switch active model" drill has something to flip.
+models:
+  small-a:
+    active: true
+    hf_model: huggingface/tiny-llama
+    image: lmsysorg/sglang:latest
+    port: 30000
+    resources: { mem_fraction_static: 0.40 }
+    params: { kv_cache_dtype: fp8_e4m3 }
+    extra_flags: [ --enable-metrics ]
+  small-b:
+    active: false
+    hf_model: huggingface/tiny-llama-2
+    image: lmsysorg/sglang:latest
+    port: 30000
+    resources: { mem_fraction_static: 0.40 }
+    params: { kv_cache_dtype: fp8_e4m3 }
+    extra_flags: [ --enable-metrics ]
+
+images:
+  litellm: docker.litellm.ai/berriai/litellm:main-stable
+  db: pgvector/pgvector:pg16
+  redis: redis:7-alpine
+  prometheus: prom/prometheus
+  grafana: grafana/grafana
+
+profile: prod
+
+# Discovery: the in-repo registry + the sample cookbook (path relative to repo).
+discovery:
+  enabled: true
+  sources:
+    - kind: sparkrun-registry
+      alias: local
+      index: .sparkrun/registry.yaml
+      path: recipes
+    - kind: sglang-cookbook
+      alias: cookbook
+      path: cookbook/sglang.sample.json
+  convert:
+    llm: false                         # keep the E2E deterministic; opt in to test the LLM path
+
+litellm:
+  model_name: staging-model
+  port: 4000
+  model_api_base_host: host.docker.internal
+  master_key_env: LITELLM_MASTER_KEY
+  salt_key_env: LITELLM_SALT_KEY
+  db:
+    user: litellm
+    password_env: LITELLM_DB_PASSWORD
+    db: litellm
+  redis:
+    enabled: true
+    port: 6379
+  model_info:
+    supports_vision: false
+    max_input_tokens: 8192
+    max_output_tokens: 4096
+
+monitoring:
+  enabled: true
+  prometheus: { port: 9090, retention: 15d }
+  grafana:
+    port: 3000
+    admin_password_env: GRAFANA_ADMIN_PASSWORD
+  instance_label: staging
+  dashboards: [ sglang-dashboard ]
+
+network:
+  tailscale: { enabled: false }        # optional on staging; flip to true to E2E it
+  cloudflare: { enabled: false }
