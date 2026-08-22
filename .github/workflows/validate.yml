@@ -41,8 +41,13 @@ jobs:
       - name: shellcheck
         run: shellcheck bin/spark-lab scripts/capture.sh scripts/secret-scan.sh .githooks/pre-commit
 
-      - name: "Unit tests (converge: add / remove / switch / no-op / pending)"
-        run: .venv/bin/python tests/test_converge.py
+      - name: "Test suite + coverage (unit / integration / regression / parity on lib/)"
+        run: |
+          python3 -m venv .venv-test
+          .venv-test/bin/python -m pip install --quiet --upgrade pip
+          .venv-test/bin/python -m pip install --quiet -r requirements.txt -r requirements-dev.txt
+          .venv-test/bin/python -m coverage run -m unittest discover -s tests -t .
+          .venv-test/bin/python -m coverage report --include='lib/*' --fail-under=85
 
       - name: yamllint (example config + templates)
         run: |

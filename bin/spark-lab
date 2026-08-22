@@ -13,7 +13,7 @@ setup_venv() {
     [ -d "$VENV" ] || uv venv "$VENV" >/dev/null
     if ! have_deps; then
       echo "spark-lab: installing dependencies into $VENV (via uv)..." >&2
-      uv pip install --quiet pyyaml jinja2
+      uv pip install --quiet -r "$ROOT/requirements.txt"
     fi
   else
     if [ ! -d "$VENV" ]; then
@@ -23,7 +23,7 @@ setup_venv() {
     if ! have_deps; then
       echo "spark-lab: installing dependencies into $VENV (via pip)..." >&2
       "$VENV/bin/python" -m pip install --quiet --upgrade pip >/dev/null 2>&1 || true
-      "$VENV/bin/python" -m pip install --quiet pyyaml jinja2
+      "$VENV/bin/python" -m pip install --quiet -r "$ROOT/requirements.txt"
     fi
   fi
 }

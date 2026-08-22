@@ -1,0 +1,32 @@
+[
+  [
+    "Start/ensure model workload (no-op if already up)",
+    [
+      "sparkrun",
+      "run",
+      "qwen",
+      "--ensure"
+    ]
+  ],
+  [
+    "Reconcile LiteLLM + monitoring stack (up + remove orphans)",
+    [
+      "docker",
+      "compose",
+      "-f",
+      "/opt/sparklab/litellm/docker-compose.yml",
+      "up",
+      "-d",
+      "--remove-orphans"
+    ]
+  ],
+  [
+    "Ensure Tailscale is enabled + running",
+    [
+      "systemctl",
+      "enable",
+      "--now",
+      "tailscaled"
+    ]
+  ]
+]

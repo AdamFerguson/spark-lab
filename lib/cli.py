@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import argparse
 import secrets
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
 from . import config as config_mod
-from . import converge, render, state as state_mod
+from . import converge, render, runtime as runtime_mod, state as state_mod
 from .config import load
 
 
@@ -106,7 +104,7 @@ def cmd_apply(args) -> int:
     written = converge.write_files(cfg, rendered, dry_run=False)
     if written:
         print(f"\nWrote {len(written)} file(s) to {cfg.install_dir}")
-    rc = converge.execute(plan, dry_run=False)
+    rc = converge.execute(plan, dry_run=False, runtime=getattr(args, "runtime", None))
     if rc == 0:
         new_files = converge.compute_files_after_apply(rendered)
         has_model = plan.current_hash is not None
@@ -123,17 +121,18 @@ def cmd_apply(args) -> int:
 
 def cmd_status(args) -> int:
     cfg = load(args.config)
+    runtime = getattr(args, "runtime", None)
     sparkrun = converge.find_sparkrun()
     compose_file = str(Path(cfg.install_dir) / "litellm" / "docker-compose.yml")
     print("== sparkrun ==")
-    _run([sparkrun, "status"], ok=True)
+    _run([sparkrun, "status"], ok=True, runtime=runtime)
     print("\n== docker compose ==")
-    _run(["docker", "compose", "-f", compose_file, "ps"], ok=True)
+    _run(["docker", "compose", "-f", compose_file, "ps"], ok=True, runtime=runtime)
     print("\n== tailscale ==")
-    _run(["tailscale", "status"], ok=True)
+    _run(["tailscale", "status"], ok=True, runtime=runtime)
     if cfg.cloudflare().get("enabled", False):
         print("\n== cloudflare ==")
-        _run(["systemctl", "is-active", "cloudflared"], ok=True)
+        _run(["systemctl", "is-active", "cloudflared"], ok=True, runtime=runtime)
     return 0
 
 
@@ -150,41 +149,48 @@ def cmd_teardown(args) -> int:
     if cfg.is_cluster:
         stop_argv += ["--cluster", cfg.cluster_name]
     print("Stopping model workload...")
-    _run(stop_argv, ok=True)
+    _run(stop_argv, ok=True, runtime=getattr(args, "runtime", None))
     down_argv = ["docker", "compose", "-f", compose_file, "down"]
     if args.purge:
         down_argv.append("-v")
     print("Tearing down the LiteLLM + monitoring stack...")
-    _run(down_argv, ok=True)
+    _run(down_argv, ok=True, runtime=getattr(args, "runtime", None))
     print("Done. (Volumes kept unless --purge was passed.)")
     return 0
 
 
 def cmd_upgrade(args) -> int:
     cfg = load(args.config)
+    runtime = getattr(args, "runtime", None)
     repo_root = Path(__file__).resolve().parent.parent
     req = repo_root / "requirements.txt"
     if req.is_file():
         print("Updating spark-lab engine dependencies...")
-        _run([sys.executable, "-m", "pip", "install", "-U", "-r", str(req)], ok=True)
+        _run([sys.executable, "-m", "pip", "install", "-U", "-r", str(req)], ok=True, runtime=runtime)
     sparkrun = converge.find_sparkrun()
     compose_file = str(Path(cfg.install_dir) / "litellm" / "docker-compose.yml")
     print("Updating sparkrun + recipe registries...")
-    _run([sparkrun, "update"], ok=True)
+    _run([sparkrun, "update"], ok=True, runtime=runtime)
     print("Pulling latest stack images...")
-    _run(["docker", "compose", "-f", compose_file, "pull"], ok=True)
+    _run(["docker", "compose", "-f", compose_file, "pull"], ok=True, runtime=runtime)
     print("Re-applying (model restart allowed)...")
     args.apply = True
     return cmd_apply(args)
 
 
-def _run(argv, ok: bool = False) -> int:
-    """Run a read-only/operational command, streaming output."""
-    if not shutil.which(argv[0]):
+def _run(argv, ok: bool = False, runtime=None) -> int:
+    """Run a read-only/operational command, streaming output.
+
+    Routed through the runtime seam (ADR 0002). ``ok`` is accepted for signature
+    stability (historical call sites pass it) but is a no-op.
+    """
+    if runtime is None:
+        runtime = runtime_mod.default_runtime()
+    if not runtime.available(argv[0]):
         print(f"(skipping: '{argv[0]}' not found on PATH)")
         return 0
-    result = subprocess.run(argv)
-    return result.returncode if ok else result.returncode
+    result = runtime.run(argv)
+    return result.returncode
 
 
 def main(argv=None) -> int:
@@ -228,6 +234,7 @@ def main(argv=None) -> int:
     p_upgrade.set_defaults(func=cmd_upgrade)
 
     args = parser.parse_args(argv)
+    args.runtime = runtime_mod.default_runtime()
     return args.func(args)
 
 

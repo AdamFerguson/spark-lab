@@ -8,8 +8,13 @@ deploy/
 
 # Managed Python venv
 .venv/
+.venv-test/
 __pycache__/
 *.pyc
+
+# Test artifacts
+.coverage
+coverage.xml
 
 # OS / editor noise
 .DS_Store

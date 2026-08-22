@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -205,8 +204,15 @@ def compute_model_after_apply(state_model, current_recipe: Optional[str],
     return {"name": current_recipe, "hash": current_hash}
 
 
-def execute(plan: Plan, dry_run: bool, verbose: bool = True) -> int:
-    """Run the plan's commands. In dry-run mode, only print them."""
+def execute(plan: Plan, dry_run: bool, verbose: bool = True, runtime=None) -> int:
+    """Run the plan's commands. In dry-run mode, only print them.
+
+    ``runtime`` is the command<->runtime boundary (ADR 0002); it defaults to the
+    real runtime. Tests pass a fake to capture the exact commands that would run.
+    """
+    if runtime is None:
+        from . import runtime as runtime_mod
+        runtime = runtime_mod.default_runtime()
     exit_code = 0
     for desc, argv in plan.commands:
         prefix = "[dry-run] would run: " if dry_run else "==> "
@@ -215,7 +221,7 @@ def execute(plan: Plan, dry_run: bool, verbose: bool = True) -> int:
             print(f"        {' '.join(map(str, argv))}")
         if dry_run:
             continue
-        result = subprocess.run(argv)
+        result = runtime.run(argv)
         if result.returncode != 0:
             print(f"!! command failed ({result.returncode}): {' '.join(map(str, argv))}")
             exit_code = result.returncode

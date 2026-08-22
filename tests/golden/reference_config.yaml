@@ -1,0 +1,56 @@
+install:
+  name: mylab
+  install_dir: /opt/sparklab
+  hosts:
+    - 127.0.0.1
+model:
+  recipe_name: qwen
+  hf_model: test-llm/model
+  image: lmsysorg/sglang:test
+  hf_token_env: HF_TOKEN
+  host: 0.0.0.0
+  port: 30000
+  min_nodes: 1
+  params:
+    kv_cache_dtype: fp8_e4m3
+    mem_fraction_static: 0.85
+    attention_backend: flashinfer
+  extra_flags:
+    - --enable-metrics
+    - --trust-remote-code
+litellm:
+  model_name: my-spark-model
+  port: 4000
+  model_api_base_host: host.docker.internal
+  master_key_env: LITELLM_MASTER_KEY
+  salt_key_env: LITELLM_SALT_KEY
+  db:
+    image: pgvector/pgvector:pg16
+    user: litellm
+    password_env: LITELLM_DB_PASSWORD
+    db: litellm
+  redis:
+    enabled: true
+    image: redis:7-alpine
+    port: 6379
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+monitoring:
+  enabled: true
+  prometheus:
+    image: prom/prometheus
+    port: 9090
+    retention: 15d
+  grafana:
+    image: grafana/grafana
+    port: 3000
+    admin_password_env: GRAFANA_ADMIN_PASSWORD
+  instance_label: spark
+  dashboards:
+    - sglang-dashboard
+network:
+  tailscale:
+    enabled: true
+  cloudflare:
+    enabled: false
