@@ -65,7 +65,7 @@ class TestApplyIntegration(unittest.TestCase):
         self.assertEqual(
             rt.commands,
             [
-                ["sparkrun", "run", "qwen", "--ensure"],
+                ["sparkrun", "run", "qwen", "--ensure", "--hosts", "127.0.0.1"],
                 ["docker", "compose", "-f", str(self.install / "litellm" / "docker-compose.yml"),
                  "up", "-d", "--remove-orphans"],
             ],
@@ -78,7 +78,7 @@ class TestApplyIntegration(unittest.TestCase):
         self.assertEqual(apply.run(_args(self.cfg_path, rt2)), 0)
         # converged: no stop, no restart; only the idempotent "ensure running"
         # is issued. (The engine always ensures the model is up, by design.)
-        self.assertEqual(rt2.commands, [["sparkrun", "run", "qwen", "--ensure"]])
+        self.assertEqual(rt2.commands, [["sparkrun", "run", "qwen", "--ensure", "--hosts", "127.0.0.1"]])
         self.assertFalse(any("stop" in argv for argv in rt2.commands))
         # recorded state is unchanged
         self.assertEqual(self._state(), before)
@@ -105,8 +105,8 @@ class TestApplyIntegration(unittest.TestCase):
         rt = FakeRuntime()
         self.assertEqual(apply.run(_args(self.cfg_path, rt, apply=True)), 0)
         # the running recipe was stopped, then started again
-        self.assertTrue(any(argv == ["sparkrun", "stop", "qwen"] for argv in rt.commands))
-        self.assertTrue(any(argv == ["sparkrun", "run", "qwen", "--ensure"] for argv in rt.commands))
+        self.assertTrue(any(argv == ["sparkrun", "stop", "qwen", "--hosts", "127.0.0.1"] for argv in rt.commands))
+        self.assertTrue(any(argv == ["sparkrun", "run", "qwen", "--ensure", "--hosts", "127.0.0.1"] for argv in rt.commands))
         # state now records the NEW recipe hash
         self.assertNotEqual(self._state()["model"]["hash"], before)
 

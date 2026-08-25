@@ -114,11 +114,13 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
     cluster = cfg.is_cluster
     hosts = ",".join(str(h) for h in cfg.hosts)
 
-    def _cluster_flag() -> List[str]:
-        return ["--cluster", cfg.cluster_name] if cluster else []
+    def _host_flag() -> List[str]:
+        # sparkrun needs host targeting even for a single node (--hosts);
+        # a named cluster supplies its own hosts (--cluster).
+        return ["--cluster", cfg.cluster_name] if cluster else ["--hosts", hosts]
 
     def stop_model(name: str) -> None:
-        argv = [sparkrun, "stop", name] + _cluster_flag()
+        argv = [sparkrun, "stop", name] + _host_flag()
         if allow_restart:
             plan.commands.append((f"Stop model workload {name}", argv))
         else:
@@ -142,7 +144,7 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
     if has_model:
         plan.commands.append(
             ("Start/ensure model workload (no-op if already up)",
-             [sparkrun, "run", cfg.recipe_name, "--ensure"] + _cluster_flag()))
+             [sparkrun, "run", cfg.recipe_name, "--ensure"] + _host_flag()))
 
     plan.model_restart_pending = (not allow_restart) and (bool(stale_recipes) or restart_current)
 
