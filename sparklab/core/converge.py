@@ -47,6 +47,9 @@ class Plan:
         self.model_restart_pending: bool = False    # a model restart is needed but was not requested
         self.current_hash: Optional[str] = None     # sha256 of the current rendered recipe (None if no model)
         self.recipe_name: Optional[str] = None
+        # commands whose failure is non-fatal (root-gated infra ensures); a failure
+        # here warns + continues instead of aborting the whole converge.
+        self.best_effort: set = set()
 
     @property
     def any_change(self) -> bool:
@@ -161,11 +164,13 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
 
     # --- network ------------------------------------------------------------
     if cfg.tailscale().get("enabled", True):
-        plan.commands.append(("Ensure Tailscale is enabled + running",
-                              ["systemctl", "enable", "--now", "tailscaled"]))
+        ts_desc = "Ensure Tailscale is enabled + running"
+        plan.commands.append((ts_desc, ["systemctl", "enable", "--now", "tailscaled"]))
+        plan.best_effort.add(ts_desc)   # needs root; a denial shouldn't abort the converge
     if cfg.cloudflare().get("enabled", False):
-        plan.commands.append(("Ensure Cloudflare Tunnel is running",
-                              ["systemctl", "enable", "--now", "cloudflared"]))
+        cf_desc = "Ensure Cloudflare Tunnel is running"
+        plan.commands.append((cf_desc, ["systemctl", "enable", "--now", "cloudflared"]))
+        plan.best_effort.add(cf_desc)
 
     return plan
 
@@ -228,6 +233,10 @@ def execute(plan: Plan, dry_run: bool, verbose: bool = True, runtime=None) -> in
             continue
         result = runtime.run(argv)
         if result.returncode != 0:
+            if desc in getattr(plan, "best_effort", set()):
+                print(f"!! (best-effort, continuing) {desc} returned {result.returncode} "
+                      f"(usually needs root; the rest of the converge still applies)")
+                continue
             print(f"!! command failed ({result.returncode}): {' '.join(map(str, argv))}")
             exit_code = result.returncode
             break

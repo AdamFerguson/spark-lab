@@ -70,6 +70,47 @@ class TestSystemCheck(unittest.TestCase):
         self.assertIn("python3", failed)
 
 
+class TestCapabilities(unittest.TestCase):
+    """The capability layer: docker access (current user can reach the daemon)."""
+
+    def _args(self, rt, **kw):
+        base = dict(runtime=rt, config="config.yaml", install=False, all=False,
+                    yes=False, verbose=False, json=False)
+        base.update(kw)
+        return types.SimpleNamespace(**base)
+
+    def _out(self, args):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = system.check(args)
+        return rc, buf.getvalue()
+
+    def test_docker_access_ok_when_reachable(self):
+        rt = FakeRuntime(available=_ALL | {"sh"})
+        caps = system.check_capabilities(rt)
+        dc = [c for c in caps if c["name"] == "docker access"]
+        self.assertEqual(len(dc), 1)
+        self.assertTrue(dc[0]["ok"])
+
+    def test_docker_access_flagged_when_denied(self):
+        rt = FakeRuntime(available=_ALL | {"sh"}, fail={"docker": 1})
+        dc = [c for c in system.check_capabilities(rt) if c["name"] == "docker access"][0]
+        self.assertFalse(dc["ok"])
+        self.assertTrue(dc["required"])
+        self.assertIn("usermod", dc["fix"])
+
+    def test_check_exits_1_and_reports_when_docker_denied(self):
+        rt = FakeRuntime(available=_ALL | {"sh"}, fail={"docker": 1})
+        rc, out = self._out(self._args(rt))
+        self.assertEqual(rc, 1)
+        self.assertIn("NEEDS FIX", out)
+        self.assertIn("docker access", out)
+
+    def test_no_capability_when_docker_absent(self):
+        rt = FakeRuntime(available=(_ALL - {"docker"}) | {"sh"})
+        self.assertNotIn("docker access", [c["name"] for c in system.check_capabilities(rt)])
+
+
 class TestDoctorAlias(unittest.TestCase):
     def test_doctor_runs(self):
         from sparklab import cli

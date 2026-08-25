@@ -43,6 +43,51 @@ def detect(runtime) -> list:
     return out
 
 
+def check_capabilities(runtime) -> list:
+    """Capability checks that go beyond 'is the binary present'.
+
+    The important one is **docker access**: the binary can be installed yet the
+    current user may not be in the ``docker`` group, so every real command fails
+    with 'permission denied ... docker.sock'. That is the classic first-run trap
+    on a fresh node.
+
+    Each entry: ``{name, required, ok, why, fix, relogin}``.
+    """
+    out = []
+    if runtime and runtime.available("docker"):
+        try:
+            cp = runtime.run(["docker", "info"])
+            ok = getattr(cp, "returncode", 1) == 0
+        except Exception:  # noqa: BLE001 - treat a probe error as 'not ok'
+            ok = False
+        out.append({
+            "name": "docker access",
+            "required": True,
+            "ok": ok,
+            "why": "The current user must reach the docker daemon to run the stack + model container.",
+            "fix": "sudo usermod -aG docker $(whoami)   # then re-login (new shell/session)",
+            "relogin": not ok,
+        })
+    return out
+
+
+def print_capabilities(caps, file=None) -> None:
+    file = file or sys.stdout
+    if not caps:
+        return
+    print("capabilities", file=file)
+    for c in caps:
+        status = "ok" if c["ok"] else "NEEDS FIX"
+        req = "required" if c["required"] else "optional"
+        print(f"  {c['name']:<14}{req:<10}{status:<10}{c['why']}", file=file)
+        if not c["ok"]:
+            print(f"    fix: {c['fix']}", file=file)
+
+
+def caps_needing_fix(caps) -> list:
+    return [c for c in caps if not c["ok"]]
+
+
 def print_table(results, file=None) -> None:
     file = file or sys.stdout
     print("spark-lab system check", file=file)
@@ -108,10 +153,18 @@ def check(args) -> int:
         runtime = runtime_mod.default_runtime()
     results = detect(runtime)
     print_table(results)
+    caps = check_capabilities(runtime)
+    print_capabilities(caps)
+    cap_fix = caps_needing_fix(caps)
     req_missing = missing(results, required_only=True)
     opt_missing = missing(results, required_only=False)
-    if req_missing:
-        print("\nMissing required tool(s): " + ", ".join(r["name"] for r in req_missing))
+    if req_missing or cap_fix:
+        parts = []
+        if req_missing:
+            parts.append("missing tools: " + ", ".join(r["name"] for r in req_missing))
+        if cap_fix:
+            parts.append("needs fix: " + ", ".join(c["name"] for c in cap_fix))
+        print("\nNeeds attention: " + "; ".join(parts))
     else:
         note = "All required tools are present."
         if opt_missing:
@@ -130,4 +183,4 @@ def check(args) -> int:
             return 1
         print("\nAll required tools installed (re-run in a fresh shell to pick them up).")
         return 0
-    return 0 if not missing(results, required_only=True) else 1
+    return 0 if (not missing(results, required_only=True) and not caps_needing_fix(caps)) else 1

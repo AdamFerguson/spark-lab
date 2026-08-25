@@ -40,9 +40,16 @@ def _system_precheck(args, runtime) -> None:
         return
     results = system.detect(runtime)
     system.print_table(results)
+    caps = system.check_capabilities(runtime)
+    system.print_capabilities(caps)
+    cap_fix = system.caps_needing_fix(caps)
+    for c in cap_fix:
+        print(f"\n! {c['name']} -- {c['why']}")
+        print(f"  to fix (needs sudo, then a fresh shell): {c['fix']}")
     req_missing = system.missing(results, required_only=True)
     if not req_missing:
-        print("All required tools present.")
+        if not cap_fix:
+            print("\nAll required tools present.")
         return
     print("Missing required tool(s): " + ", ".join(r["name"] for r in req_missing))
     if getattr(args, "yes", False):

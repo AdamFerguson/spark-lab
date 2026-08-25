@@ -18,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sparklab.core import converge, state  # noqa: E402
+from tests.helpers import FakeRuntime  # noqa: E402
 
 # Never touch the real sparkrun during tests.
 converge.find_sparkrun = lambda: "sparkrun"
@@ -175,6 +176,31 @@ class TestConverge(unittest.TestCase):
         new_files = converge.compute_files_after_apply(rendered)
         self.assertNotIn("litellm/old-dash.json", new_files)
         self.assertIn("sparkrun/recipes/mymodel.yaml", new_files)
+
+    def test_best_effort_failure_does_not_abort(self):
+        # A root-gated infra-ensure (systemctl) failing should warn + continue,
+        # not abort the converge (the model + stack are the critical commands).
+        plan = converge.Plan()
+        plan.commands = [
+            ("best-effort ensure", ["sysadm", "enable"]),
+            ("critical step", ["important", "run"]),
+        ]
+        plan.best_effort = {"best-effort ensure"}
+        rt = FakeRuntime(available={"sysadm", "important"}, fail={"sysadm": 1})
+        rc = converge.execute(plan, dry_run=False, runtime=rt, verbose=False)
+        self.assertEqual(rc, 0)                      # the best-effort failure is non-fatal
+        self.assertTrue(any(a[0] == "important" for a in rt.commands))
+
+    def test_critical_failure_still_aborts(self):
+        plan = converge.Plan()
+        plan.commands = [
+            ("critical step", ["important", "run"]),
+            ("second", ["later", "cmd"]),
+        ]
+        rt = FakeRuntime(available={"important", "later"}, fail={"important": 1})
+        rc = converge.execute(plan, dry_run=False, runtime=rt, verbose=False)
+        self.assertEqual(rc, 1)
+        self.assertEqual(len(rt.commands), 1)         # broke on the critical failure
 
 
 if __name__ == "__main__":
