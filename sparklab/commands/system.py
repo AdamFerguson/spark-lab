@@ -24,6 +24,8 @@ TOOLS = [
      "apt-get install -y curl", True),
     ("sparkrun",  True,  "The model orchestrator -- the critical dependency; runs the recipe.",
      "uv tool install sparkrun", False),
+    ("hf",        False, "Optional: Hugging Face CLI -- gated models, manual download/cache, token setup (`hf auth login`). sparkrun pulls models via its own lib, so this is not required.",
+     "uv tool install huggingface_hub", False),
     ("tailscale", False, "Optional: private access to the gateway (network.tailscale).",
      "curl -fsSL https://tailscale.com/install.sh | sh", True),
     ("cloudflared", False, "Optional: public tunnel for the gateway (network.cloudflare).",
