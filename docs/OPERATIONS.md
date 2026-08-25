@@ -1,5 +1,12 @@
 # Operations (day-2)
 
+> **First `apply` is slow + blocking.** On a cold node it pulls the model image
+> (many GB) + downloads the weights + waits for the engine to warm up -- several
+> minutes, and it blocks until the model is actually up. Run it from a persistent
+> terminal (`tmux`/`screen`), not a flaky SSH session: if the session dies mid-run,
+> the model keeps running (sparkrun detaches it) but the rest of the converge is
+> undone -- just re-run `spark-lab apply` (the model step is a no-op once it's up).
+
 ## Everyday
 
 ```bash
