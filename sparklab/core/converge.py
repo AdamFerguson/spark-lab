@@ -111,6 +111,9 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
 
     sparkrun = find_sparkrun()
     compose_file = str(Path(cfg.install_dir) / "litellm" / "docker-compose.yml")
+    # Run by the recipe's file path: sparkrun's bare-name lookup searches its
+    # registries, not our install dir. The path is always present + unambiguous.
+    recipe_file = str(Path(cfg.install_dir) / "sparkrun" / "recipes" / f"{cfg.recipe_name}.yaml")
     cluster = cfg.is_cluster
     hosts = ",".join(str(h) for h in cfg.hosts)
 
@@ -144,7 +147,7 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
     if has_model:
         plan.commands.append(
             ("Start/ensure model workload (no-op if already up)",
-             [sparkrun, "run", cfg.recipe_name, "--ensure"] + _host_flag()))
+             [sparkrun, "run", recipe_file, "--ensure"] + _host_flag()))
 
     plan.model_restart_pending = (not allow_restart) and (bool(stale_recipes) or restart_current)
 

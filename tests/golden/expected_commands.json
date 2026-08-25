@@ -4,7 +4,7 @@
     [
       "sparkrun",
       "run",
-      "qwen",
+      "/opt/sparklab/sparkrun/recipes/qwen.yaml",
       "--ensure",
       "--hosts",
       "127.0.0.1"

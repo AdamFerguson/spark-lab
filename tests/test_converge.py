@@ -76,7 +76,8 @@ class TestConverge(unittest.TestCase):
         plan = plan_for(cfg, rendered, files={}, model=None, allow_restart=False)
         # brand-new model: nothing running under it, so no stop -> not pending
         self.assertFalse(plan.model_restart_pending)
-        self.assertTrue(any("run mymodel --ensure" in " ".join(map(str, a)) for d, a in plan.commands))
+        self.assertTrue(any("mymodel.yaml" in " ".join(map(str, a)) and "--ensure" in " ".join(map(str, a))
+                            for d, a in plan.commands))
         # state now records the running model, so a later content change is caught
         new_model = converge.compute_model_after_apply(
             None, "mymodel", plan.current_hash, converged_after(plan, False))
@@ -124,7 +125,8 @@ class TestConverge(unittest.TestCase):
         plan = plan_for(cfg, rendered, files, model, allow_restart=True)
         stops = [d for d, _ in plan.commands if d.startswith("Stop model")]
         self.assertEqual(stops, ["Stop model workload qwen"])
-        self.assertTrue(any("run llama --ensure" in " ".join(map(str, a)) for d, a in plan.commands))
+        self.assertTrue(any("llama.yaml" in " ".join(map(str, a)) and "--ensure" in " ".join(map(str, a))
+                            for d, a in plan.commands))
         self.assertFalse(plan.model_restart_pending)
         self.assertEqual(converge.compute_model_after_apply(model, "llama", plan.current_hash, converged_after(plan, True)),
                          {"name": "llama", "hash": plan.current_hash})
