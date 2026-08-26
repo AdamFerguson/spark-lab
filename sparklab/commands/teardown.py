@@ -4,7 +4,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from ..core import config, converge
+from ..core import config, converge, state
 from ..util import run_command
 
 
@@ -32,5 +32,8 @@ def run(args) -> int:
         down_argv.append("-v")
     print("Tearing down the LiteLLM + monitoring stack...")
     run_command(down_argv, ok=True, runtime=getattr(args, "runtime", None))
-    print("Done. (Volumes kept unless --purge was passed.)")
+    # Clear the recorded state so the next `apply` re-converges from scratch
+    # (a teardown leaves the node with no running managed services).
+    state.State(cfg.state_dir).clear()
+    print("Done. State cleared (re-run `apply` to bring it back up).")
     return 0

@@ -69,6 +69,15 @@ class TestCliCommands(unittest.TestCase):
                                   "--hosts", "127.0.0.1"] for a in rt.commands))
         self.assertTrue(any(a[0] == "docker" and "down" in a and "-v" in a for a in rt.commands))
 
+    def test_teardown_clears_state(self):
+        rt = FakeRuntime(available=_AVAIL)
+        st_dir = self.d / ".sparklab-state"
+        st_dir.mkdir(parents=True, exist_ok=True)
+        (st_dir / "state.json").write_text('{"files": {"a": "b"}}')
+        self.assertTrue((st_dir / "state.json").exists())
+        self.assertEqual(teardown.run(_args(self.cp, rt, yes=True)), 0)
+        self.assertFalse((st_dir / "state.json").exists())   # cleared for a fresh re-apply
+
     def test_upgrade_runs_pipeline_then_reapplies(self):
         rt = FakeRuntime(available=_AVAIL)  # no uv -> pip refresh path
         self.assertEqual(upgrade.run(_args(self.cp, rt)), 0)
