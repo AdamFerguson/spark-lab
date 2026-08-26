@@ -126,7 +126,8 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
         return ["--cluster", cfg.cluster_name] if cluster else ["--hosts", hosts]
 
     def stop_model(name: str) -> None:
-        argv = [sparkrun, "stop", name] + _host_flag()
+        recipe_path = str(Path(cfg.install_dir) / "sparkrun" / "recipes" / f"{name}.yaml")
+        argv = [sparkrun, "stop", recipe_path] + _host_flag()
         if allow_restart:
             plan.commands.append((f"Stop model workload {name}", argv))
         else:

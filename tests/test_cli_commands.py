@@ -64,7 +64,9 @@ class TestCliCommands(unittest.TestCase):
     def test_teardown_with_yes_stops_and_downs(self):
         rt = FakeRuntime(available=_AVAIL)
         self.assertEqual(teardown.run(_args(self.cp, rt, yes=True, purge=True)), 0)
-        self.assertTrue(any(a == ["sparkrun", "stop", "qwen"] for a in rt.commands))
+        self.assertTrue(any(a == ["sparkrun", "stop",
+                                  str(self.install / "sparkrun" / "recipes" / "qwen.yaml"),
+                                  "--hosts", "127.0.0.1"] for a in rt.commands))
         self.assertTrue(any(a[0] == "docker" and "down" in a and "-v" in a for a in rt.commands))
 
     def test_upgrade_runs_pipeline_then_reapplies(self):

@@ -17,9 +17,14 @@ def run(args) -> int:
         return 1
     sparkrun = converge.find_sparkrun()
     compose_file = str(Path(cfg.install_dir) / "litellm" / "docker-compose.yml")
-    stop_argv = [sparkrun, "stop", cfg.recipe_name]
+    # stop by the recipe's file path (sparkrun's bare-name lookup hits its
+    # registries, not our install dir) + host targeting (single-node needs --hosts).
+    recipe_file = str(Path(cfg.install_dir) / "sparkrun" / "recipes" / f"{cfg.recipe_name}.yaml")
+    stop_argv = [sparkrun, "stop", recipe_file]
     if cfg.is_cluster:
         stop_argv += ["--cluster", cfg.cluster_name]
+    else:
+        stop_argv += ["--hosts", ",".join(str(h) for h in cfg.hosts)]
     print("Stopping model workload...")
     run_command(stop_argv, ok=True, runtime=getattr(args, "runtime", None))
     down_argv = ["docker", "compose", "-f", compose_file, "down"]
