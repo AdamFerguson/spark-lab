@@ -8,6 +8,9 @@ model_list:
       model: custom_openai/{{ hf_model }}
       api_base: {{ api_base }}
       api_key: "not-needed"
+      # Self-hosted OpenAI-compatible engines (sglang/vllm) accept reasoning
+      # controls as extra params; allow them through instead of a 400.
+      allowed_openai_params: ["reasoning_effort"]
     model_info:
       id: "{{ hf_model }}"
       supports_vision: {{ 'true' if model_info.get('supports_vision', true) else 'false' }}

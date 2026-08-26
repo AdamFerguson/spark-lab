@@ -69,10 +69,12 @@ def build_context(cfg: config_mod.Config) -> dict:
         "flag_map": model.get("flag_map", {}),
         "model_image": cfg.image_model(),
         "hf_token": cfg.secret(model.get("hf_token_env")),
-        "master_key": cfg.secret(litellm.get("master_key_env")),
-        "salt_key": cfg.secret(litellm.get("salt_key_env")),
+        # Defaults keep an omitted key-name from silently rendering an EMPTY
+        # secret (an unauthenticated / broken gateway instead of a clear error).
+        "master_key": cfg.secret(litellm.get("master_key_env", "LITELLM_MASTER_KEY")),
+        "salt_key": cfg.secret(litellm.get("salt_key_env", "LITELLM_SALT_KEY")),
         "db_user": db.get("user", "litellm"),
-        "db_password": cfg.secret(db.get("password_env")),
+        "db_password": cfg.secret(db.get("password_env", "LITELLM_DB_PASSWORD")),
         "db_name": db.get("db", "litellm"),
         "db_image": cfg.image("db"),
         "redis_enabled": bool(redis.get("enabled", False)),

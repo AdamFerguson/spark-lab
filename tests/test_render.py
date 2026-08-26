@@ -72,6 +72,30 @@ class TestRender(unittest.TestCase):
         self.assertIn("test-master-key", env_text)
         self.assertIn("test-salt-key", env_text)
 
+    def test_model_config_allows_reasoning_effort(self):
+        # Self-hosted engines (sglang/vllm) take reasoning controls as extra
+        # params; without this allowlist the gateway 400s on reasoning_effort.
+        _cfg, rendered = _render()
+        text = rendered["litellm/model_config.yaml"].decode("utf-8")
+        self.assertIn('allowed_openai_params: ["reasoning_effort"]', text)
+
+    def test_missing_key_names_fall_back_to_default_env_names(self):
+        # An omitted master_key_env/salt_key_env must resolve the standard .env
+        # names -- never silently render empty secrets into litellm/.env.
+        import re as _re
+        d = Path(tempfile.mkdtemp())
+        no_names = _re.sub(
+            r"\n\s+(master_key_env|salt_key_env):.+", "",
+            REFERENCE_CONFIG)
+        self.assertNotIn("master_key_env", no_names)
+        (d / "config.yaml").write_text(no_names)
+        (d / ".env").write_text(REFERENCE_ENV)
+        cfg = config_mod.load(str(d / "config.yaml"))
+        rendered = render.render(cfg, d / "deploy")
+        env_text = rendered["litellm/.env"].decode("utf-8")
+        self.assertIn("test-master-key", env_text)
+        self.assertIn("test-salt-key", env_text)
+
     def test_rendered_files_written_to_deploy_dir(self):
         d = Path(tempfile.mkdtemp())
         (d / "config.yaml").write_text(REFERENCE_CONFIG)
