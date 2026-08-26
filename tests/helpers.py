@@ -130,6 +130,7 @@ class FakeRuntime:
         }
         self._fail = dict(fail or {})
         self.calls = []
+        self.spawned = []   # the subset of commands launched detached (via spawn)
 
     def available(self, binary: str) -> bool:
         return binary in self._available
@@ -145,6 +146,23 @@ class FakeRuntime:
         r.argv = argv
         r.returncode = self._fail.get(argv[0], 0)
         return r
+
+    def spawn(self, argv):
+        """Record a detached launch (mirrors ``Runtime.spawn``).
+
+        Recorded to the same ``calls`` list as ``run`` so command-sequence
+        assertions stay uniform; returns a stand-in ``Popen`` (not awaited).
+        """
+        argv = [str(x) for x in argv]
+        self.calls.append(argv)
+        self.spawned.append(argv)
+
+        class _P:
+            pass
+
+        p = _P()
+        p.argv = argv
+        return p
 
     @property
     def commands(self):

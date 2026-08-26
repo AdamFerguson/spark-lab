@@ -31,6 +31,7 @@ def make_cfg(recipe="mymodel", cluster=False):
     c.is_cluster = cluster
     c.cluster_name = "spark"
     c.hosts = ["10.0.0.1", "10.0.0.2"] if cluster else []
+    c.model = {"port": 30000}      # active model definition (probe reads .port)
     c.tailscale = lambda: {"enabled": False}
     c.cloudflare = lambda: {"enabled": False}
     return c
@@ -201,6 +202,46 @@ class TestConverge(unittest.TestCase):
         rc = converge.execute(plan, dry_run=False, runtime=rt, verbose=False)
         self.assertEqual(rc, 1)
         self.assertEqual(len(rt.commands), 1)         # broke on the critical failure
+
+    # 7. Model launch is detached + a bounded probe follows -------------------
+    def test_model_launch_backgrounded_with_probe(self):
+        # A fresh single-node apply: the control plane comes up FIRST (gateway
+        # available while the model loads), the model is launched detached, and a
+        # bounded readiness probe follows it.
+        cfg = make_cfg(recipe="mymodel")
+        rendered = {**recipe_bytes("mymodel"), **LIT}
+        plan = plan_for(cfg, rendered, files={}, model=None, allow_restart=True)
+        descs = [d for d, _ in plan.commands]
+        self.assertIn("Reconcile LiteLLM + monitoring stack (up + remove orphans)", descs)
+        self.assertIn("Start/ensure model workload (detached)", descs)
+        self.assertIn("Wait for model to be ready (bounded)", descs)
+        self.assertLess(descs.index("Reconcile LiteLLM + monitoring stack (up + remove orphans)"),
+                        descs.index("Start/ensure model workload (detached)"))
+        self.assertLess(descs.index("Start/ensure model workload (detached)"),
+                        descs.index("Wait for model to be ready (bounded)"))
+        # the model launch is the detached command; the probe is run inline
+        self.assertIn("Start/ensure model workload (detached)", plan.background)
+        self.assertNotIn("Wait for model to be ready (bounded)", plan.background)
+        # the probe targets the model's /health (port 30000) on a real host
+        probe_argv = dict(plan.commands)["Wait for model to be ready (bounded)"]
+        self.assertEqual(probe_argv[:2], ["sh", "-c"])
+        self.assertIn("30000/health", probe_argv[2])
+
+    def test_execute_spawns_background_commands(self):
+        # execute() must launch background commands via spawn (detached), not the
+        # blocking run, so the converge doesn't hang on the model's log-tail.
+        plan = converge.Plan()
+        plan.commands = [
+            ("detached model", ["sparkrun", "run", "r.yaml", "--ensure", "--hosts", "x"]),
+            ("probe", ["sh", "-c", "curl ..."])
+        ]
+        plan.background = {"detached model"}
+        rt = FakeRuntime(available={"sparkrun", "sh"})
+        rc = converge.execute(plan, dry_run=False, runtime=rt, verbose=False)
+        self.assertEqual(rc, 0)
+        self.assertEqual(rt.spawned,
+                         [["sparkrun", "run", "r.yaml", "--ensure", "--hosts", "x"]])
+        self.assertEqual(len(rt.commands), 2)         # both still recorded
 
 
 if __name__ == "__main__":

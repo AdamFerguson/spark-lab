@@ -1,6 +1,18 @@
 [
   [
-    "Start/ensure model workload (no-op if already up)",
+    "Reconcile LiteLLM + monitoring stack (up + remove orphans)",
+    [
+      "docker",
+      "compose",
+      "-f",
+      "/opt/sparklab/litellm/docker-compose.yml",
+      "up",
+      "-d",
+      "--remove-orphans"
+    ]
+  ],
+  [
+    "Start/ensure model workload (detached)",
     [
       "sparkrun",
       "run",
@@ -11,15 +23,11 @@
     ]
   ],
   [
-    "Reconcile LiteLLM + monitoring stack (up + remove orphans)",
+    "Wait for model to be ready (bounded)",
     [
-      "docker",
-      "compose",
-      "-f",
-      "/opt/sparklab/litellm/docker-compose.yml",
-      "up",
-      "-d",
-      "--remove-orphans"
+      "sh",
+      "-c",
+      "for i in $(seq 1 120); do curl -fsS -m 5 http://127.0.0.1:30000/health >/dev/null 2>&1 && exit 0; sleep 5; done; echo 'model not ready after 600s (http://127.0.0.1:30000/health)' >&2; exit 1"
     ]
   ],
   [

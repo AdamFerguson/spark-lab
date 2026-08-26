@@ -50,6 +50,10 @@ class Plan:
         # commands whose failure is non-fatal (root-gated infra ensures); a failure
         # here warns + continues instead of aborting the whole converge.
         self.best_effort: set = set()
+        # commands to launch *detached* (spawn, don't wait). The model launch lives
+        # here: `sparkrun run` foreground-tails the model log and would otherwise
+        # block the converge forever. A later bounded readiness probe confirms it.
+        self.background: set = set()
 
     @property
     def any_change(self) -> bool:
@@ -58,6 +62,28 @@ class Plan:
 
 def _recipe_rel(recipe: str) -> str:
     return f"sparkrun/recipes/{recipe}.yaml"
+
+
+def _model_readiness_probe(cfg) -> List[str]:
+    """A bounded shell command that polls the model ``/health`` until ready.
+
+    Replaces the model's foreground log-tail as the "is it up?" signal: a bounded
+    poll (default ~10 min) means a failed model start is surfaced as an apply
+    failure instead of the converge hanging. Probes the first host; refining the
+    per-model primary endpoint for multi-node clusters is a follow-up
+    (see docs/CLUSTERING.md).
+    """
+    host = str(cfg.hosts[0]) if cfg.hosts else "127.0.0.1"
+    port = int(cfg.model.get("port", 30000))
+    url = f"http://{host}:{port}/health"
+    polls, sleep_s = 120, 5
+    loop = (
+        f"for i in $(seq 1 {polls}); do "
+        f"curl -fsS -m 5 {url} >/dev/null 2>&1 && exit 0; "
+        f"sleep {sleep_s}; done; "
+        f"echo 'model not ready after {polls * sleep_s}s ({url})' >&2; exit 1"
+    )
+    return ["sh", "-c", loop]
 
 
 def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restart: bool) -> Plan:
@@ -148,20 +174,33 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
     # restart the running recipe if its definition changed
     if restart_current:
         stop_model(cfg.recipe_name)
-    if has_model:
-        plan.commands.append(
-            ("Start/ensure model workload (no-op if already up)",
-             [sparkrun, "run", recipe_file, "--ensure"] + _host_flag()))
 
     plan.model_restart_pending = (not allow_restart) and (bool(stale_recipes) or restart_current)
 
     # --- litellm + monitoring stack -----------------------------------------
+    # Brought up FIRST so the control plane (gateway + observability) is available
+    # while the model is still loading -- the model launch below is detached and
+    # does not block the converge.
     if litellm_touched:
         plan.commands.append(
             ("Reconcile LiteLLM + monitoring stack (up + remove orphans)",
              ["docker", "compose", "-f", compose_file, "up", "-d", "--remove-orphans"]))
     else:
         plan.notes.append("LiteLLM stack unchanged (skipping `docker compose up`).")
+
+    # --- model workload -------------------------------------------------------
+    # Launch detached (`--ensure` is idempotent: no-op if already up). `sparkrun run`
+    # otherwise foreground-tails the model log and would block the converge forever
+    # (so the control plane above would never start on a fresh apply). A bounded
+    # readiness probe (next) confirms the model actually came up instead of the
+    # log-tail, so a failed start is surfaced rather than silently hung.
+    if has_model:
+        model_desc = "Start/ensure model workload (detached)"
+        plan.commands.append(
+            (model_desc, [sparkrun, "run", recipe_file, "--ensure"] + _host_flag()))
+        plan.background.add(model_desc)
+        plan.commands.append(
+            ("Wait for model to be ready (bounded)", _model_readiness_probe(cfg)))
 
     # --- network ------------------------------------------------------------
     if cfg.tailscale().get("enabled", True):
@@ -231,6 +270,12 @@ def execute(plan: Plan, dry_run: bool, verbose: bool = True, runtime=None) -> in
             print(f"{prefix}{desc}")
             print(f"        {' '.join(map(str, argv))}")
         if dry_run:
+            continue
+        if desc in getattr(plan, "background", set()):
+            # Launch detached: don't block the converge on this process (the model
+            # log-tail would run until the model exits). A bounded readiness probe
+            # later confirms it actually came up.
+            runtime.spawn(argv)
             continue
         result = runtime.run(argv)
         if result.returncode != 0:

@@ -61,27 +61,32 @@ class TestApplyIntegration(unittest.TestCase):
         st = self._state()
         self.assertIn("sparkrun/recipes/qwen.yaml", st["files"])
         self.assertEqual(st["model"]["name"], "qwen")
-        # the exact commands issued: start the model, reconcile the stack
-        self.assertEqual(
-            rt.commands,
-            [
-                ["sparkrun", "run", str(self.install / "sparkrun" / "recipes" / "qwen.yaml"),
-                 "--ensure", "--hosts", "127.0.0.1"],
-                ["docker", "compose", "-f", str(self.install / "litellm" / "docker-compose.yml"),
-                 "up", "-d", "--remove-orphans"],
-            ],
-        )
+        # the exact commands issued: control plane first (available while the model
+        # loads), then the model launched detached, then a bounded readiness probe
+        compose = ["docker", "compose", "-f", str(self.install / "litellm" / "docker-compose.yml"),
+                   "up", "-d", "--remove-orphans"]
+        model_run = ["sparkrun", "run", str(self.install / "sparkrun" / "recipes" / "qwen.yaml"),
+                     "--ensure", "--hosts", "127.0.0.1"]
+        self.assertEqual(len(rt.commands), 3)
+        self.assertEqual(rt.commands[0], compose)
+        self.assertEqual(rt.commands[1], model_run)
+        self.assertEqual(rt.commands[2][:2], ["sh", "-c"])
+        self.assertIn("127.0.0.1:30000/health", rt.commands[2][2])
 
     def test_reapply_is_idempotent_no_restart(self):
         apply.run(_args(self.cfg_path, FakeRuntime()))
         before = self._state()
         rt2 = FakeRuntime()
         self.assertEqual(apply.run(_args(self.cfg_path, rt2)), 0)
-        # converged: no stop, no restart; only the idempotent "ensure running"
-        # is issued. (The engine always ensures the model is up, by design.)
-        self.assertEqual(rt2.commands, [["sparkrun", "run",
+        # converged: no stop, no restart; the model is (re)ensured detached + a
+        # bounded readiness probe runs. (The engine always ensures the model is up,
+        # by design.) The control plane is skipped (unchanged).
+        self.assertEqual(len(rt2.commands), 2)
+        self.assertEqual(rt2.commands[0], ["sparkrun", "run",
                                         str(self.install / "sparkrun" / "recipes" / "qwen.yaml"),
-                                        "--ensure", "--hosts", "127.0.0.1"]])
+                                        "--ensure", "--hosts", "127.0.0.1"])
+        self.assertEqual(rt2.commands[1][:2], ["sh", "-c"])
+        self.assertIn("127.0.0.1:30000/health", rt2.commands[1][2])
         self.assertFalse(any("stop" in argv for argv in rt2.commands))
         # recorded state is unchanged
         self.assertEqual(self._state(), before)
