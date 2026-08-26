@@ -40,15 +40,23 @@ class Runtime:
         return subprocess.run(list(argv))
 
     def spawn(self, argv) -> subprocess.Popen:
-        """Launch ``argv`` in the background and return the ``Popen`` **without**
+        """Launch ``argv`` fully **detached** and return the ``Popen`` without
         waiting for it to exit.
 
         Used for the model launch: ``sparkrun run`` foreground-tails the model
         log and would otherwise block the converge forever (so the control plane
-        would never start). We launch it detached and confirm readiness with a
-        separate, bounded probe instead of waiting on the process.
+        would never start). We launch it in a new session with stdio redirected
+        away so it doesn't hold the caller's terminal; the model's own logs stay
+        available via ``docker logs`` / ``spark-lab logs``, and a separate bounded
+        probe confirms it actually came up.
         """
-        return subprocess.Popen(list(argv))
+        return subprocess.Popen(
+            list(argv),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
 
 
 def default_runtime() -> Runtime:
