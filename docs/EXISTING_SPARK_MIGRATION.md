@@ -32,11 +32,35 @@ opt into a model restart.
 
 ---
 
+## Hard requirements + safety invariants (non-negotiable)
+
+1. **Preserve the existing data volumes.** The live node's LiteLLM Postgres
+   (keys, spend tracking), Redis, Grafana, and Prometheus live in **named Docker
+   volumes**. The migration must **reuse those exact volume names** — never
+   recreate, rename, or `--purge` them — so the data survives. `teardown --purge`
+   is **forbidden** on a node that has data. Before any converge, **capture the
+   existing volume names + sizes** (`docker volume ls`, `docker system df`);
+   the rendered compose must bind to the same names.
+2. **Never migrate a node that serves a model you depend on** (the "brain" rule).
+   If the migration target is the host whose model this session / other work
+   relies on, migrating it (stopping/restarting its model or control plane) can
+   take out that dependency mid-work. **Bridge first**: stand up the full stack
+   on the bridge node, point the dependent sessions at the bridge's gateway,
+   *then* migrate the original node.
+3. **Interim vs eventual control plane.** The bridge node can be the *interim*
+   control plane; the original node (with its preserved data) can remain the
+   *eventual* control plane. `install.control_plane` makes this explicit +
+   swappable (see ADR 0007).
+
+---
+
 ## Prerequisites (before you start, on the existing Spark)
 
 - [ ] You have a **capture** of the current live state: the running recipe
       (`<install_dir>/sparkrun/recipes/<model>.yaml`), the `docker-compose.yml`,
-      the on-disk `config` values, and the running `.env`. (`scripts/capture.sh` /
+      the on-disk `config` values, and the running `.env`. **Plus the data volumes**:
+      `docker volume ls` (names) + `docker system df` (sizes) so the new compose
+      can bind to the *same* names (hard requirement #1). (`scripts/capture.sh` /
       `spark-lab capture` — the same capture that produced `tests/capture/`.)
       **This capture is your rollback.** Save it somewhere safe *outside* the node.
 - [ ] You know the **exact `install_dir`** the live stack uses and the **recipe

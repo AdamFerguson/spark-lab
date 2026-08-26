@@ -232,6 +232,14 @@ monitoring:
   re-rendering + the config fields.
 - **Config stays secret-safe:** `api_base_host` + hostnames are topology, not
   credentials; they live in config, never in the rendered gateway/secret files.
+- **Swappable + migration-friendly control plane.** `install.control_plane` makes
+  the control plane explicit + movable, which supports the *bridge-then-migrate*
+  pattern: stand up an interim control plane on a second node, point dependent
+  sessions at it, then migrate the original node (which keeps its data and can
+  remain the eventual control plane). When converging an **existing** install, the
+  rendered compose must **reuse the existing named Docker volumes** (Postgres /
+  Redis / Grafana / Prometheus) so their data survives — the compose split (§2)
+  keeps volume names stable across the split.
 
 ## Open questions (resolve on the two Sparks — see CLUSTERING.md)
 
