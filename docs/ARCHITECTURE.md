@@ -69,9 +69,13 @@ How the pieces fit together, and why each one exists.
 
 1. **Render** templates → a `deploy/` tree from `config.yaml` + `.env`.
 2. **Diff** each rendered file's SHA-256 against `.sparklab-state/state.json`.
-3. **Act only on the difference**: recreate the LiteLLM stack if its files
-   changed; restart the model only if the recipe changed *and* you opt in with
-   `--apply`; (re)enable the network services.
+3. **Act only on the difference**: bring the LiteLLM + monitoring **control
+   plane up first** (if its files changed) so the gateway + observability are
+   available while the model loads; then **launch the model detached** (only if
+   the recipe is new or changed *and* you opt in with `--apply`), and **probe
+   the model's `/health` with a bounded wait** instead of blocking on its log
+   tail -- so a failed model start is reported rather than hanging the converge;
+   finally (re)enable the network services.
 4. **Record** the new hashes, so the next run is a no-op unless something
    changed.
 
