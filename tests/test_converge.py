@@ -13,15 +13,13 @@ import sys
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 # make `lib` importable when run as a plain script
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sparklab.core import converge, state  # noqa: E402
 from tests.helpers import FakeRuntime  # noqa: E402
-
-# Never touch the real sparkrun during tests.
-converge.find_sparkrun = lambda: "sparkrun"
 
 
 def make_cfg(recipe="mymodel", cluster=False):
@@ -56,6 +54,15 @@ def converged_after(plan, allow_restart):
 
 
 class TestConverge(unittest.TestCase):
+    def setUp(self):
+        # Never touch the real sparkrun during these tests (scoped to this class
+        # so the real find_sparkrun is restored for later test modules).
+        self._p = mock.patch.object(converge, "find_sparkrun", lambda *a: "sparkrun")
+        self._p.start()
+
+    def tearDown(self):
+        self._p.stop()
+
     # 1. No-op ---------------------------------------------------------------
     def test_noop_is_idempotent(self):
         cfg = make_cfg()

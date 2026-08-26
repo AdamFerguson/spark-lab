@@ -219,6 +219,19 @@ class Config:
         return self.data.get("install", {})
 
     @property
+    def remote(self) -> Dict[str, Any]:
+        """The ``install.remote`` block (empty when the node is local).
+
+        Keys: ``host`` (SSH target), optional ``user`` / ``port`` /
+        ``identity_file`` / ``repo_dir`` (the node's spark-lab checkout).
+        """
+        return self.install.get("remote") or {}
+
+    @property
+    def is_remote(self) -> bool:
+        return bool(self.remote.get("host"))
+
+    @property
     def litellm(self) -> Dict[str, Any]:
         return self.data.get("litellm", {})
 
@@ -234,6 +247,37 @@ class Config:
     @property
     def install_dir(self) -> Path:
         return Path(os.path.expanduser(str(self.install.get("install_dir", "~/AI"))))
+
+    @property
+    def install_dir_raw(self) -> str:
+        """``install.install_dir`` exactly as written (no local expanduser).
+
+        In remote mode this string (e.g. ``~/AI``) refers to the *target
+        node's* filesystem; it must be expanded there, not on the operator's
+        machine. Local mode keeps using :attr:`install_dir` (expanded here).
+        """
+        return str(self.install.get("install_dir", "~/AI"))
+
+    @property
+    def remote_repo_dir(self) -> str:
+        """The target node's spark-lab checkout (state + upgrade), raw form."""
+        return str(self.remote.get("repo_dir") or "~/spark-lab")
+
+    def node_path(self, rel: str, home: Optional[str] = None) -> str:
+        """A path under the install dir, *as it exists on the target node*.
+
+        Local: an absolute path on this machine (byte-identical to the
+        historical ``str(Path(cfg.install_dir) / rel)``). Remote: the node-side
+        path with ``~`` expanded against the remote ``home`` when given
+        (``home`` comes from ``runtime.home_path()``).
+        """
+        if self.is_remote:
+            base = self.install_dir_raw
+            if base.startswith("~") and home:
+                # Expand against the REMOTE home (plain ~ / ~/... forms).
+                base = home + base[1:] if base.startswith("~/") else home
+            return f"{base.rstrip('/')}/{str(rel).lstrip('/')}"
+        return str(self.install_dir / rel)
 
     @property
     def hosts(self):

@@ -25,6 +25,25 @@ install:
   ssh_user: null            # default: current user
   # Name for the saved `sparkrun cluster`. Only used when hosts > 1.
   cluster_name: mylab
+  # ------------------------------------------------------------------
+  # REMOTE OPERATOR MODE (optional).
+  # When `remote.host` is set, spark-lab runs on THIS machine but converges
+  # the node at `remote.host` over SSH (Fabric). Omit it to converge this
+  # machine (the default, node-local behavior).
+  #   * `install_dir` above then refers to the TARGET node's filesystem.
+  #   * The state file lives on the target node (in its spark-lab checkout,
+  #     `repo_dir` below), so local + remote operation share one record.
+  #   * Secrets still come from the .env next to THIS config file; rendered
+  #     files (incl. the stack's .env) are pushed to the node.
+  #   * One config targets one node: manage two Sparks with two configs
+  #     (e.g. labs/luna/config.yaml + labs/sol/config.yaml) and --config.
+  # Prerequisite: SSH key access to the node from this machine.
+  # remote:
+  #   host: my-spark              # SSH target (hostname / tailnet name / IP)
+  #   user: adam                  # default: current user
+  #   port: 22                    # default: 22
+  #   identity_file: ~/.ssh/id_ed25519   # default: your usual SSH keys/agent
+  #   repo_dir: ~/spark-lab       # the node's spark-lab checkout (state + upgrade)
 
 model:
   # Base name of the recipe file written to <install_dir>/sparkrun/recipes/.

@@ -6,17 +6,16 @@ import sys
 import tempfile
 from pathlib import Path
 
-from ..core import config, converge, render, state
+from ..core import config, converge, node, render
 
 
-def _print_diffs(cfg, rendered, file_changes, limit=200):
+def _print_diffs(cfg, rendered, file_changes, fs, limit=200):
     """Show a unified diff vs the current on-disk install for each change."""
-    base = Path(cfg.install_dir)
     print("\n--- diff vs current install (a/ = on disk, b/ = would write) ---")
     for rel, kind in file_changes:
         new = rendered.get(rel, b"").decode("utf-8", "replace")
-        old_path = base / rel
-        old = old_path.read_text("utf-8", "replace") if old_path.is_file() else ""
+        old_bytes = fs.read(rel)
+        old = old_bytes.decode("utf-8", "replace") if old_bytes else ""
         lines = list(difflib.unified_diff(old.splitlines(), new.splitlines(),
                                           fromfile=f"a/{rel}", tofile=f"b/{rel}",
                                           lineterm=""))
@@ -24,6 +23,15 @@ def _print_diffs(cfg, rendered, file_changes, limit=200):
             continue
         print(f"\n### {kind.upper()}: {rel}")
         print("\n".join(lines[:limit]))
+
+
+def _target_banner(cfg, runtime) -> None:
+    """Where this converge lands: this machine, or a remote node."""
+    if cfg.is_remote and getattr(runtime, "is_remote", False):
+        print(f"   target     : {runtime.label}  (remote mode)")
+        print(f"   install dir: {cfg.install_dir_raw} (on the node)")
+    else:
+        print(f"   install dir: {cfg.install_dir}")
 
 
 def run(args) -> int:
@@ -40,15 +48,16 @@ def run(args) -> int:
 
     print(f"== spark-lab apply {'[dry-run]' if dry else ''} ==")
     print(f"   config     : {cfg.config_path}")
-    print(f"   install dir: {cfg.install_dir}")
+    _target_banner(cfg, runtime)
     print(f"   hosts      : {', '.join(str(h) for h in cfg.hosts)}"
           f"{'  (cluster)' if cfg.is_cluster else ''}")
 
     # Dry-run renders into a throwaway dir so it truly writes nothing to the repo.
     out_dir = Path(tempfile.mkdtemp(prefix="sparklab-dry-")) if dry else cfg.deploy_dir
     rendered = render.render(cfg, out_dir)
-    st = state.State(cfg.state_dir)
-    plan = converge.build_plan(cfg, rendered, st.files, st.model, allow_restart)
+    fs, st = node.node_env(cfg, runtime)
+    plan = converge.build_plan(cfg, rendered, st.files, st.model, allow_restart,
+                               runtime=runtime)
 
     print("\nFile changes vs last apply:")
     if plan.file_changes:
@@ -66,13 +75,14 @@ def run(args) -> int:
 
     if dry:
         if getattr(args, "diff", False):
-            _print_diffs(cfg, rendered, plan.file_changes)
+            _print_diffs(cfg, rendered, plan.file_changes, fs)
         print("\n[dry-run] No files written, no commands executed.")
         return 0
 
-    written = converge.write_files(cfg, rendered, dry_run=False)
+    written = converge.write_files(cfg, rendered, dry_run=False, fs=fs)
     if written:
-        print(f"\nWrote {len(written)} file(s) to {cfg.install_dir}")
+        where = f" on {runtime.label}" if getattr(runtime, "is_remote", False) else f" to {cfg.install_dir}"
+        print(f"\nWrote {len(written)} file(s){where}")
     rc = converge.execute(plan, dry_run=False, runtime=runtime)
     if rc == 0:
         new_files = converge.compute_files_after_apply(rendered)

@@ -112,6 +112,16 @@ observability/management, not the model.
 > `run`-over-SSH seam, ADR 0002). It is the new piece this ADR introduces to
 > `converge`. It is read-only-safe: it only ever manages the metric-agent
 > compose on workers, never the model.
+>
+> **Status note (2026-08-26):** the remote primitive has now shipped, in a
+> *generalized* form, as **remote operator mode** (`install.remote` +
+> `sparklab/core/remote.py`): any command (`apply`, `status`, `teardown`,
+> `upgrade`, `adopt`, ...) can converge a remote node over SSH (Fabric) from an
+> operator machine, with state kept on the managed node. See
+> `docs/REMOTE_OPERATOR_MODE.md`. What remains from this ADR is the
+> control-plane/worker *role split* (metric-agent deploy per host, multi-node
+> Prometheus, host-aware dashboards) — the remote primitive above is the
+> foundation it builds on.
 
 ### 5. Multi-node Prometheus (templated)
 

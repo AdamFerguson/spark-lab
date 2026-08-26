@@ -30,3 +30,6 @@ dist/
 # OS / editor noise
 .DS_Store
 *.swp
+
+# Remote operator lab configs (per-node config.yaml + .env — .env must never be committed)
+labs/

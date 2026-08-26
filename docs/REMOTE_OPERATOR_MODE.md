@@ -1,6 +1,23 @@
 # Remote operator mode (Fabric) — design + implementation plan
 
-**Status:** APPROVED (2026-08-26) — implementation in progress.
+**Status:** APPROVED (2026-08-26) — implementation complete (steps 1–10, 132 tests
+green incl. 25 new remote tests, goldens byte-identical); step 11 (wiring on
+pop-os) pending.
+
+**Deviations from the original plan (all deliberate):**
+* `RemoteState` lives in `core/remote.py` (not `state.py`) — `state.py` stays
+  local-only; `node.py` selects the backend.
+* `RemoteInstallFS.hash_files` reads via SFTP (`conn.open`) and hashes locally,
+  instead of one `sha256sum` shell round-trip — simpler, binary-safe, trivially
+  testable; 11 small files over one connection is negligible.
+* Every remote command carries a PATH prefix
+  (`export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"`) inside the login
+  shell — belt-and-suspenders against the uv `~/.local/bin` gotcha.
+* `build_plan` resolves install-relative paths through a `_install_rel_path`
+  helper (Config `node_path`, with a fallback for test fakes that only provide
+  `install_dir`) rather than calling `cfg.node_path` directly.
+* `RemoteRuntime.home_path()` / `expand()` do plain `~` / `~/...` substitution
+  (no `os.path.expanduser` — it has no home parameter).
 **Goal:** operate a remote Spark install from any host (e.g. `pop-os`) without ssh'ing
 in: `spark-lab --config labs/luna/config.yaml apply` converges the *remote* node over
 SSH using **Fabric**. The control plane (LiteLLM + Postgres + monitoring) stays on the
@@ -40,9 +57,9 @@ install:
 
 ## Implementation steps (checkboxes = progress)
 
-- [ ] **1. `pyproject.toml`** — add `fabric>=3.2,<4` to dependencies (pulls
+- [x] **1. `pyproject.toml`** — add `fabric>=3.2,<4` to dependencies (pulls
       invoke/paramiko/cryptography; requires-python is >=3.10, fine).
-- [ ] **2. `sparklab/core/remote.py` (new)** — the Fabric layer:
+- [x] **2. `sparklab/core/remote.py` (new)** — the Fabric layer:
   - `RemoteTarget` — built from `cfg` (host/user/port/identity/install_dir/repo_dir).
   - `RemoteRuntime` — same interface as `Runtime` (`available`, `run`, `spawn`), over
     one `fabric.Connection` (built lazily, reused for the command's lifetime):
@@ -60,23 +77,23 @@ install:
     done`) to collect existence+hashes for the rendered targets.
   - `RemoteState` — same `State` semantics over the node's `state.json`
     (`cat`/`put`).
-- [ ] **3. `sparklab/core/runtime.py`** — add `runtime_for(cfg)` → local `Runtime`
+- [x] **3. `sparklab/core/runtime.py`** — add `runtime_for(cfg)` → local `Runtime`
       when no `install.remote.host`, else `RemoteRuntime`.
-- [ ] **4. `sparklab/core/converge.py`** —
+- [x] **4. `sparklab/core/converge.py`** —
   - `write_files(cfg, rendered, install_fs)` — take the file seam instead of
     `Path(cfg.install_dir)` (local default keeps byte-identical behavior).
   - `find_sparkrun(runtime=None)` — when remote, resolve via
     `bash -lc 'command -v sparkrun'` (fallback `~/.local/bin/sparkrun`, then bare
     name, as today).
-- [ ] **5. `sparklab/core/state.py` / `sparklab/core/config.py`** — `State` gains an
+- [x] **5. `sparklab/core/state.py` / `sparklab/core/config.py`** — `State` gains an
       optional remote backing (thin wrapper; local path unchanged). `config` exposes
       `remote` (dict, default `{}`) + `remote_repo_dir` (default `~/spark-lab`,
       expanded REMOTELY — do not expanduser locally).
-- [ ] **6. `sparklab/core/node.py` (new)** — `node_env(cfg, runtime)` returning
+- [x] **6. `sparklab/core/node.py` (new)** — `node_env(cfg, runtime)` returning
       `(install_fs, state_obj)`: local → `Path`-based install + `State(cfg.state_dir)`;
       remote → `RemoteInstall` + `RemoteState` (state file at
       `<remote_repo_dir>/.sparklab-state/state.json`).
-- [ ] **7. Commands** —
+- [x] **7. Commands** —
   - `apply` — write_files + `_print_diffs` (remote reads) + state via seam; banner
     gains `(remote: user@host)`.
   - `adopt` — remote hash pass + remote state (update docstring: state file now lives
@@ -91,10 +108,10 @@ install:
   - `validate` — binary pre-flight must use `runtime.available` (currently
     `shutil.which` — local-only) so it checks the TARGET node.
   - `init`, `recipes`, `migrate` — stay local-only (operator-side).
-- [ ] **8. `sparklab/cli.py`** — build the runtime from the loaded config
+- [x] **8. `sparklab/cli.py`** — build the runtime from the loaded config
       (`runtime_for(cfg)`); fall back to `default_runtime()` when no config/remote
       target (init/recipes/convert/migrate need no node).
-- [ ] **9. Tests (hermetic, no SSH)** — `tests/helpers.py`: `StubConnection`
+- [x] **9. Tests (hermetic, no SSH)** — `tests/helpers.py`: `StubConnection`
       (records runs/puts, canned `open()` bytes, canned `command -v` answers) +
       monkeypatch `remote.build_connection`. New `tests/test_remote.py`:
   - argv→shell-string quoting (incl. the nested-quoted readiness probe).
@@ -105,7 +122,7 @@ install:
     remote `state.json`, correct command sequence.
   - adopt remote hash pass; `find_sparkrun` remote; state load/save round-trip.
   - Existing 107 tests + goldens unchanged (local path untouched).
-- [ ] **10. Docs** — README: "Remote operator mode" section (config snippet, per-node
+- [x] **10. Docs** — README: "Remote operator mode" section (config snippet, per-node
       `labs/<node>/` layout, "state lives on the node", ssh-key prerequisite).
       OPERATIONS.md: remote notes (login-shell PATH, long probes over SSH).
       `config.example.yaml` / `config.example.v2.yaml`: documented `remote:` block.

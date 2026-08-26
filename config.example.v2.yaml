@@ -20,6 +20,13 @@ install:
   hosts:
     - 127.0.0.1
   cluster_name: mylab
+  # Remote operator mode (optional): set `remote.host` to converge that node
+  # over SSH from this machine instead of this machine. install_dir / repo_dir
+  # then refer to the TARGET node; state lives on the node (one record shared
+  # by local + remote operation). One config targets one node. See
+  # config.example.yaml for the full block (host/user/port/identity_file/repo_dir).
+  # remote:
+  #   host: my-spark
 
 # -----------------------------------------------------------------------------
 # Models: a keyed map. Exactly one is `active` on a single-node Spark; the

@@ -1,8 +1,6 @@
 """`spark-lab status` — show workloads, stack, network status."""
 from __future__ import annotations
 
-from pathlib import Path
-
 from ..core import config, converge
 from ..util import run_command
 
@@ -10,8 +8,11 @@ from ..util import run_command
 def run(args) -> int:
     cfg = config.load(args.config)
     runtime = getattr(args, "runtime", None)
-    sparkrun = converge.find_sparkrun()
-    compose_file = str(Path(cfg.install_dir) / "litellm" / "docker-compose.yml")
+    sparkrun = converge.find_sparkrun(runtime)
+    home = runtime.home_path() if runtime is not None else None
+    compose_file = cfg.node_path("litellm/docker-compose.yml", home)
+    if cfg.is_remote:
+        print(f"== status on {runtime.label} (remote) ==")
     print("== sparkrun ==")
     run_command([sparkrun, "status"], ok=True, runtime=runtime)
     print("\n== docker compose ==")

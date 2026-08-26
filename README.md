@@ -42,6 +42,37 @@ cp config.example.yaml config.yaml         # (init already did this; edit config
 ./bin/spark-lab apply --apply              # materialize: converge the node(s)
 ```
 
+## Remote operator mode (optional)
+
+By default spark-lab converges **this machine** (a Spark). To operate a Spark
+from elsewhere — your laptop or workstation over Tailscale, for example — set
+an `install.remote` target and every command (`apply`, `status`, `teardown`,
+`upgrade`, `adopt`, `logs`, `check ...`) runs against that node over SSH
+(Fabric):
+
+```yaml
+install:
+  install_dir: ~/AI          # now a path ON THE TARGET node
+  remote:
+    host: luna               # SSH target (tailnet name / hostname / IP)
+    # user / port / identity_file: optional
+    # repo_dir: ~/spark-lab  # the node's spark-lab checkout (holds the state)
+```
+
+Key properties:
+
+- **One config targets one node.** Manage several Sparks with one config per
+  node (e.g. `labs/luna/config.yaml` + `labs/sol/config.yaml`) and switch with
+  `--config`. The `.env` next to each config supplies that node's secrets.
+- **State stays on the managed node** (in its spark-lab checkout), so
+  node-local and remote operation share one source of truth — no migration,
+  no drift between operators.
+- **Everything else is unchanged**: the same declarative converge, the same
+  `--apply` gate for model restarts, the same idempotent no-ops. Prerequisite:
+  SSH key access to the node (your key, or `identity_file`).
+
+Design + operations notes: [docs/REMOTE_OPERATOR_MODE.md](docs/REMOTE_OPERATOR_MODE.md).
+
 ## Layout
 
 ```
@@ -61,6 +92,7 @@ scripts/capture.sh    # capture read-only terminal output (for docs/blog)
 - [OPERATIONS](docs/OPERATIONS.md) — day-2: upgrading, monitoring, debugging.
 - [MODEL_RECIPES](docs/MODEL_RECIPES.md) — how sparkrun recipes + SGLang tuning work.
 - [NETWORKING](docs/NETWORKING.md) — Tailscale and optional Cloudflare.
+- [REMOTE_OPERATOR_MODE](docs/REMOTE_OPERATOR_MODE.md) — operating Sparks remotely over SSH.
 
 ## Safety model
 

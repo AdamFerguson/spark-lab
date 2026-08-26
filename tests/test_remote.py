@@ -1,0 +1,521 @@
+"""Remote operator mode tests -- all hermetic (no SSH, no real fabric connection).
+
+A :class:`StubConnection` emulates exactly the command grammar
+``sparklab.core.remote`` emits (``bash -lc '<PATH prefix>; <cmd>'``), backed by
+an in-memory dict of remote files + a dir set. The remote runtime / install FS /
+state are exercised end-to-end through it, and the converge plan is asserted to
+be **identical** to local mode for the same config (plan parity).
+
+``install_dir`` in the reference config is a fixed absolute path (/opt/sparklab,
+no ``~``), so node-side paths are identical in local and remote mode and the
+parity assertions hold on every machine. ``SPARKRUN`` is pinned so sparkrun
+resolves to the bare name on both sides (the ``~``-expansion path is covered
+separately).
+"""
+
+import json
+import os
+import shlex
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from sparklab.core import config as config_mod, converge, node, remote, render, state as state_mod  # noqa: E402
+from sparklab.core import runtime as runtime_mod  # noqa: E402
+from sparklab.commands import apply as apply_cmd, adopt as adopt_cmd, status as status_cmd, \
+    teardown as teardown_cmd, validate as validate_cmd  # noqa: E402
+from tests.helpers import FakeRuntime, REFERENCE_CONFIG, REFERENCE_ENV, SECRET_DUMMY  # noqa: E402
+
+STATE_PATH = "/home/adam/spark-lab/.sparklab-state/state.json"   # stub home + default repo_dir
+INSTALL = "/opt/sparklab"
+
+
+class _Result:
+    def __init__(self, return_code, stdout, stderr=""):
+        self.return_code = return_code
+        self.stdout = stdout
+        self.stderr = stderr
+
+    @property
+    def ok(self):
+        return self.return_code == 0
+
+
+class _StubSFTPFile:
+    def __init__(self, store, path):
+        self._store = store
+        self._path = path
+
+    def read(self):
+        if self._path not in self._store:
+            raise FileNotFoundError(self._path)
+        return self._store[self._path]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class StubConnection:
+    """A fake fabric ``Connection`` emulating remote.py's exact command grammar.
+
+    * ``run`` records every full command string and emulates the shell builtins
+      it uses (echo $HOME, command -v, test, cat, rm, mkdir, ls) against
+      in-memory ``dirs`` / ``files``; anything else (docker, sparkrun,
+      systemctl, the readiness probe) succeeds.
+    * ``open`` / ``put`` emulate SFTP reads / uploads.
+    * ``canned`` lets individual tests force rc/stdout for specific commands.
+    """
+
+    def __init__(self, home="/home/adam", binaries=None, canned=None, dirs=None, files=None):
+        self.home = home
+        self.binaries = dict(binaries or {})
+        self.canned = list(canned or [])          # [(substring, rc, stdout)]
+        self.dirs = set(dirs or set())
+        self.files = dict(files or {})            # remote path (str) -> bytes
+        self.runs = []                            # full command strings, in order
+        self.puts = []                            # [(local_path, remote_path)]
+
+    @staticmethod
+    def _inner(cmd: str) -> str:
+        blob = cmd.split("bash -lc ", 1)[1]
+        inner = shlex.split(blob)[0]
+        if inner.startswith("export PATH="):
+            inner = inner.split("; ", 1)[1]
+        return inner
+
+    def open(self, path, mode="rb"):
+        return _StubSFTPFile(self.files, str(path))
+
+    def put(self, local, remote_path):
+        self.puts.append((str(local), str(remote_path)))
+        self.files[str(remote_path)] = Path(local).read_bytes()
+
+    def run(self, cmd, warn=False, **kwargs):
+        self.runs.append(cmd)
+        for needle, rc, out in self.canned:
+            if needle in cmd:
+                return _Result(rc, out)
+        inner = self._inner(cmd)
+        if inner == 'echo "$HOME"':
+            return _Result(0, self.home)
+        if inner.endswith(" &"):
+            return _Result(0, "")                 # detached launch: channel closes immediately
+        toks = shlex.split(inner)
+        head = toks[0]
+        if head == "command" and len(toks) >= 3:
+            return _Result(0, self.binaries[toks[2]]) if toks[2] in self.binaries \
+                else _Result(1, "")
+        if head == "test" and len(toks) >= 3:
+            p = toks[2]
+            if toks[1] == "-d":
+                return _Result(0 if p in self.dirs else 1, "")
+            return _Result(0 if p in self.files else 1, "")
+        if head == "cat" and len(toks) >= 2:
+            p = toks[1]
+            if p in self.files:
+                return _Result(0, self.files[p].decode("utf-8"))
+            return _Result(1, "", f"cat: {p}: No such file")
+        if head == "rm" and len(toks) >= 3:
+            self.files.pop(toks[2], None)
+            return _Result(0, "")
+        if head == "mkdir" and len(toks) >= 3:
+            self.dirs.add(toks[2])
+            return _Result(0, "")
+        if head == "ls" and len(toks) >= 2:
+            d = toks[1]
+            names = [k[len(d) + 1:] for k in self.files if k.startswith(d + "/")]
+            names = sorted(n[:-5] for n in names if n.endswith(".yaml"))
+            return _Result(0, "\n".join(names))
+        return _Result(0, "")                     # docker / sparkrun / systemctl / probe / ...
+
+
+def make_runtime(stub=None, host="luna", user="adam", install_dir="~/AI", repo_dir="~/spark-lab"):
+    stub = stub or StubConnection()
+    target = remote.RemoteTarget(host=host, user=user, install_dir=install_dir, repo_dir=repo_dir)
+    return remote.RemoteRuntime(target, connection=stub), stub
+
+
+def remote_config_text() -> str:
+    """The reference config + an install.remote block (absolute install_dir)."""
+    return REFERENCE_CONFIG.replace(
+        "install_dir: /opt/sparklab",
+        "install_dir: /opt/sparklab\n  remote:\n    host: luna\n",
+        1,
+    )
+
+
+class TestShellGrammar(unittest.TestCase):
+    def test_run_wraps_in_login_shell_with_path_prefix(self):
+        rt, stub = make_runtime()
+        rt.run(["docker", "compose", "-f", "/opt/x/y.yml", "up", "-d"])
+        self.assertEqual(
+            stub.runs[0],
+            "bash -lc 'export PATH=\"$HOME/.local/bin:$HOME/.cargo/bin:$PATH\"; "
+            "docker compose -f /opt/x/y.yml up -d'",
+        )
+
+    def test_run_quotes_argv_elements_with_spaces(self):
+        rt, stub = make_runtime()
+        rt.run(["sh", "-c", "for i in $(seq 1 120); do echo hi; done"])
+        # The whole loop must survive as ONE remote shell word (no local
+        # expansion of $(seq)): round-trip the emitted command through the
+        # same shell parsing and check the argv is intact.
+        inner = StubConnection._inner(stub.runs[0])
+        self.assertEqual(shlex.split(inner),
+                         ["sh", "-c", "for i in $(seq 1 120); do echo hi; done"])
+
+    def test_spawn_is_detached(self):
+        rt, stub = make_runtime()
+        p = rt.spawn(["sparkrun", "run", "/opt/sparklab/sparkrun/recipes/qwen.yaml",
+                      "--ensure", "--hosts", "127.0.0.1"])
+        self.assertIn(
+            "setsid nohup sparkrun run /opt/sparklab/sparkrun/recipes/qwen.yaml "
+            "--ensure --hosts 127.0.0.1 </dev/null >/dev/null 2>&1 &",
+            stub.runs[0],
+        )
+        self.assertEqual(p.argv[0], "sparkrun")
+        self.assertIsNone(p.pid)
+
+    def test_available_and_locate(self):
+        stub = StubConnection(binaries={"sparkrun": "/home/adam/.local/bin/sparkrun"})
+        rt, _ = make_runtime(stub=stub)
+        self.assertTrue(rt.available("sparkrun"))
+        self.assertEqual(rt.locate("sparkrun"), "/home/adam/.local/bin/sparkrun")
+        self.assertFalse(rt.available("tailscale"))
+        self.assertIsNone(rt.locate("tailscale"))
+
+    def test_home_expansion_is_remote_not_local(self):
+        # a stub home different from the operator's proves the remote home wins
+        stub = StubConnection(home="/remote/home")
+        rt, _ = make_runtime(stub=stub)
+        self.assertEqual(rt.expand("~/AI"), "/remote/home/AI")
+        self.assertEqual(rt.expand("~"), "/remote/home")
+        self.assertEqual(rt.expand("/opt/sparklab"), "/opt/sparklab")
+
+
+class TestRemoteState(unittest.TestCase):
+    def test_roundtrip(self):
+        rt, stub = make_runtime()
+        st = remote.RemoteState(rt)
+        self.assertEqual(st.load(), {"files": {}})
+        self.assertIsNone(st.model)
+        st.set_state({"a": "h1", "b": "h2"}, {"name": "qwen", "hash": "h"})
+        self.assertEqual(st.files, {"a": "h1", "b": "h2"})
+        self.assertEqual(st.model, {"name": "qwen", "hash": "h"})
+        # exactly the node-side state path (inside the node's checkout)
+        self.assertIn(STATE_PATH, stub.files)
+        st.clear()
+        self.assertEqual(st.load(), {"files": {}})
+        self.assertNotIn(STATE_PATH, stub.files)
+
+    def test_corrupt_state_is_treated_as_empty(self):
+        stub = StubConnection(files={STATE_PATH: b"not json"})
+        rt, _ = make_runtime(stub=stub)
+        self.assertEqual(remote.RemoteState(rt).load(), {"files": {}})
+
+
+class TestRemoteInstallFS(unittest.TestCase):
+    def test_write_read_exists_hash_recipes(self):
+        rt, stub = make_runtime(install_dir=INSTALL)
+        fs = remote.RemoteInstallFS(rt)
+        self.assertFalse(fs.base_exists())
+        stub.dirs.add(INSTALL)
+        self.assertTrue(fs.base_exists())
+
+        self.assertIsNone(fs.read("litellm/config.yaml"))
+        fs.write("litellm/config.yaml", b"model_list: []")
+        self.assertEqual(fs.read("litellm/config.yaml"), b"model_list: []")
+        self.assertTrue(fs.exists("litellm/config.yaml"))
+
+        stub.files[f"{INSTALL}/sparkrun/recipes/b.yaml"] = b"b"
+        stub.files[f"{INSTALL}/sparkrun/recipes/a.yaml"] = b"a"
+        self.assertEqual(fs.list_recipes(), ["a", "b"])
+        hashes = fs.hash_files(["sparkrun/recipes/a.yaml", "missing.yaml"])
+        self.assertEqual(hashes["sparkrun/recipes/a.yaml"], state_mod.sha256_bytes(b"a"))
+        self.assertIsNone(hashes["missing.yaml"])
+
+    def test_write_creates_parent_dir_and_uploads(self):
+        rt, stub = make_runtime(install_dir=INSTALL)
+        fs = remote.RemoteInstallFS(rt)
+        fs.write("litellm/deep/nested/file.txt", b"x")
+        self.assertIn(f"{INSTALL}/litellm/deep/nested", stub.dirs)
+        self.assertEqual(stub.files[f"{INSTALL}/litellm/deep/nested/file.txt"], b"x")
+        # uploaded from a local temp file (the system tempdir), then cleaned up
+        self.assertTrue(any(os.path.basename(l).startswith("sparklab-")
+                            for l, _ in stub.puts))
+
+
+class TestNodeEnv(unittest.TestCase):
+    def test_local_backend_for_local_runtime(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "config.yaml").write_text(REFERENCE_CONFIG)
+        (d / ".env").write_text(REFERENCE_ENV)
+        cfg = config_mod.load(str(d / "config.yaml"))
+        with mock.patch.dict(os.environ, SECRET_DUMMY):
+            fs, st = node.node_env(cfg, FakeRuntime())
+        self.assertIsInstance(fs, node.LocalInstallFS)
+        self.assertIsInstance(st, state_mod.State)
+
+    def test_remote_backend_for_remote_runtime(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "config.yaml").write_text(remote_config_text())
+        (d / ".env").write_text(REFERENCE_ENV)
+        cfg = config_mod.load(str(d / "config.yaml"))
+        rt, _ = make_runtime()
+        with mock.patch.dict(os.environ, SECRET_DUMMY):
+            fs, st = node.node_env(cfg, rt)
+        self.assertIsInstance(fs, remote.RemoteInstallFS)
+        self.assertIsInstance(st, remote.RemoteState)
+
+
+class TestRuntimeFor(unittest.TestCase):
+    def test_local_config_gets_local_runtime(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "config.yaml").write_text(REFERENCE_CONFIG)
+        (d / ".env").write_text(REFERENCE_ENV)
+        cfg = config_mod.load(str(d / "config.yaml"))
+        with mock.patch.dict(os.environ, SECRET_DUMMY):
+            rt = runtime_mod.runtime_for(cfg)
+        self.assertIsInstance(rt, runtime_mod.Runtime)
+        self.assertFalse(rt.is_remote)
+
+    def test_remote_config_gets_remote_runtime_with_lazy_connection(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "config.yaml").write_text(remote_config_text())
+        (d / ".env").write_text(REFERENCE_ENV)
+        cfg = config_mod.load(str(d / "config.yaml"))
+        stub = StubConnection()
+        with mock.patch.dict(os.environ, SECRET_DUMMY):
+            with mock.patch.object(remote, "build_connection", return_value=stub) as bc:
+                rt = runtime_mod.runtime_for(cfg)
+        self.assertIsInstance(rt, remote.RemoteRuntime)
+        self.assertIs(rt.conn, stub)
+        bc.assert_called_once()
+        self.assertEqual(rt.target.host, "luna")
+
+
+class TestPlanParity(unittest.TestCase):
+    """Local vs remote converge plans must be command-for-command identical."""
+
+    def setUp(self):
+        self._env = mock.patch.dict(os.environ, {**SECRET_DUMMY, "SPARKRUN": "sparkrun"})
+        self._env.start()
+        self.d = Path(tempfile.mkdtemp())
+        self.rendered = None
+
+    def tearDown(self):
+        self._env.stop()
+
+    def _load(self, text):
+        cfg_path = self.d / "config.yaml"
+        cfg_path.write_text(text)
+        (self.d / ".env").write_text(REFERENCE_ENV)
+        return config_mod.load(str(cfg_path))
+
+    def _plan(self, cfg, runtime, out_name):
+        rendered = render.render(cfg, self.d / out_name)
+        return converge.build_plan(cfg, rendered, {}, None, allow_restart=True,
+                                   runtime=runtime)
+
+    def _commands(self, plan):
+        return [[desc, [str(x) for x in argv]] for desc, argv in plan.commands]
+
+    def test_local_and_remote_plans_match(self):
+        cfg_local = self._load(REFERENCE_CONFIG)
+        plan_local = self._plan(cfg_local, FakeRuntime(), "dep-local")
+
+        cfg_remote = self._load(remote_config_text())
+        self.assertTrue(cfg_remote.is_remote)
+        rt, stub = make_runtime()
+        plan_remote = self._plan(cfg_remote, rt, "dep-remote")
+
+        self.assertEqual(self._commands(plan_remote), self._commands(plan_local))
+        # the remote home was fetched (for node-side path resolution) before planning
+        self.assertTrue(any('echo "$HOME"' in r for r in stub.runs[:1]))
+
+    def test_remote_tilde_install_dir_becomes_absolute_node_path(self):
+        text = remote_config_text().replace("install_dir: /opt/sparklab",
+                                           "install_dir: ~/AI", 1)
+        cfg = self._load(text)
+        rt, _ = make_runtime()
+        plan = self._plan(cfg, rt, "dep-tilde")
+        descs = {desc for desc, _ in plan.commands}
+        compose_cmd = [argv for desc, argv in plan.commands
+                       if desc == "Reconcile LiteLLM + monitoring stack (up + remove orphans)"][0]
+        self.assertEqual(compose_cmd[3], "/home/adam/AI/litellm/docker-compose.yml")
+        self.assertIn("Start/ensure model workload (detached)", descs)
+
+
+class TestApplyRemoteEndToEnd(unittest.TestCase):
+    def setUp(self):
+        self._env = mock.patch.dict(os.environ, {**SECRET_DUMMY, "SPARKRUN": "sparkrun"})
+        self._env.start()
+        self.d = Path(tempfile.mkdtemp())
+        (self.d / "config.yaml").write_text(remote_config_text())
+        (self.d / ".env").write_text(REFERENCE_ENV)
+        self.stub = StubConnection()
+        self.rt, _ = make_runtime(stub=self.stub, install_dir=INSTALL)
+        self.args = SimpleNamespace(config=str(self.d / "config.yaml"), dry_run=False,
+                                    apply=True, yes=False, diff=False, runtime=self.rt)
+
+    def tearDown(self):
+        self._env.stop()
+
+    def test_apply_pushes_files_state_and_converges_remotely(self):
+        rc = apply_cmd.run(self.args)
+        self.assertEqual(rc, 0)
+
+        # 1. every rendered file was pushed to the node install dir
+        cfg = config_mod.load(self.args.config)
+        rendered = render.render(cfg, self.d / "probe-deploy")
+        pushed = {r for _, r in self.stub.puts}
+        for rel in rendered:
+            self.assertIn(f"{INSTALL}/{rel}", pushed)
+        for rel in rendered:
+            self.assertEqual(self.stub.files[f"{INSTALL}/{rel}"], rendered[rel])
+
+        # 2. the converge commands ran on the node, in order:
+        #    control plane up -> detached model launch -> bounded probe -> tailscale
+        joined = "\n".join(self.stub.runs)
+        i_up = joined.index("docker compose -f /opt/sparklab/litellm/docker-compose.yml up -d")
+        i_spawn = joined.index(
+            "setsid nohup sparkrun run /opt/sparklab/sparkrun/recipes/qwen.yaml --ensure")
+        i_probe = joined.index("for i in $(seq 1 120)")
+        i_ts = joined.index("systemctl enable --now tailscaled")
+        self.assertTrue(i_up < i_spawn < i_probe < i_ts)
+
+        # 3. state was recorded ON THE NODE (its checkout), with the model confirmed
+        data = json.loads(self.stub.files[STATE_PATH])
+        self.assertEqual(set(data["files"]), set(rendered))
+        self.assertEqual(data["model"], {"name": "qwen",
+                                         "hash": rendered_hash_of(rendered)})
+
+    def test_second_apply_is_a_clean_noop(self):
+        self.assertEqual(apply_cmd.run(self.args), 0)
+        self.assertEqual(apply_cmd.run(self.args), 0)
+        # no compose up on the second apply (litellm untouched), but the model
+        # --ensure + probe always run (idempotent convergence of the workload)
+        ups = [r for r in self.stub.runs if "compose -f /opt/sparklab" in r and " up -d" in r]
+        self.assertEqual(len(ups), 1)
+
+
+def rendered_hash_of(rendered: dict) -> str:
+    return state_mod.sha256_bytes(rendered[f"sparkrun/recipes/qwen.yaml"])
+
+
+class TestAdoptRemote(unittest.TestCase):
+    def setUp(self):
+        self._env = mock.patch.dict(os.environ, {**SECRET_DUMMY, "SPARKRUN": "sparkrun"})
+        self._env.start()
+        self.d = Path(tempfile.mkdtemp())
+        (self.d / "config.yaml").write_text(remote_config_text())
+        (self.d / ".env").write_text(REFERENCE_ENV)
+        self.cfg = config_mod.load(str(self.d / "config.yaml"))
+        rendered = render.render(self.cfg, self.d / "deploy")
+        files = {f"{INSTALL}/{rel}": data for rel, data in rendered.items()}
+        self.stub = StubConnection(dirs={INSTALL, "/home/adam/spark-lab"}, files=files)
+        self.rt, _ = make_runtime(stub=self.stub, install_dir=INSTALL)
+
+    def tearDown(self):
+        self._env.stop()
+
+    def test_adopt_records_on_node_reality_and_writes_state_on_node(self):
+        args = SimpleNamespace(config=str(self.d / "config.yaml"), dry_run=False,
+                               runtime=self.rt)
+        rc = adopt_cmd.run(args)
+        self.assertEqual(rc, 0)
+        data = json.loads(self.stub.files[STATE_PATH])
+        rendered = render.render(self.cfg, self.d / "probe")
+        self.assertEqual(set(data["files"]), set(rendered))
+        self.assertEqual(data["model"]["name"], "qwen")
+        # nothing was written into the install dir by adoption
+        puts_to_install = [r for _, r in self.stub.puts if r.startswith(INSTALL)]
+        self.assertEqual(puts_to_install, [])
+
+    def test_adopt_is_idempotent(self):
+        args = SimpleNamespace(config=str(self.d / "config.yaml"), dry_run=False,
+                               runtime=self.rt)
+        self.assertEqual(adopt_cmd.run(args), 0)
+        self.assertEqual(adopt_cmd.run(args), 0)
+
+
+class TestTeardownStatusValidateRemote(unittest.TestCase):
+    def setUp(self):
+        self._env = mock.patch.dict(os.environ, {**SECRET_DUMMY, "SPARKRUN": "sparkrun"})
+        self._env.start()
+        self.d = Path(tempfile.mkdtemp())
+        (self.d / "config.yaml").write_text(remote_config_text())
+        (self.d / ".env").write_text(REFERENCE_ENV)
+
+    def tearDown(self):
+        self._env.stop()
+
+    def test_teardown_stops_composes_down_and_clears_remote_state(self):
+        stub = StubConnection(
+            binaries={"sparkrun": "/home/adam/.local/bin/sparkrun",
+                      "docker": "/usr/bin/docker"},
+            files={STATE_PATH: b'{"files": {"a": "h"}}'})
+        rt, _ = make_runtime(stub=stub)
+        args = SimpleNamespace(config=str(self.d / "config.yaml"), yes=True, purge=False,
+                               runtime=rt)
+        self.assertEqual(teardown_cmd.run(args), 0)
+        joined = "\n".join(stub.runs)
+        self.assertIn("sparkrun stop /opt/sparklab/sparkrun/recipes/qwen.yaml --hosts 127.0.0.1",
+                      joined)
+        self.assertIn("docker compose -f /opt/sparklab/litellm/docker-compose.yml down", joined)
+        self.assertNotIn(STATE_PATH, stub.files)
+
+    def test_status_runs_on_the_node(self):
+        stub = StubConnection(
+            binaries={"sparkrun": "/home/adam/.local/bin/sparkrun",
+                      "docker": "/usr/bin/docker",
+                      "tailscale": "/usr/bin/tailscale"})
+        rt, _ = make_runtime(stub=stub)
+        args = SimpleNamespace(config=str(self.d / "config.yaml"), runtime=rt)
+        self.assertEqual(status_cmd.run(args), 0)
+        joined = "\n".join(stub.runs)
+        self.assertIn("sparkrun status", joined)
+        self.assertIn("docker compose -f /opt/sparklab/litellm/docker-compose.yml ps", joined)
+        self.assertIn("tailscale status", joined)
+
+    def test_validate_preflight_checks_the_remote_binaries(self):
+        stub = StubConnection(binaries={"sparkrun": "/home/adam/.local/bin/sparkrun",
+                                        "docker": "/usr/bin/docker",
+                                        "tailscale": "/usr/bin/tailscale"})
+        rt, _ = make_runtime(stub=stub)
+        args = SimpleNamespace(config=str(self.d / "config.yaml"), verbose=False,
+                               json=False, runtime=rt)
+        self.assertEqual(validate_cmd.run(args), 0)
+        # pre-flight queried the node, not the local machine
+        self.assertTrue(any("command -v sparkrun" in r for r in stub.runs))
+
+
+class TestFindSparkrunRemote(unittest.TestCase):
+    def test_locates_on_the_node(self):
+        stub = StubConnection(binaries={"sparkrun": "/home/adam/.local/bin/sparkrun"})
+        rt, _ = make_runtime(stub=stub)
+        self.assertEqual(converge.find_sparkrun(rt), "/home/adam/.local/bin/sparkrun")
+
+    def test_falls_back_to_bare_name(self):
+        rt, _ = make_runtime()
+        self.assertEqual(converge.find_sparkrun(rt), "sparkrun")
+
+    def test_sparkrun_env_var_wins_everywhere(self):
+        with mock.patch.dict(os.environ, {"SPARKRUN": "/opt/special/sparkrun"}):
+            self.assertEqual(converge.find_sparkrun(), "/opt/special/sparkrun")
+            rt, _ = make_runtime()
+            self.assertEqual(converge.find_sparkrun(rt), "/opt/special/sparkrun")
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

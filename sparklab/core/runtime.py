@@ -27,9 +27,20 @@ import subprocess
 class Runtime:
     """Real runtime: executes commands on the node via ``subprocess``."""
 
+    is_remote = False
+
     def available(self, binary: str) -> bool:
         """True if ``binary`` can be found on PATH."""
         return shutil.which(binary) is not None
+
+    def locate(self, binary: str):
+        """The absolute path to ``binary`` on this machine, or None."""
+        return shutil.which(binary)
+
+    def home_path(self):
+        """The target node's $HOME. Local runtime: the node is this machine,
+        so no remote resolution is needed (None)."""
+        return None
 
     def run(self, argv) -> subprocess.CompletedProcess:
         """Run ``argv`` (streaming output) and return the ``CompletedProcess``.
@@ -61,4 +72,18 @@ class Runtime:
 
 def default_runtime() -> Runtime:
     """The real runtime used outside of tests."""
+    return Runtime()
+
+
+def runtime_for(cfg) -> "Runtime | RemoteRuntime":
+    """The runtime matching a config: local, or remote if ``install.remote.host``
+    is set.
+
+    The remote runtime (and therefore the fabric/paramiko dependency) is only
+    constructed -- and only imported -- when the config actually targets a
+    remote node, so local mode keeps its zero-SSH footprint.
+    """
+    if getattr(cfg, "is_remote", False):
+        from .remote import RemoteRuntime, RemoteTarget
+        return RemoteRuntime(RemoteTarget.from_config(cfg))
     return Runtime()

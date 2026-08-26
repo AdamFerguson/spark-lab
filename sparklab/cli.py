@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 
+from .core import config as config_mod
 from .core import runtime as runtime_mod
 from .commands import (adopt, apply, images, init, logs, migrate, recipes, status, system,
                        teardown, upgrade, validate)
@@ -129,8 +130,23 @@ def main(argv=None) -> int:
     p_logs.set_defaults(func=logs.run)
 
     args = parser.parse_args(argv)
-    args.runtime = runtime_mod.default_runtime()
+    args.runtime = build_runtime(args.config)
     return args.func(args)
+
+
+def build_runtime(config_path: str):
+    """The runtime for this run: local, or remote when the config sets
+    ``install.remote.host``.
+
+    Commands that don't target a node (``init``, ``recipes``, ``migrate``) may
+    run before/without a config; any load failure falls back to the local
+    runtime and the command itself reports the problem.
+    """
+    try:
+        cfg = config_mod.load(config_path)
+    except Exception:
+        return runtime_mod.default_runtime()
+    return runtime_mod.runtime_for(cfg)
 
 
 if __name__ == "__main__":

@@ -24,10 +24,17 @@ from typing import Dict, List, Optional
 from . import state as state_mod
 
 
-def find_sparkrun() -> str:
-    """Locate the `sparkrun` executable (it is often installed via `uv`)."""
+def find_sparkrun(runtime=None) -> str:
+    """Locate the `sparkrun` executable (it is often installed via `uv`).
+
+    When ``runtime`` targets a remote node, resolution happens *on that node*
+    (login-shell ``command -v``) instead of on the operator's machine.
+    """
     if os.environ.get("SPARKRUN"):
         return os.environ["SPARKRUN"]
+    if runtime is not None and getattr(runtime, "is_remote", False):
+        located = runtime.locate("sparkrun")
+        return located or "sparkrun"   # bare name: a clear error will surface if missing
     which = shutil.which("sparkrun")
     if which:
         return which
@@ -86,7 +93,21 @@ def _model_readiness_probe(cfg) -> List[str]:
     return ["sh", "-c", loop]
 
 
-def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restart: bool) -> Plan:
+def _install_rel_path(cfg, rel: str, home: Optional[str]) -> str:
+    """A path under the install dir, as it exists on the target node.
+
+    Real ``Config`` objects know how (``node_path``: local expansion, or remote
+    expansion against the remote home). Test fakes that only provide
+    ``install_dir`` fall back to the historical local computation.
+    """
+    node_path = getattr(cfg, "node_path", None)
+    if callable(node_path):
+        return node_path(rel, home)
+    return str(Path(str(cfg.install_dir)) / rel)
+
+
+def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restart: bool,
+               runtime=None) -> Plan:
     plan = Plan()
     recipe_rel = _recipe_rel(cfg.recipe_name)
     has_model = recipe_rel in rendered
@@ -138,11 +159,15 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
         and state_model.get("hash") != current_hash
     )
 
-    sparkrun = find_sparkrun()
-    compose_file = str(Path(cfg.install_dir) / "litellm" / "docker-compose.yml")
+    sparkrun = find_sparkrun(runtime)
+    # Node-side paths: local mode resolves on this machine (byte-identical to the
+    # historical behavior); remote mode resolves against the remote $HOME so the
+    # plan carries absolute node paths (no `~` to re-expand inside quoted argv).
+    home = runtime.home_path() if runtime is not None else None
+    compose_file = _install_rel_path(cfg, "litellm/docker-compose.yml", home)
     # Run by the recipe's file path: sparkrun's bare-name lookup searches its
     # registries, not our install dir. The path is always present + unambiguous.
-    recipe_file = str(Path(cfg.install_dir) / "sparkrun" / "recipes" / f"{cfg.recipe_name}.yaml")
+    recipe_file = _install_rel_path(cfg, f"sparkrun/recipes/{cfg.recipe_name}.yaml", home)
     cluster = cfg.is_cluster
     hosts = ",".join(str(h) for h in cfg.hosts)
 
@@ -152,7 +177,7 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
         return ["--cluster", cfg.cluster_name] if cluster else ["--hosts", hosts]
 
     def stop_model(name: str) -> None:
-        recipe_path = str(Path(cfg.install_dir) / "sparkrun" / "recipes" / f"{name}.yaml")
+        recipe_path = _install_rel_path(cfg, f"sparkrun/recipes/{name}.yaml", home)
         argv = [sparkrun, "stop", recipe_path] + _host_flag()
         if allow_restart:
             plan.commands.append((f"Stop model workload {name}", argv))
@@ -215,17 +240,20 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
     return plan
 
 
-def write_files(cfg, rendered: dict, dry_run: bool) -> List[str]:
-    """Copy rendered files into the on-node install dir. Returns written paths."""
+def write_files(cfg, rendered: dict, dry_run: bool, fs=None) -> List[str]:
+    """Copy rendered files into the target node's install dir. Returns written paths.
+
+    ``fs`` is the install-dir seam (see ``sparklab.core.node``); it defaults to
+    the local install dir, keeping local behavior byte-identical.
+    """
+    if fs is None:
+        from . import node as node_mod
+        fs = node_mod.LocalInstallFS(Path(cfg.install_dir))
     written: List[str] = []
-    base = Path(cfg.install_dir)
     for rel, data in rendered.items():
-        dest = base / rel
         if dry_run:
             continue
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(data)
-        written.append(str(dest))
+        written.append(fs.write(rel, data))
     return written
 
 

@@ -67,6 +67,30 @@ rm -rf .sparklab-state                    # reset converge state
 ./bin/spark-lab apply
 ```
 
+## Remote operation
+
+When a config sets `install.remote.host`, every command runs against that node
+over SSH instead of this machine — same behavior, different target
+(see the README section + `docs/REMOTE_OPERATOR_MODE.md`). Day-2 notes:
+
+- **State lives on the managed node**, in its spark-lab checkout
+  (`<repo_dir>/.sparklab-state/state.json`, default `~/spark-lab`). `teardown`
+  clears it *there*; "reset state" = delete that file on the node. Node-local
+  and remote operation therefore share one record.
+- **PATH**: remote commands run in a login shell (`bash -lc`) with
+  `~/.local/bin` + `~/.cargo/bin` prepended, so uv-installed tools (sparkrun,
+  uv) resolve. If you install tools somewhere exotic, that's the place to look.
+- **Long commands** (the bounded model-readiness probe can run up to ~10 min)
+  execute inside one SSH session; if the node drops idle connections early,
+  raise its `ClientAliveInterval` or shorten the probe.
+- **Dual source of truth**: if the node also has a local `config.yaml` (node-
+  local mode), keep it in sync with the operator-side config — a stray
+  node-side `apply` converges to *its* config. The operator-side config is the
+  one to edit.
+- **Prerequisite**: SSH key access to the node from the operator machine.
+  `spark-lab validate` checks the target node's binaries remotely, so you'll
+  see a missing tool on the *node* reported on your machine.
+
 ## Telemetry / safety notes
 
 - `sparkrun` collects anonymous telemetry by default; `sparkrun setup telemetry`

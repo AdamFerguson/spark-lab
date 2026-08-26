@@ -120,9 +120,13 @@ def config_text(install_dir: str, tailscale_enabled: bool = False) -> str:
 class FakeRuntime:
     """Records the commands that *would* run; returns canned exit codes.
 
-    Mirrors ``sparklab.core.runtime.Runtime`` (``available`` + ``run``) so it can stand in
-    for the real runtime in any command handler.
+    Mirrors ``sparklab.core.runtime.Runtime`` (``available`` + ``run`` +
+    ``locate`` + ``home_path``) so it can stand in for the real runtime in any
+    command handler. It is a *local* fake: node-side paths resolve against this
+    machine (``home_path()`` is None).
     """
+
+    is_remote = False
 
     def __init__(self, available=None, fail=None):
         self._available = set(available) if available is not None else {
@@ -134,6 +138,13 @@ class FakeRuntime:
 
     def available(self, binary: str) -> bool:
         return binary in self._available
+
+    def locate(self, binary: str):
+        """Local fake: no node-side resolution (None -> caller's own fallback)."""
+        return None
+
+    def home_path(self):
+        return None
 
     def run(self, argv):
         argv = [str(x) for x in argv]
