@@ -56,3 +56,9 @@ class State:
         if model:
             data["model"] = model
         self.save(data)
+
+    def clear(self) -> None:
+        """Remove the state file (e.g. after a teardown) so the next apply
+        converges from scratch instead of assuming an already-running stack."""
+        if self._file.is_file():
+            self._file.unlink()

@@ -3,7 +3,7 @@
 # observability stack with GPU-aware exporters tuned for the GB10.
 services:
   litellm:
-    image: docker.litellm.ai/berriai/litellm:main-stable
+    image: {{ litellm_image }}
     ports:
       - "{{ gateway_port }}:4000"
     env_file:
@@ -100,7 +100,7 @@ services:
     restart: always
 
   node_exporter:
-    image: prom/node-exporter:latest
+    image: {{ node_exporter_image }}
     ports: ["9100:9100"]
     # hwmon/cpufreq disabled: the GPU /sys/class/hwmon node intermittently blocks
     # on GB10 and hangs scrapes; GPU metrics come from the DCGM exporter + sidecar.
@@ -113,7 +113,7 @@ services:
     restart: always
 
   dcgm_exporter:
-    image: utkuozdemir/nvidia_gpu_exporter:latest
+    image: {{ dcgm_exporter_image }}
     ports: ["9835:9835"]
     deploy:
       resources:
@@ -125,7 +125,7 @@ services:
     restart: always
 
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:latest
+    image: {{ cadvisor_image }}
     ports: ["8080:8080"]
     privileged: true
     volumes:
@@ -137,7 +137,7 @@ services:
     restart: always
 
   gpu_textfile:
-    image: ubuntu:24.04
+    image: {{ gpu_textfile_image }}
     environment:
       - OUT_DIR=/var/lib/gpu-textfile
       - MEMINFO=/host/proc/meminfo

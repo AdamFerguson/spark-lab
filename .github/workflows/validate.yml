@@ -14,6 +14,15 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          uv --version
+
+      - name: Sync environment (runtime + dev, pinned by uv.lock)
+        run: uv sync
+
       - name: Test config + dummy secrets
         run: |
           cp config.example.yaml config.yaml
@@ -26,7 +35,7 @@ jobs:
       - name: Validate rendered YAML + docker compose
         run: |
           .venv/bin/python - <<'PY'
-          from lib import config, render
+          from sparklab.core import config, render
           from pathlib import Path
           import yaml, glob
           cfg = config.load('config.yaml')
@@ -39,15 +48,16 @@ jobs:
           (cd deploy/litellm && docker compose -f docker-compose.yml config -q && echo "compose ok")
 
       - name: shellcheck
-        run: shellcheck bin/spark-lab scripts/capture.sh scripts/secret-scan.sh .githooks/pre-commit
+        run: shellcheck bin/spark-lab scripts/capture.sh scripts/secret-scan.sh scripts/staging.sh .githooks/pre-commit
 
-      - name: "Unit tests (converge: add / remove / switch / no-op / pending)"
-        run: .venv/bin/python tests/test_converge.py
+      - name: "Test suite + coverage (unit / integration / regression / parity on sparklab/)"
+        run: |
+          .venv/bin/python -m coverage run -m unittest discover -s tests -t .
+          .venv/bin/python -m coverage report --include='sparklab/*' --fail-under=85
 
       - name: yamllint (example config + templates)
         run: |
-          pip install yamllint
-          yamllint -d '{extends: default, rules: {line-length: {max: 120}, truthy: disable, comments: disable, comments-indentation: disable}}' config.example.yaml templates
+          .venv/bin/yamllint -d '{extends: default, rules: {line-length: {max: 120}, truthy: disable, comments: disable, comments-indentation: disable}}' config.example.yaml config.example.v2.yaml sparklab/templates
 
       - name: Install gitleaks (pinned)
         run: |

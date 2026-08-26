@@ -5,16 +5,29 @@ Fresh install of spark-lab on a single DGX Spark, end to end. Assumes Ubuntu
 
 ## Prerequisites on the node
 
-- **Docker** — installed (ships with the DGX Spark image). Verify: `docker ps`.
-- **sparkrun** — the orchestrator. Install via `uv`:
+> **Quick check:** `./bin/spark-lab doctor` (a.k.a. `check system`) detects every
+> required + optional tool, explains why each is needed, and with `--install`
+> installs the missing ones. `./bin/spark-lab init` runs this check first.
+
+- **uv** — the dependency/venv manager; it manages the spark-lab Python env and
+  installs sparkrun. Install once:
   ```bash
   curl -LsSf https://astral.sh/uv/install.sh | sh
+  ```
+- **sparkrun** — the critical orchestrator. Install via `uv`:
+  ```bash
   uv tool install sparkrun
   ```
   `spark-lab` finds it on `PATH` or at `~/.local/bin/sparkrun` (override with
   `SPARKRUN=/path/to/sparkrun` if it lives elsewhere).
+- **Docker** — runs the LiteLLM gateway + monitoring stack (ships with the DGX
+  Spark image). Verify: `docker ps`.
 - **Tailscale** (optional but recommended) —
   `curl -fsSL https://tailscale.com/install.sh | sh && sudo tailscale up`.
+
+> `bin/spark-lab` manages the Python env via **uv** (`uv sync` from
+> `pyproject.toml` + `uv.lock`; falls back to `pip install -e .` if uv is
+> absent). There is no `requirements.txt` anymore.
 
 ## 1. Clone and initialize
 
@@ -51,7 +64,8 @@ Fill in what's left:
 ./bin/spark-lab apply --apply     # also restart the model if the recipe changed
 ```
 
-`apply` writes the SGLang recipe to `<install_dir>/sparkrun/recipes/` and the
+`apply` writes the model recipe (the `runtime:` engine, SGLang by default) to
+`<install_dir>/sparkrun/recipes/` and the
 LiteLLM + monitoring stack to `<install_dir>/litellm/`, then:
 
 - `sparkrun run <recipe> --ensure` — start the model (no-op if already up).
@@ -67,7 +81,7 @@ curl -s http://localhost:4000/v1/models -H "Authorization: Bearer $LITELLM_MASTE
 ```
 
 Grafana is at `http://localhost:3000` (admin / your `GRAFANA_ADMIN_PASSWORD`);
-the SGLang dashboard is the default home dashboard.
+the default engine's dashboard (SGLang) is the default home dashboard.
 
 ## 4. Use it
 

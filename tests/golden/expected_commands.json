@@ -1,0 +1,34 @@
+[
+  [
+    "Start/ensure model workload (no-op if already up)",
+    [
+      "sparkrun",
+      "run",
+      "/opt/sparklab/sparkrun/recipes/qwen.yaml",
+      "--ensure",
+      "--hosts",
+      "127.0.0.1"
+    ]
+  ],
+  [
+    "Reconcile LiteLLM + monitoring stack (up + remove orphans)",
+    [
+      "docker",
+      "compose",
+      "-f",
+      "/opt/sparklab/litellm/docker-compose.yml",
+      "up",
+      "-d",
+      "--remove-orphans"
+    ]
+  ],
+  [
+    "Ensure Tailscale is enabled + running",
+    [
+      "systemctl",
+      "enable",
+      "--now",
+      "tailscaled"
+    ]
+  ]
+]

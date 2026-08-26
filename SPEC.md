@@ -58,13 +58,16 @@ Authoritative in `config.example.yaml`. Sections: `install`, `model`, `litellm`,
   means "read `$HF_TOKEN` from `.env`". `init` writes `.env` from `.env.example`
   and generates keys with `openssl rand -hex 32`.
 - `install.hosts` drives single-node vs cluster. One host → local; >1 → cluster.
-- `model.params` maps 1:1 to SGLang serve flags; `extra_flags` appended verbatim.
+- `model.params` maps 1:1 to the inference engine's serve flags (SGLang by
+  default; override with `model.serve_command` for a different engine);
+  `extra_flags` appended verbatim.
 - `litellm.db.*`, `redis`, `monitoring.*`, `network.*` gate which services render
   into the compose file.
 
 ## 4. CLI contract (`bin/spark-lab`)
-Bash wrapper: ensures a managed venv (prefer `uv venv`+`uv pip install pyyaml
-jinja2`; fallback `python3 -m venv`+`pip`), then `exec .venv/bin/python -m lib.cli "$@"`.
+Bash wrapper: ensures a managed env via **uv** (`uv sync --no-default-groups`
+from `pyproject.toml` + `uv.lock`; falls back to `python3 -m venv` +
+`pip install -e .` when uv is absent), then `exec .venv/bin/python -m sparklab.cli "$@"`.
 Commands (Typer-style or argparse — implementer's choice, but keep these verbs):
 
 | Command | Behavior |

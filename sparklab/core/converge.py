@@ -9,7 +9,7 @@ rendered set is planned as a "removed" change, and model workloads that are no
 longer current are stopped (gated). Switching or dropping a recipe therefore
 converges instead of leaving orphans running.
 
-Files-on-disk and model-running are tracked separately (see lib.state). A recipe
+Files-on-disk and model-running are tracked separately (see sparklab.core.state). A recipe
 change that has not been restarted therefore stays *pending* and keeps prompting
 until `apply --apply` actually restarts the model — it does not silently drift.
 """
@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -48,6 +47,9 @@ class Plan:
         self.model_restart_pending: bool = False    # a model restart is needed but was not requested
         self.current_hash: Optional[str] = None     # sha256 of the current rendered recipe (None if no model)
         self.recipe_name: Optional[str] = None
+        # commands whose failure is non-fatal (root-gated infra ensures); a failure
+        # here warns + continues instead of aborting the whole converge.
+        self.best_effort: set = set()
 
     @property
     def any_change(self) -> bool:
@@ -112,14 +114,20 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
 
     sparkrun = find_sparkrun()
     compose_file = str(Path(cfg.install_dir) / "litellm" / "docker-compose.yml")
+    # Run by the recipe's file path: sparkrun's bare-name lookup searches its
+    # registries, not our install dir. The path is always present + unambiguous.
+    recipe_file = str(Path(cfg.install_dir) / "sparkrun" / "recipes" / f"{cfg.recipe_name}.yaml")
     cluster = cfg.is_cluster
     hosts = ",".join(str(h) for h in cfg.hosts)
 
-    def _cluster_flag() -> List[str]:
-        return ["--cluster", cfg.cluster_name] if cluster else []
+    def _host_flag() -> List[str]:
+        # sparkrun needs host targeting even for a single node (--hosts);
+        # a named cluster supplies its own hosts (--cluster).
+        return ["--cluster", cfg.cluster_name] if cluster else ["--hosts", hosts]
 
     def stop_model(name: str) -> None:
-        argv = [sparkrun, "stop", name] + _cluster_flag()
+        recipe_path = str(Path(cfg.install_dir) / "sparkrun" / "recipes" / f"{name}.yaml")
+        argv = [sparkrun, "stop", recipe_path] + _host_flag()
         if allow_restart:
             plan.commands.append((f"Stop model workload {name}", argv))
         else:
@@ -143,7 +151,7 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
     if has_model:
         plan.commands.append(
             ("Start/ensure model workload (no-op if already up)",
-             [sparkrun, "run", cfg.recipe_name, "--ensure"] + _cluster_flag()))
+             [sparkrun, "run", recipe_file, "--ensure"] + _host_flag()))
 
     plan.model_restart_pending = (not allow_restart) and (bool(stale_recipes) or restart_current)
 
@@ -157,11 +165,13 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
 
     # --- network ------------------------------------------------------------
     if cfg.tailscale().get("enabled", True):
-        plan.commands.append(("Ensure Tailscale is enabled + running",
-                              ["systemctl", "enable", "--now", "tailscaled"]))
+        ts_desc = "Ensure Tailscale is enabled + running"
+        plan.commands.append((ts_desc, ["systemctl", "enable", "--now", "tailscaled"]))
+        plan.best_effort.add(ts_desc)   # needs root; a denial shouldn't abort the converge
     if cfg.cloudflare().get("enabled", False):
-        plan.commands.append(("Ensure Cloudflare Tunnel is running",
-                              ["systemctl", "enable", "--now", "cloudflared"]))
+        cf_desc = "Ensure Cloudflare Tunnel is running"
+        plan.commands.append((cf_desc, ["systemctl", "enable", "--now", "cloudflared"]))
+        plan.best_effort.add(cf_desc)
 
     return plan
 
@@ -205,8 +215,15 @@ def compute_model_after_apply(state_model, current_recipe: Optional[str],
     return {"name": current_recipe, "hash": current_hash}
 
 
-def execute(plan: Plan, dry_run: bool, verbose: bool = True) -> int:
-    """Run the plan's commands. In dry-run mode, only print them."""
+def execute(plan: Plan, dry_run: bool, verbose: bool = True, runtime=None) -> int:
+    """Run the plan's commands. In dry-run mode, only print them.
+
+    ``runtime`` is the command<->runtime boundary (ADR 0002); it defaults to the
+    real runtime. Tests pass a fake to capture the exact commands that would run.
+    """
+    if runtime is None:
+        from . import runtime as runtime_mod
+        runtime = runtime_mod.default_runtime()
     exit_code = 0
     for desc, argv in plan.commands:
         prefix = "[dry-run] would run: " if dry_run else "==> "
@@ -215,8 +232,12 @@ def execute(plan: Plan, dry_run: bool, verbose: bool = True) -> int:
             print(f"        {' '.join(map(str, argv))}")
         if dry_run:
             continue
-        result = subprocess.run(argv)
+        result = runtime.run(argv)
         if result.returncode != 0:
+            if desc in getattr(plan, "best_effort", set()):
+                print(f"!! (best-effort, continuing) {desc} returned {result.returncode} "
+                      f"(usually needs root; the rest of the converge still applies)")
+                continue
             print(f"!! command failed ({result.returncode}): {' '.join(map(str, argv))}")
             exit_code = result.returncode
             break

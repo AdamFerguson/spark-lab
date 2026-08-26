@@ -1,0 +1,22 @@
+# spark-lab in-repo sparkrun registry (see docs/REGISTRY.md, ADR 0003).
+# This is the source of truth for the `sparkrun-registry` discovery source.
+# `file:` points at the runnable sparkrun recipe; the rest is discovery metadata.
+registry: spark-lab
+updated: "2026-08-22"
+recipes:
+  qwen38-27b:
+    name: Qwen3.8-27B (NVFP4)
+    model: RadixArk/Qwen3.8-27B-NVFP4
+    image: lmsysorg/sglang:qwen38-27b
+    tags: [ qwen, 27b, nvfp4, speculative, single-node ]
+    hardware: DGX Spark / GB10
+    description: Flagship 27B NVFP4 model with DSPARK speculative decoding.
+    file: recipes/qwen38-27b.yaml
+  llama31-8b:
+    name: Llama 3.1 8B
+    model: huggingface/llama31-8b
+    image: lmsysorg/sglang:latest
+    tags: [ llama, 8b, single-node ]
+    hardware: DGX Spark / GB10
+    description: Compact 8B model for low-memory dev/test work.
+    file: recipes/llama31-8b.yaml

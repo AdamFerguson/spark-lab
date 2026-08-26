@@ -17,7 +17,8 @@ from pathlib import Path
 # make `lib` importable when run as a plain script
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lib import converge, state  # noqa: E402
+from sparklab.core import converge, state  # noqa: E402
+from tests.helpers import FakeRuntime  # noqa: E402
 
 # Never touch the real sparkrun during tests.
 converge.find_sparkrun = lambda: "sparkrun"
@@ -76,7 +77,8 @@ class TestConverge(unittest.TestCase):
         plan = plan_for(cfg, rendered, files={}, model=None, allow_restart=False)
         # brand-new model: nothing running under it, so no stop -> not pending
         self.assertFalse(plan.model_restart_pending)
-        self.assertTrue(any("run mymodel --ensure" in " ".join(map(str, a)) for d, a in plan.commands))
+        self.assertTrue(any("mymodel.yaml" in " ".join(map(str, a)) and "--ensure" in " ".join(map(str, a))
+                            for d, a in plan.commands))
         # state now records the running model, so a later content change is caught
         new_model = converge.compute_model_after_apply(
             None, "mymodel", plan.current_hash, converged_after(plan, False))
@@ -124,7 +126,8 @@ class TestConverge(unittest.TestCase):
         plan = plan_for(cfg, rendered, files, model, allow_restart=True)
         stops = [d for d, _ in plan.commands if d.startswith("Stop model")]
         self.assertEqual(stops, ["Stop model workload qwen"])
-        self.assertTrue(any("run llama --ensure" in " ".join(map(str, a)) for d, a in plan.commands))
+        self.assertTrue(any("llama.yaml" in " ".join(map(str, a)) and "--ensure" in " ".join(map(str, a))
+                            for d, a in plan.commands))
         self.assertFalse(plan.model_restart_pending)
         self.assertEqual(converge.compute_model_after_apply(model, "llama", plan.current_hash, converged_after(plan, True)),
                          {"name": "llama", "hash": plan.current_hash})
@@ -173,6 +176,31 @@ class TestConverge(unittest.TestCase):
         new_files = converge.compute_files_after_apply(rendered)
         self.assertNotIn("litellm/old-dash.json", new_files)
         self.assertIn("sparkrun/recipes/mymodel.yaml", new_files)
+
+    def test_best_effort_failure_does_not_abort(self):
+        # A root-gated infra-ensure (systemctl) failing should warn + continue,
+        # not abort the converge (the model + stack are the critical commands).
+        plan = converge.Plan()
+        plan.commands = [
+            ("best-effort ensure", ["sysadm", "enable"]),
+            ("critical step", ["important", "run"]),
+        ]
+        plan.best_effort = {"best-effort ensure"}
+        rt = FakeRuntime(available={"sysadm", "important"}, fail={"sysadm": 1})
+        rc = converge.execute(plan, dry_run=False, runtime=rt, verbose=False)
+        self.assertEqual(rc, 0)                      # the best-effort failure is non-fatal
+        self.assertTrue(any(a[0] == "important" for a in rt.commands))
+
+    def test_critical_failure_still_aborts(self):
+        plan = converge.Plan()
+        plan.commands = [
+            ("critical step", ["important", "run"]),
+            ("second", ["later", "cmd"]),
+        ]
+        rt = FakeRuntime(available={"important", "later"}, fail={"important": 1})
+        rc = converge.execute(plan, dry_run=False, runtime=rt, verbose=False)
+        self.assertEqual(rc, 1)
+        self.assertEqual(len(rt.commands), 1)         # broke on the critical failure
 
 
 if __name__ == "__main__":
