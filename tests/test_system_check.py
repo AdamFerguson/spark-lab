@@ -2,6 +2,7 @@
 
 import contextlib
 import io
+import os
 import sys
 import tempfile
 import types
@@ -13,7 +14,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from sparklab.commands import system, init  # noqa: E402
-from tests.helpers import FakeRuntime  # noqa: E402
+from tests.helpers import FakeRuntime, REFERENCE_CONFIG  # noqa: E402
 
 _ALL = {n for n, *_ in system.TOOLS}
 _REQUIRED = {n for n, req, *_ in system.TOOLS if req}
@@ -23,7 +24,28 @@ def _rt(present):
     return FakeRuntime(available=set(present) | {"sh"})
 
 
-class TestSystemCheck(unittest.TestCase):
+class _ConfigIsolated(unittest.TestCase):
+    """Run with a hermetic config.yaml in a temp cwd.
+
+    ``check`` fans out over the config's hosts; a v3 cluster config at the repo
+    root would route these tests to REAL remote hosts, ignoring the injected
+    FakeRuntime. A v1 single-host config keeps the fake-runtime path.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._cwd = os.getcwd()
+        self._tmp = tempfile.TemporaryDirectory()
+        (Path(self._tmp.name) / "config.yaml").write_text(REFERENCE_CONFIG)
+        os.chdir(self._tmp.name)
+
+    def tearDown(self):
+        os.chdir(self._cwd)
+        self._tmp.cleanup()
+        super().tearDown()
+
+
+class TestSystemCheck(_ConfigIsolated):
     def _out(self, args):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
@@ -70,7 +92,7 @@ class TestSystemCheck(unittest.TestCase):
         self.assertIn("python3", failed)
 
 
-class TestCapabilities(unittest.TestCase):
+class TestCapabilities(_ConfigIsolated):
     """The capability layer: docker access (current user can reach the daemon)."""
 
     def _args(self, rt, **kw):
