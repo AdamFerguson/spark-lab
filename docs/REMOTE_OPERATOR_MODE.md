@@ -1,8 +1,17 @@
 # Remote operator mode (Fabric) — design + implementation plan
 
+> **Partially superseded by [ADR-0008](adr/0008-multi-host-cluster-config.md)
+> (2026-08-27):** the *mechanism* (Fabric `RemoteRuntime`, node-side state,
+> `bash -lc` login shell, detached model launch, per-command remote fan-out)
+> is kept and is still the accurate description of how remote hosts are driven.
+> The *config shape* — one config per node with `install.remote` under `labs/<node>/`
+> — is replaced by the v3 cluster config (one `hosts:` list per cluster, with
+> local auto-detection and `--hosts` selection). Migrate with `spark-lab
+> migrate`.
+
 **Status:** APPROVED (2026-08-26) — implementation complete (steps 1–10, 132 tests
 green incl. 25 new remote tests, goldens byte-identical); step 11 (wiring on
-pop-os) pending.
+pop-os) complete (2026-08-27).
 
 **Deviations from the original plan (all deliberate):**
 * `RemoteState` lives in `core/remote.py` (not `state.py`) — `state.py` stays

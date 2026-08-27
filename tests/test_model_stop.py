@@ -45,7 +45,7 @@ class TestModelStopLocal(unittest.TestCase):
 
     def test_refuses_without_yes_and_runs_nothing(self):
         rt = FakeRuntime()
-        rc = model_cmd.run(make_args(self.d, yes=False, runtime=rt))
+        rc = model_cmd.stop(make_args(self.d, yes=False, runtime=rt))
         self.assertEqual(rc, 1)
         self.assertEqual(rt.calls, [])
         st = state_mod.State(self.cfg.state_dir)
@@ -53,7 +53,7 @@ class TestModelStopLocal(unittest.TestCase):
 
     def test_stop_runs_sparkrun_stop_and_clears_model_entry(self):
         rt = FakeRuntime()
-        rc = model_cmd.run(make_args(self.d, yes=True, runtime=rt))
+        rc = model_cmd.stop(make_args(self.d, yes=True, runtime=rt))
         self.assertEqual(rc, 0)
         self.assertEqual(
             rt.calls[0],
@@ -88,7 +88,7 @@ class TestModelStopRemote(unittest.TestCase):
         self._env.stop()
 
     def test_stop_runs_on_the_node_and_clears_state_there(self):
-        rc = model_cmd.run(make_args(self.d, yes=True, runtime=self.rt))
+        rc = model_cmd.stop(make_args(self.d, yes=True, runtime=self.rt))
         self.assertEqual(rc, 0)
         joined = "\n".join(self.stub.runs)
         self.assertIn("sparkrun stop /opt/sparklab/sparkrun/recipes/qwen.yaml --hosts 127.0.0.1",
@@ -100,7 +100,7 @@ class TestModelStopRemote(unittest.TestCase):
 
     def test_refuses_without_yes(self):
         rt = self.rt
-        rc = model_cmd.run(make_args(self.d, yes=False, runtime=rt))
+        rc = model_cmd.stop(make_args(self.d, yes=False, runtime=rt))
         self.assertEqual(rc, 1)
         self.assertEqual(self.stub.runs, [])
 

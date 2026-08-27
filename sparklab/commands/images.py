@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sys
 
-from ..core import config as config_mod
+from ..core import cluster, config as config_mod
 from ..util import run_command
 
 # Order for stable, readable output (model + gateway first, then the stack).
@@ -17,23 +17,19 @@ _ORDER = ("model", "litellm", "db", "redis", "prometheus", "grafana",
           "node_exporter", "dcgm_exporter", "cadvisor", "gpu_textfile")
 
 
-def run(args) -> int:
-    try:
-        cfg = config_mod.load(args.config)
-    except ValueError as e:
-        print(f"[INVALID] config: {e}", file=sys.stderr)
-        return 1
-
+def _images_one(t, probe: bool) -> int:
+    cfg = t.cfg
     resolved = cfg.resolved_images()
-    runtime = getattr(args, "runtime", None)
-    probe = getattr(args, "probe", False)
+    runtime = t.runtime
 
-    print(f"== spark-lab check images (active: {cfg.active_alias}, "
+    print(f"== spark-lab check images (active: {cfg.active_alias or '(none)'}, "
           f"profile: {cfg.profile}) ==")
     ok = True
     for key in _ORDER:
         if key not in resolved:
             continue  # not enabled for this config (e.g. redis off)
+        if key == "model" and not cfg.model:
+            continue  # this host serves no model (control-plane only)
         ref = resolved.get(key)
         if not ref:
             print(f"  {key:<14} MISSING  (no image set for {key})")
@@ -54,3 +50,17 @@ def run(args) -> int:
         return 1
     print("\nAll images resolve.")
     return 0
+
+
+def run(args) -> int:
+    try:
+        cfg = config_mod.load(args.config)
+    except ValueError as e:
+        print(f"[INVALID] config: {e}", file=sys.stderr)
+        return 1
+    names = cluster.parse_hosts_arg(getattr(args, "hosts", None))
+    ts = cluster.targets(cfg, names, runtime=getattr(args, "runtime", None))
+    if not ts:
+        return 1
+    probe = getattr(args, "probe", False)
+    return cluster.run_on_each(ts, lambda t: _images_one(t, probe))

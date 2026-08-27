@@ -1,11 +1,16 @@
-"""`spark-lab upgrade` — update sparkrun + images, re-apply."""
+"""`spark-lab upgrade` — update sparkrun + images, re-apply (per selected host).
+
+Refreshes, per host: the engine deps (that host's spark-lab checkout), the
+`sparkrun` tool + recipe registries, and the stack images — then re-applies
+with the model restart allowed. Gated behind `--yes` (it restarts models).
+"""
 from __future__ import annotations
 
 import shutil
 import sys
 from pathlib import Path
 
-from ..core import config, converge
+from ..core import cluster, config, converge
 from ..util import run_command
 from . import apply as apply_cmd
 
@@ -32,14 +37,12 @@ def _refresh_engine_deps(repo_dir, runtime):
                     ok=True, runtime=runtime)
 
 
-def run(args) -> int:
-    cfg = config.load(args.config)
-    runtime = getattr(args, "runtime", None)
-
-    if cfg.is_remote and getattr(runtime, "is_remote", False):
+def _upgrade_one(t) -> int:
+    cfg, runtime = t.cfg, t.runtime
+    if t.is_remote:
         # Remote: refresh the *node's* checkout (that's where its engine +
         # venv live); everything below then runs over the same SSH session.
-        repo_dir = runtime.expand(cfg.remote_repo_dir)
+        repo_dir = runtime.expand(cfg.repo_dir)
         print(f"Updating spark-lab engine dependencies on {runtime.label} ({repo_dir})...")
         _refresh_engine_deps(repo_dir, runtime)
     else:
@@ -58,5 +61,18 @@ def run(args) -> int:
     print("Pulling latest stack images...")
     run_command(["docker", "compose", "-f", compose_file, "pull"], ok=True, runtime=runtime)
     print("Re-applying (model restart allowed)...")
-    args.apply = True
-    return apply_cmd.run(args)
+    return apply_cmd._converge_one(t, dry=False, allow_restart=True, diff=False)
+
+
+def run(args) -> int:
+    if not getattr(args, "yes", False):
+        print("Refusing to upgrade without --yes.", file=sys.stderr)
+        print("This updates spark-lab/sparkrun/images on the selected host(s) and", file=sys.stderr)
+        print("re-applies with the model restart allowed. --")
+        return 1
+    cfg = config.load(args.config)
+    names = cluster.parse_hosts_arg(getattr(args, "hosts", None))
+    ts = cluster.targets(cfg, names, runtime=getattr(args, "runtime", None))
+    if not ts:
+        return 1
+    return cluster.run_on_each(ts, _upgrade_one)

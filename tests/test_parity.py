@@ -28,6 +28,7 @@ from tests.helpers import (  # noqa: E402
     REFERENCE_CONFIG,
     REFERENCE_ENV,
     SECRET_DUMMY,
+    V3_CLUSTER_CONFIG,
 )
 
 
@@ -72,6 +73,29 @@ class TestParity(unittest.TestCase):
         self.assertEqual(
             (GOLDEN_DIR / "reference_config.yaml").read_text(),
             REFERENCE_CONFIG,
+        )
+
+    def test_v3_host_views_render_match_golden(self):
+        """Per-host views of the fixed v3 cluster config render stably (ADR 0008):\n        the host overrides (instance label, per-host model params) are visible in\n        the rendered bytes, and both hosts' file sets are pinned."""
+        d = Path(tempfile.mkdtemp())
+        (d / "config.yaml").write_text(V3_CLUSTER_CONFIG)
+        (d / ".env").write_text(REFERENCE_ENV)
+        cfg = config_mod.load(str(d / "config.yaml"))
+        expected = json.loads((GOLDEN_DIR / "expected_v3_sha256.json").read_text())
+        actual: dict = {}
+        for host in (s.name for s in cfg.host_specs):
+            view = cfg.view_for(host)
+            rendered = render.render(view, d / f"v3-{host}")
+            actual[host] = {rel: hashlib.sha256(data).hexdigest()
+                            for rel, data in rendered.items()}
+        self.assertEqual(actual, expected)
+        # the two hosts really differ where the config says they should
+        a = actual["alpha"]["sparkrun/recipes/qwen.yaml"]
+        b = actual["beta"]["sparkrun/recipes/qwen.yaml"]
+        self.assertNotEqual(a, b)
+        self.assertNotEqual(
+            actual["alpha"]["litellm/prometheus.yml"],
+            actual["beta"]["litellm/prometheus.yml"],
         )
 
 

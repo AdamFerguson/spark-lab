@@ -1,14 +1,29 @@
-"""`spark-lab logs <service>` — tail logs from the LiteLLM stack.
+"""`spark-lab logs <service>` — tail logs from the LiteLLM stack on one host.
 
-Port of the old `docker compose logs` flow. Streams through the runtime seam
-(ADR 0002); read-only with respect to the node.
+Streams through the runtime seam (ADR 0002); read-only with respect to the node.
+Log streaming is one host at a time: with several hosts selected, name one with
+``--hosts``.
 """
 from __future__ import annotations
 
 import sys
 
-from ..core import config, node
+from ..core import cluster, config, node
 from ..util import run_command
+
+
+def _logs_one(t, service: str, lines: int, follow: bool) -> int:
+    cfg, runtime = t.cfg, t.runtime
+    fs, _ = t.env()
+    if not fs.exists("litellm/docker-compose.yml"):
+        print(f"(no {cfg.node_path('litellm/docker-compose.yml', runtime.home_path() if runtime else None)} "
+              f"yet — run `spark-lab apply` first)", file=sys.stderr)
+        return 1
+    argv = ["docker", "compose", "-f", fs.path_str("litellm/docker-compose.yml"), "logs",
+            "--tail", str(lines), service]
+    if follow:
+        argv.append("--follow")
+    return run_command(argv, runtime=runtime)
 
 
 def run(args) -> int:
@@ -17,14 +32,15 @@ def run(args) -> int:
     except ValueError as e:
         print(f"[INVALID] config: {e}", file=sys.stderr)
         return 1
-    runtime = getattr(args, "runtime", None)
-    fs, _ = node.node_env(cfg, runtime)
-    if not fs.exists("litellm/docker-compose.yml"):
-        print(f"(no {cfg.node_path('litellm/docker-compose.yml')} yet — run `spark-lab apply` first)",
+    names = cluster.parse_hosts_arg(getattr(args, "hosts", None))
+    ts = cluster.targets(cfg, names, runtime=getattr(args, "runtime", None))
+    if not ts:
+        return 1
+    if len(ts) > 1:
+        print("Several hosts selected; `logs` streams one host at a time. "
+              f"Use --hosts {ts[0].name} (options: {', '.join(t.name for t in ts)}).",
               file=sys.stderr)
         return 1
-    argv = ["docker", "compose", "-f", fs.path_str("litellm/docker-compose.yml"), "logs",
-            "--tail", str(args.lines), args.service]
-    if args.follow:
-        argv.append("--follow")
-    return run_command(argv, runtime=runtime)
+    t = ts[0]
+    print(f"==> [{t.name}] {t.label}")
+    return _logs_one(t, args.service, args.lines, args.follow)

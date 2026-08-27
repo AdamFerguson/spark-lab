@@ -5,7 +5,7 @@ Fresh install of spark-lab on a single DGX Spark, end to end. Assumes Ubuntu
 
 ## Prerequisites on the node
 
-> **Quick check:** `./bin/spark-lab doctor` (a.k.a. `check system`) detects every
+> **Quick check:** `./bin/spark-lab check --system` (a.k.a. `doctor`) detects every
 > required + optional tool, explains why each is needed, and with `--install`
 > installs the missing ones. `./bin/spark-lab init` runs this check first.
 
@@ -61,7 +61,7 @@ Fill in what's left:
 ```bash
 ./bin/spark-lab apply --dry-run   # show exactly what will change + which commands run
 ./bin/spark-lab apply             # write the stack and start everything
-./bin/spark-lab apply --apply     # also restart the model if the recipe changed
+./bin/spark-lab apply --restart-model  # also restart the model if the recipe changed
 ```
 
 `apply` writes the model recipe (the `runtime:` engine, SGLang by default) to

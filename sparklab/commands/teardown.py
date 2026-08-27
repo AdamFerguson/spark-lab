@@ -1,20 +1,14 @@
-"""`spark-lab teardown` — stop the model + remove the stack."""
+"""`spark-lab teardown` — stop the model + remove the stack (per selected host)."""
 from __future__ import annotations
 
 import sys
 
-from ..core import config, converge, node
+from ..core import cluster, config, converge
 from ..util import run_command
 
 
-def run(args) -> int:
-    cfg = config.load(args.config)
-    if not args.yes:
-        print("Refusing to tear down without --yes.", file=sys.stderr)
-        print("This stops the model workload and removes the LiteLLM containers", file=sys.stderr)
-        print("(named volumes are kept; add --purge to remove them too). --")
-        return 1
-    runtime = getattr(args, "runtime", None)
+def _teardown_one(t, purge: bool) -> int:
+    cfg, runtime = t.cfg, t.runtime
     sparkrun = converge.find_sparkrun(runtime)
     home = runtime.home_path() if runtime is not None else None
     compose_file = cfg.node_path("litellm/docker-compose.yml", home)
@@ -29,13 +23,29 @@ def run(args) -> int:
     print("Stopping model workload...")
     run_command(stop_argv, ok=True, runtime=runtime)
     down_argv = ["docker", "compose", "-f", compose_file, "down"]
-    if args.purge:
+    if purge:
         down_argv.append("-v")
     print("Tearing down the LiteLLM + monitoring stack...")
     run_command(down_argv, ok=True, runtime=runtime)
     # Clear the recorded state so the next `apply` re-converges from scratch
     # (a teardown leaves the node with no running managed services). The state
     # file lives on the managed node, so this clears it there.
-    node.node_env(cfg, runtime)[1].clear()
+    _, st = t.env()
+    st.clear()
     print("Done. State cleared (re-run `apply` to bring it back up).")
     return 0
+
+
+def run(args) -> int:
+    cfg = config.load(args.config)
+    if not args.yes:
+        print("Refusing to tear down without --yes.", file=sys.stderr)
+        print("This stops the model workload and removes the LiteLLM containers", file=sys.stderr)
+        print("(named volumes are kept; add --purge to remove them too) on every selected", file=sys.stderr)
+        print("host. --")
+        return 1
+    names = cluster.parse_hosts_arg(getattr(args, "hosts", None))
+    ts = cluster.targets(cfg, names, runtime=getattr(args, "runtime", None))
+    if not ts:
+        return 1
+    return cluster.run_on_each(ts, lambda t: _teardown_one(t, args.purge))

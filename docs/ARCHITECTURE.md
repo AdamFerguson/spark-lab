@@ -102,33 +102,49 @@ byte-identically. **v2** adds multi-model, an explicit image map, and profiles:
 - **`profile:` / `profiles:`** — e.g. `profile: dev` selects a `profiles.dev`
   override block (dev/test vs prod). The active model's memory ceiling comes
   from `resources.mem_fraction_static` when present, else `params.mem_fraction_static`.
+- **v3 — one config per cluster (ADR 0008).** `version: 3` adds a `hosts:`
+  list (managed nodes: `name` / `ssh` / `remote` + any per-host config override,
+  deep-merged over the cluster-wide document) and per-model hosting:
+  `models.<m>.hosts` (where it is served — the scale) and
+  `models.<m>.host_overrides.<host>` (per-host model tailoring, including its
+  litellm serving identity). `Config.view_for(host)` returns a full config with
+  that host's overrides applied; the engine converges per view, so v1/v2 keep
+  byte-identical behavior. Local auto-detection makes the same file work on
+  every Spark (its own entry converges locally, the rest over SSH).
 
-`spark-lab migrate` rewrites a v1 file to v2 on disk (idempotent, value-
-preserving); the compat loader makes the on-disk format optional.
-See `config.example.v2.yaml` for a full document.
+`spark-lab migrate` rewrites a v1/v2 file to v3 on disk (idempotent,
+value-preserving, chained through `upgrade_to_v2` + `upgrade_to_v3`); the
+compat loader makes the on-disk format optional.
+See `config.example.v2.yaml` and `config.example.v3.yaml` for full documents.
 
 ## Commands
 
+Every host-targeted command takes `--hosts a,b` (v3; unset = all hosts).
+
 | Command | Purpose |
 |---|---|
-| `init` | create `config.yaml` + `.env`, generate placeholder keys |
-| `apply [--dry-run] [--diff] [--apply]` | render + converge; `--diff` shows what would change on disk |
+| `init [--yes]` | create `config.yaml` + `.env`, generate placeholder keys |
+| `init --hosts a,b [--yes] [--all]` | idempotent host bootstrap: tools, git checkout, install dir, tailscale |
+| `apply [--dry-run] [--diff] [--restart-model]` | render + converge per host; `--diff` shows what would change on disk |
+| `model up <m> [--hosts x]` | scale a model up: add host(s) to `models.<m>.hosts` + converge |
+| `model down <m> --yes [--hosts x]` | scale a model down: remove host(s) + stop the workloads there |
+| `model stop --yes` | stop the model workload now (config unchanged; next apply restarts) |
 | `adopt [--dry-run]` | take over an existing running install: record on-disk state + the running model; read-only vs the install, no restart |
-| `validate` (=`check config`) | read-only pre-flight: schema + render + required binaries |
-| `check images [--probe]` | resolve + report every image the deploy will pull; `--probe` inspects manifests |
-| `doctor` (=`check system`) | detect required/optional tools; `--install` installs the missing ones |
-| `migrate [--dry-run]` | rewrite a v1 config to schema v2 (idempotent) |
+| `check [--images] [--probe] [--system] [--install] [--all]` | pre-flight: config render + binaries; image resolution; per-host system tools |
+| `migrate [--dry-run]` | rewrite a v1/v2 config to schema v3 (idempotent) |
 | `recipes search <q>` | fan a query out to enabled discovery sources, merge + dedup |
 | `recipes list [src]` | enumerate one source (or all) |
 | `recipes show <ref>` | resolve `<source://ref>`, print metadata + native body |
 | `recipes convert <ref>` | produce a sparkrun *candidate* recipe (validated, never applied) |
-| `logs <service> [--lines N] [-f]` | tail stack service logs |
-| `status` | workloads + stack + network status |
-| `teardown [--yes] [--purge]` | stop the model + remove the stack |
-| `upgrade` | refresh engine deps + sparkrun + images, then re-apply |
+| `logs <service> [--lines N] [-f]` | tail stack service logs (one host; `--hosts` to pick) |
+| `status` | workloads + stack + network status, per selected host |
+| `teardown [--yes] [--purge]` | stop the model + remove the stack, per selected host |
+| `upgrade --yes` | refresh engine deps + sparkrun + images, then re-apply, per host |
+| `validate` / `doctor` | hidden aliases: `check` / `check --system` |
 
 `apply` is fail-safe: it refuses to converge when the active model has no
-resolvable image (ADR 0004).
+resolvable image (ADR 0004), and a host serving no model converges
+control-plane only.
 
 ## Recipe discovery + auto-conversion (Phase 5, ADR 0003)
 

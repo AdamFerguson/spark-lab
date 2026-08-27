@@ -100,6 +100,82 @@ HF_TOKEN=test-hf-token
 CF_TUNNEL_TOKEN=test-cf-token
 """
 
+# A fixed v3 cluster config: two hosts (alpha = local-only, beta = remote with
+# per-host monitoring override) sharing one model (beta gets a params override
+# via host_overrides). install_dir is a fixed absolute path (portable goldens)
+# and every secret resolves to the REFERENCE_ENV dummy values.
+V3_CLUSTER_CONFIG = """\
+version: 3
+install:
+  name: v3lab
+  install_dir: /opt/sparklab
+hosts:
+  - name: alpha
+    remote: false
+  - name: beta
+    ssh: beta.tailx.ts.net
+    remote: true
+    monitoring:
+      instance_label: beta-node
+models:
+  qwen:
+    active: true
+    hosts: [alpha, beta]
+    runtime: sglang
+    hf_model: test-llm/model
+    image: lmsysorg/sglang:test
+    hf_token_env: HF_TOKEN
+    host: 0.0.0.0
+    port: 30000
+    min_nodes: 1
+    params:
+      kv_cache_dtype: fp8_e4m3
+      attention_backend: flashinfer
+    extra_flags:
+      - --enable-metrics
+    host_overrides:
+      beta:
+        params:
+          mamba_ssm_dtype: bfloat16
+        litellm:
+          model_name: beta-served-name
+litellm:
+  model_name: my-spark-model
+  port: 4000
+  model_api_base_host: host.docker.internal
+  master_key_env: LITELLM_MASTER_KEY
+  salt_key_env: LITELLM_SALT_KEY
+  db:
+    image: pgvector/pgvector:pg16
+    user: litellm
+    password_env: LITELLM_DB_PASSWORD
+    db: litellm
+  redis:
+    enabled: true
+    image: redis:7-alpine
+    port: 6379
+  model_info:
+    supports_vision: true
+monitoring:
+  enabled: true
+  instance_label: alpha-node
+  prometheus:
+    image: prom/prometheus
+    port: 9090
+    retention: 15d
+  grafana:
+    image: grafana/grafana
+    port: 3000
+    admin_password_env: GRAFANA_ADMIN_PASSWORD
+  dashboards:
+    - sglang-dashboard
+network:
+  tailscale:
+    enabled: true
+  cloudflare:
+    enabled: false
+"""
+
 
 def config_text(install_dir: str, tailscale_enabled: bool = False) -> str:
     """The reference config with a given (writable) install_dir substituted in.

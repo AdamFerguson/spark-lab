@@ -78,9 +78,14 @@ class TestCliCommands(unittest.TestCase):
         self.assertEqual(teardown.run(_args(self.cp, rt, yes=True)), 0)
         self.assertFalse((st_dir / "state.json").exists())   # cleared for a fresh re-apply
 
+    def test_upgrade_without_yes_refuses(self):
+        rt = FakeRuntime(available=_AVAIL)
+        self.assertEqual(upgrade.run(_args(self.cp, rt, yes=False)), 1)
+        self.assertEqual(rt.commands, [])
+
     def test_upgrade_runs_pipeline_then_reapplies(self):
         rt = FakeRuntime(available=_AVAIL)  # no uv -> pip refresh path
-        self.assertEqual(upgrade.run(_args(self.cp, rt)), 0)
+        self.assertEqual(upgrade.run(_args(self.cp, rt, yes=True)), 0)
         # upgrade: refresh deps (pip, uv absent) -> sparkrun update -> pull -> re-apply
         self.assertTrue(any("pip" in " ".join(a) and "install" in " ".join(a)
                             for a in rt.commands))
@@ -92,7 +97,7 @@ class TestCliCommands(unittest.TestCase):
 
     def test_upgrade_refreshes_deps_via_uv_when_available(self):
         rt = FakeRuntime(available=_AVAIL | {"uv"})
-        self.assertEqual(upgrade.run(_args(self.cp, rt)), 0)
+        self.assertEqual(upgrade.run(_args(self.cp, rt, yes=True)), 0)
         self.assertTrue(any(a[:2] == ["uv", "lock"] for a in rt.commands))
         self.assertTrue(any(a[:2] == ["uv", "sync"] for a in rt.commands))
         self.assertFalse(any("pip" in " ".join(a) for a in rt.commands))
@@ -146,16 +151,17 @@ class TestCliCommands(unittest.TestCase):
                        "    hf_model: x\n" % self.install)
         self.assertEqual(images.run(_args(bad, FakeRuntime(available=_AVAIL), probe=False)), 1)
 
-    def test_migrate_v1_to_v2_is_idempotent(self):
+    def test_migrate_v1_to_v3_is_idempotent(self):
         v1 = self.d / "v1.yaml"
         v1.write_text("model:\n  recipe_name: q\n  hf_model: x\n  image: mm:1\n")
         a = lambda: types.SimpleNamespace(config=str(v1), dry_run=False, runtime=None,
                                           verbose=False, json=False)
         self.assertEqual(migrate.run(a()), 0)
         data = yaml.safe_load(v1.read_text())
-        self.assertEqual(data["version"], 2)
+        self.assertEqual(data["version"], 3)
         self.assertIn("q", data["models"])
-        self.assertEqual(migrate.run(a()), 0)  # already v2 -> no-op
+        self.assertEqual(len(data["hosts"]), 1)
+        self.assertEqual(migrate.run(a()), 0)  # already v3 -> no-op
 
 
 if __name__ == "__main__":

@@ -1,0 +1,161 @@
+# =============================================================================
+# spark-lab v3 config — ONE FILE for the whole cluster (ADR-0008).
+# -----------------------------------------------------------------------------
+# Copy to `config.yaml` and edit for your hosts / model / ports / secrets.
+# `spark-lab init` does the copy + .env generation for you.
+#
+# Secrets are NEVER stored here or in the repo: reference the *name* of an
+# environment variable from `.env` (next to this file) and it is injected at
+# render time. Per-host-different secrets use per-host env-var names, e.g.
+# host sol overrides `litellm: {master_key_env: LITELLM_MASTER_KEY_SOL}`.
+# =============================================================================
+
+version: 3
+
+install:
+  # Short workspace label used in logs / status output.
+  name: spark-lab
+  # Where sparkrun recipes + the litellm stack live on each node
+  # (per-host overridable). `~/...` is expanded ON THE NODE.
+  install_dir: ~/AI
+  # The node-side spark-lab checkout that holds the state file (~/spark-lab/.sparklab-state)
+  # and what `upgrade` refreshes. Per-host overridable.
+  # repo_dir: ~/spark-lab
+  # What `spark-lab init --hosts <bare-host> --yes` clones when a node has no
+  # checkout yet (skip it if you clone manually).
+  # repo_url: git@github.com:<you>/spark-lab.git
+
+# -----------------------------------------------------------------------------
+# Managed nodes. `name` = the identifier used with --hosts; `ssh` = connection
+# target (user@host works); `remote: true` = reach over SSH (Fabric) when we
+# are NOT on that node — running spark-lab ON the node converges it locally
+# automatically. `remote: false` = this machine (no ssh target needed).
+#
+# Any other key in an entry is a PER-HOST OVERRIDE, deep-merged over the
+# cluster-wide document below (monitoring:, images:, install:, litellm:, ...).
+# -----------------------------------------------------------------------------
+hosts:
+  - name: luna
+    ssh: luna.tail9d5411.ts.net
+    remote: true
+    monitoring:
+      instance_label: luna
+  - name: sol
+    ssh: sol.tail9d5411.ts.net
+    remote: true
+    monitoring:
+      instance_label: sol
+      dashboards:
+        - sglang-dashboard
+        - spark-host-overview
+    images:
+      # e.g. keep a node on a pinned gateway image while the rest tracks main-stable
+      litellm: ghcr.io/berriai/litellm:v1.99.0-dev.2
+
+# -----------------------------------------------------------------------------
+# Models. `hosts:` = where the model is served (absent = all hosts; `[]` =
+# scaled down everywhere). This list IS the scale:
+#   spark-lab model up  <model> --hosts sol     adds sol + converges it
+#   spark-lab model down <model> --yes --hosts sol   removes sol + stops it there
+# At most ONE active model may serve a given host (enforced).
+#
+# `host_overrides.<host>` deep-merges over this model's own fields for that
+# host (a "recipe tailored to a host": params, image, litellm serving
+# identity, ...).
+# -----------------------------------------------------------------------------
+models:
+  qwen38-27b:
+    active: true
+    hosts: [luna, sol]
+    runtime: sglang
+    hf_model: RadixArk/Qwen3.8-27B-NVFP4
+    image: lmsysorg/sglang:qwen38-27b
+    hf_token_env: HF_TOKEN
+    host: 0.0.0.0
+    port: 30000
+    min_nodes: 1
+    params:
+      # any SGLang param key -> --param flag; see docs/MODEL_RECIPES.md
+      kv_cache_dtype: fp8_e4m3
+      mem_fraction_static: 0.85
+      attention_backend: flashinfer
+    flag_map:
+      # param key -> exact CLI flag when it differs (e.g. draft-model path)
+      speculative_draft_model: speculative-draft-model-path
+    extra_flags:
+      - --enable-metrics
+      - --enable-mfu-metrics
+      - --enable-cache-report
+    host_overrides:
+      sol:
+        # per-host tuning (deep-merged over the shared params above)
+        params:
+          mamba_ssm_dtype: bfloat16
+        litellm:
+          # this node serves it under its own gateway name + token limits
+          model_name: adam-spark-qwen3-8-27b
+          model_info:
+            max_input_tokens: 262144
+            max_output_tokens: 131072
+
+# Exactly one cluster-wide "first" model for bookkeeping; per-host selection is
+# done by `models.<m>.hosts` + `active: true` (one active model per host).
+active_models:
+  - qwen38-27b
+
+# -----------------------------------------------------------------------------
+# Shared stack images (per-host overridable under hosts:). env
+# SPARKLAB_IMAGE_<KEY> still wins over everything (see core/config.py).
+# -----------------------------------------------------------------------------
+images:
+  litellm: docker.litellm.ai/berriai/litellm:main-stable
+  db: pgvector/pgvector:pg16
+  redis: redis:7-alpine
+  prometheus: prom/prometheus
+  grafana: grafana/grafana
+  node_exporter: prom/node-exporter:latest
+  dcgm_exporter: utkuozdemir/nvidia_gpu_exporter:latest
+  cadvisor: gcr.io/cadvisor/cadvisor:latest
+  gpu_textfile: ubuntu:24.04
+
+# -----------------------------------------------------------------------------
+# The LiteLLM gateway (per node; one gateway per host).
+# model_name/model_info below are the DEFAULTS; a model's host_overrides
+# (above) win for that host+model.
+# -----------------------------------------------------------------------------
+litellm:
+  model_name: qwen38-27b
+  port: 4000
+  model_api_base_host: host.docker.internal
+  master_key_env: LITELLM_MASTER_KEY
+  salt_key_env: LITELLM_SALT_KEY
+  db:
+    user: litellm
+    password_env: LITELLM_DB_PASSWORD
+    db: litellm
+  redis:
+    enabled: true
+    port: 6379
+  model_info:
+    supports_vision: true
+    supports_reasoning: true
+    max_input_tokens: 32768
+    max_output_tokens: 8192
+
+monitoring:
+  enabled: true
+  prometheus:
+    port: 9090
+    retention: 15d
+  grafana:
+    port: 3000
+    admin_password_env: GRAFANA_ADMIN_PASSWORD
+  instance_label: spark
+  dashboards:
+    - sglang-dashboard
+
+network:
+  tailscale:
+    enabled: true
+  cloudflare:
+    enabled: false

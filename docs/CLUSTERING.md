@@ -106,7 +106,7 @@ mesh** (when you actually run it) — the passwordless SSH from controller to pe
 
 ### 4. Build the mesh + launch
 ```bash
-spark-lab apply --apply
+spark-lab apply --restart-model
 ```
 This runs, in order: ensure tailscaled → `sparkrun setup ssh --hosts` (mesh) →
 `sparkrun cluster create` → `sparkrun run <model> --ensure --cluster` → reconcile
@@ -129,7 +129,7 @@ To go back to single-node:
 ```bash
 sparkrun stop <model> --cluster mylab      # stop the spanning model
 spark-lab teardown --cluster               # or, to tear the whole controller stack
-# then: set install.hosts back to just the controller + min_nodes: 1, apply --apply
+# then: in the v3 config, remove the peer from the model's `hosts:` (and min_nodes: 1), apply --restart-model
 ```
 Confirm the exact "remove cluster" sparkrun command on hardware (may be
 `sparkrun cluster delete <name>` or similar).

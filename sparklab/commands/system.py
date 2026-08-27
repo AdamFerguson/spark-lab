@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import sys
 
+from ..core import cluster
+
 # (binary, required, why, install_command_or_None, needs_sudo)
 TOOLS = [
     ("uv",        True,  "Manages the Python env + installs sparkrun (`uv tool install`).",
@@ -147,12 +149,8 @@ def install(results, runtime, include_optional: bool = False) -> tuple:
     return installed, failed
 
 
-def check(args) -> int:
-    """`spark-lab check system` / `doctor`: report, and install with --install."""
-    runtime = getattr(args, "runtime", None)
-    if runtime is None:
-        from ..core import runtime as runtime_mod
-        runtime = runtime_mod.default_runtime()
+def _check_one(runtime, do_install: bool, include_optional: bool) -> int:
+    """The per-host system check body (one runtime)."""
     results = detect(runtime)
     print_table(results)
     caps = check_capabilities(runtime)
@@ -173,9 +171,9 @@ def check(args) -> int:
             note += f" ({len(opt_missing)} optional missing: " \
                     + ", ".join(r["name"] for r in opt_missing) + " -- safe to ignore.)"
         print("\n" + note)
-    if getattr(args, "install", False):
+    if do_install:
         print("\nInstalling missing tools...")
-        installed, _failed = install(results, runtime, include_optional=getattr(args, "all", False))
+        installed, _failed = install(results, runtime, include_optional=include_optional)
         after = detect(runtime)
         print_table(after)
         still = [r["name"] for r in missing(after, required_only=True)
@@ -186,3 +184,23 @@ def check(args) -> int:
         print("\nAll required tools installed (re-run in a fresh shell to pick them up).")
         return 0
     return 0 if (not missing(results, required_only=True) and not caps_needing_fix(caps)) else 1
+
+
+def check(args) -> int:
+    """`spark-lab check system` / `doctor`: report, and install with --install.
+
+    Runs once per selected host (``--hosts``); a host's failure doesn't stop
+    the others."""
+    from ..core import config as config_mod
+    try:
+        cfg = config_mod.load(args.config)
+    except ValueError as e:
+        print(f"[INVALID] config: {e}", file=sys.stderr)
+        return 1
+    names = cluster.parse_hosts_arg(getattr(args, "hosts", None))
+    ts = cluster.targets(cfg, names, runtime=getattr(args, "runtime", None))
+    if not ts:
+        return 1
+    install = bool(getattr(args, "install", False))
+    include_optional = bool(getattr(args, "all", False))
+    return cluster.run_on_each(ts, lambda t: _check_one(t.runtime, install, include_optional))

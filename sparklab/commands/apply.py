@@ -1,4 +1,9 @@
-"""`spark-lab apply` — render + converge to config (idempotent)."""
+"""`spark-lab apply` — render + converge to config (idempotent), per host.
+
+Host-targeted (ADR 0008): runs the full converge once per selected host
+(``--hosts``), each against that host's config view + runtime + state. One
+host's failure does not stop the others; the exit code reflects any failure.
+"""
 from __future__ import annotations
 
 import difflib
@@ -6,7 +11,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from ..core import config, converge, node, render
+from ..core import cluster, config, converge, render
 
 
 def _print_diffs(cfg, rendered, file_changes, fs, limit=200):
@@ -25,37 +30,30 @@ def _print_diffs(cfg, rendered, file_changes, fs, limit=200):
         print("\n".join(lines[:limit]))
 
 
-def _target_banner(cfg, runtime) -> None:
-    """Where this converge lands: this machine, or a remote node."""
-    if cfg.is_remote and getattr(runtime, "is_remote", False):
-        print(f"   target     : {runtime.label}  (remote mode)")
-        print(f"   install dir: {cfg.install_dir_raw} (on the node)")
-    else:
-        print(f"   install dir: {cfg.install_dir}")
-
-
-def run(args) -> int:
-    cfg = config.load(args.config)
+def _converge_one(t, dry: bool, allow_restart: bool, diff: bool) -> int:
+    """The converge for one host (the historical single-target apply body)."""
+    cfg, runtime = t.cfg, t.runtime
     # fail-safe (ADR 0004): a model with no image can't be served -- refuse early
-    # rather than converge on an unresolvable image.
-    if not cfg.image_model():
+    # rather than converge on an unresolvable image. (Hosts with no active model
+    # converge control-plane only and skip these checks entirely.)
+    if cfg.model and not cfg.image_model():
         print(f"[ERROR] no image for active model '{cfg.active_alias}' "
               f"(set models.<alias>.image or SPARKLAB_IMAGE_MODEL).", file=sys.stderr)
         return 1
-    dry = getattr(args, "dry_run", False)
-    allow_restart = bool(getattr(args, "apply", False) or getattr(args, "yes", False))
-    runtime = getattr(args, "runtime", None)
+    if cfg.model and int(cfg.model.get("min_nodes", 1)) > 1:
+        print(f"[ERROR] multi-node (TP) model placement is not supported yet "
+              f"(ADR 0007 follow-up); this host would serve "
+              f"'{cfg.active_alias}' with min_nodes={cfg.model.get('min_nodes')}.",
+              file=sys.stderr)
+        return 1
 
-    print(f"== spark-lab apply {'[dry-run]' if dry else ''} ==")
-    print(f"   config     : {cfg.config_path}")
-    _target_banner(cfg, runtime)
-    print(f"   hosts      : {', '.join(str(h) for h in cfg.hosts)}"
-          f"{'  (cluster)' if cfg.is_cluster else ''}")
+    print(f"   install dir: {cfg.install_dir_raw if t.is_remote else cfg.install_dir}"
+          f"{' (on the node)' if t.is_remote else ''}")
 
     # Dry-run renders into a throwaway dir so it truly writes nothing to the repo.
     out_dir = Path(tempfile.mkdtemp(prefix="sparklab-dry-")) if dry else cfg.deploy_dir
     rendered = render.render(cfg, out_dir)
-    fs, st = node.node_env(cfg, runtime)
+    fs, st = t.env()
     plan = converge.build_plan(cfg, rendered, st.files, st.model, allow_restart,
                                runtime=runtime)
 
@@ -74,14 +72,14 @@ def run(args) -> int:
         print(f"   - {desc}")
 
     if dry:
-        if getattr(args, "diff", False):
+        if diff:
             _print_diffs(cfg, rendered, plan.file_changes, fs)
         print("\n[dry-run] No files written, no commands executed.")
         return 0
 
     written = converge.write_files(cfg, rendered, dry_run=False, fs=fs)
     if written:
-        where = f" on {runtime.label}" if getattr(runtime, "is_remote", False) else f" to {cfg.install_dir}"
+        where = f" on {runtime.label}" if t.is_remote else f" to {cfg.install_dir}"
         print(f"\nWrote {len(written)} file(s){where}")
     rc = converge.execute(plan, dry_run=False, runtime=runtime)
     if rc == 0:
@@ -94,5 +92,24 @@ def run(args) -> int:
         print("\nConverged. State updated.")
         if plan.model_restart_pending:
             print("NOTE: a model change is still pending (not restarted). "
-                  "Re-run with `spark-lab apply --apply` to restart the model.")
+                  "Re-run with `spark-lab apply --restart-model` to restart the model.")
     return rc
+
+
+def run(args) -> int:
+    cfg = config.load(args.config)
+    dry = getattr(args, "dry_run", False)
+    allow_restart = bool(getattr(args, "restart_model", False)
+                         or getattr(args, "apply", False) or getattr(args, "yes", False))
+    names = cluster.parse_hosts_arg(getattr(args, "hosts", None))
+    ts = cluster.targets(cfg, names, runtime=getattr(args, "runtime", None))
+    if not ts:
+        print("No hosts selected.", file=sys.stderr)
+        return 1
+
+    print(f"== spark-lab apply {'[dry-run]' if dry else ''} ==")
+    print(f"   config : {cfg.config_path}")
+    print(f"   hosts  : {', '.join(t.name for t in ts)}")
+
+    return cluster.run_on_each(ts, lambda t: _converge_one(t, dry, allow_restart,
+                                                           getattr(args, "diff", False)))

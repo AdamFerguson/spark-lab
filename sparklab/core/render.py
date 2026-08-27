@@ -18,8 +18,7 @@ from . import config as config_mod
 # The recipe target embeds the recipe name.
 def target_mapping(cfg: config_mod.Config) -> List[Tuple[str, str]]:
     recipe = cfg.recipe_name
-    return [
-        ("sparkrun_recipe.yaml.j2", f"sparkrun/recipes/{recipe}.yaml"),
+    entries = [
         ("docker-compose.yaml.j2", "litellm/docker-compose.yml"),
         ("litellm_config.yaml.j2", "litellm/config.yaml"),
         ("litellm_model_config.yaml.j2", "litellm/model_config.yaml"),
@@ -35,6 +34,11 @@ def target_mapping(cfg: config_mod.Config) -> List[Tuple[str, str]]:
          "litellm/grafana/dashboards/spark-host-overview.json"),
         ("scripts/nvidia-gpu-textfile.sh", "litellm/scripts/nvidia-gpu-textfile.sh"),
     ]
+    # The recipe file is rendered only when a model is actually active for this
+    # config/host view (a v3 host may serve no model at all -- control plane only).
+    if recipe:
+        entries.insert(0, ("sparkrun_recipe.yaml.j2", f"sparkrun/recipes/{recipe}.yaml"))
+    return entries
 
 
 def build_context(cfg: config_mod.Config) -> dict:
