@@ -11,7 +11,7 @@ import argparse
 
 from .core import config as config_mod
 from .core import runtime as runtime_mod
-from .commands import (adopt, apply, images, init, logs, migrate, recipes, status, system,
+from .commands import (adopt, apply, images, init, logs, migrate, model, recipes, status, system,
                        teardown, upgrade, validate)
 
 
@@ -97,6 +97,13 @@ def main(argv=None) -> int:
                              help="take over an existing running install (read-only; writes only state)")
     p_adopt.add_argument("--dry-run", action="store_true", help="report; write no state")
     p_adopt.set_defaults(func=adopt.run)
+
+    p_model = sub.add_parser("model", help="model workload actions (the stack keeps running)")
+    model_sub = p_model.add_subparsers(dest="model_cmd", required=True)
+    p_model_stop = model_sub.add_parser("stop", parents=[common],
+                                        help="stop the model workload only (gated behind --yes)")
+    p_model_stop.add_argument("--yes", action="store_true", help="actually stop the model")
+    p_model_stop.set_defaults(func=model.run)
 
     p_recipes = sub.add_parser("recipes", help="discover + convert model recipes (ADR 0003)")
     recipes_sub = p_recipes.add_subparsers(dest="recipes_cmd", required=True)

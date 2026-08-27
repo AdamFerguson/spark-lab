@@ -12,8 +12,13 @@
 ```bash
 ./bin/spark-lab status                 # workloads + stack + tailscale at a glance
 sparkrun logs <job-id>                 # follow the engine's logs (id from `sparkrun status`)
+./bin/spark-lab logs litellm -f        # stack service logs through spark-lab (remote-aware)
 docker compose -f <install_dir>/litellm/docker-compose.yml logs -f litellm
+./bin/spark-lab model stop --yes       # stop the model workload only (stack stays up)
 ```
+
+`model stop` is gated like `teardown` and records the stop in state; the next
+routine `apply` starts the model again (`sparkrun run --ensure`).
 
 ## Changing something
 

@@ -115,6 +115,9 @@ including the running model:
   hasn't been restarted stays *pending* and keeps prompting you to run
   `apply --apply` — it does **not** silently record the new recipe as applied.
 - **No-op** re-runs are idempotent (no model restart).
+- **Stopping just the model** (stack keeps running): `spark-lab model stop --yes`.
+  The stop is recorded in state, and the next routine `apply` re-starts the model
+  (converge semantics: the config says the model should be running).
 - `spark-lab upgrade` refreshes the engine deps, `sparkrun`, and the stack images,
   then re-applies with the model restart allowed.
 
