@@ -268,8 +268,29 @@ class TestRemoteInstallFS(unittest.TestCase):
         self.assertTrue(any(os.path.basename(l).startswith("sparklab-")
                             for l, _ in stub.puts))
 
+    def test_write_sets_explicit_modes(self):
+        """SFTP-created files land 0600; chmod fixes that or the
+        prometheus/grafana containers crash-loop on unreadable configs."""
+        rt, stub = make_runtime(install_dir=INSTALL)
+        fs = remote.RemoteInstallFS(rt)
+        fs.write("litellm/.env", b"LITELLM_MASTER_KEY=x")
+        fs.write("litellm/prometheus.yml", b"global: {}")
+        chmods = [r for r in stub.runs if "chmod" in r]
+        self.assertEqual(len(chmods), 2)
+        self.assertIn(f"chmod 600 {INSTALL}/litellm/.env", chmods[0])
+        self.assertIn(f"chmod 644 {INSTALL}/litellm/prometheus.yml", chmods[1])
+
 
 class TestNodeEnv(unittest.TestCase):
+    def test_local_write_sets_explicit_modes(self):
+        """Local writes must not honor the process umask (077 on the Sparks):"""
+        d = Path(tempfile.mkdtemp())
+        fs = node.LocalInstallFS(d)
+        fs.write("litellm/.env", b"x")
+        fs.write("litellm/prometheus.yml", b"y")
+        self.assertEqual(d.joinpath("litellm", ".env").stat().st_mode & 0o777, 0o600)
+        self.assertEqual(d.joinpath("litellm", "prometheus.yml").stat().st_mode & 0o777, 0o644)
+
     def test_local_backend_for_local_runtime(self):
         d = Path(tempfile.mkdtemp())
         (d / "config.yaml").write_text(REFERENCE_CONFIG)

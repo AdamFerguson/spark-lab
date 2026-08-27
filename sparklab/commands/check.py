@@ -19,6 +19,7 @@ from . import images, system, validate
 
 
 def run(args) -> int:
+    args._label = "check"   # the banner says the command the user actually ran
     what = getattr(args, "what", None)
     do_config = what == "config" or (what is None and not (args.images or args.system))
     do_images = what == "images" or args.images

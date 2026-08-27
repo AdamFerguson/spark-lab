@@ -65,7 +65,8 @@ def run(args) -> int:
     if cfg.cloudflare().get("enabled", False):
         bins.append("cloudflared")
 
-    print(f"== spark-lab validate ({cfg.config_path}) ==")
+    label = getattr(args, "_label", "validate")
+    print(f"== spark-lab {label} ({cfg.config_path}) ==")
     print(f"  hosts: {', '.join(t.name for t in ts)}")
     rc = cluster.run_on_each(ts, lambda t: _validate_host(t, bins))
     if rc == 0:

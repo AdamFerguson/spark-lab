@@ -39,6 +39,7 @@ from typing import Dict, List, Optional
 from fabric import Connection
 
 from . import state as state_mod
+from .node import file_mode
 
 # Standard PATH prefix for every remote command: uv tooling (~/.local/bin) and
 # cargo installs (~/.cargo/bin) are where sparkrun/uv usually live on a Spark.
@@ -247,6 +248,9 @@ class RemoteInstallFS:
             self.rt.conn.put(tmp, dest)
         finally:
             os.unlink(tmp)
+        # SFTP-created files land as 0600 (and umask varies) -- set the mode
+        # explicitly or prometheus/grafana crash-loop on unreadable configs.
+        self.rt.conn.run(_login("chmod " + oct(file_mode(rel))[2:] + " " + shlex.quote(dest)))
         return dest
 
     def hash_files(self, rels: List[str]) -> Dict[str, Optional[str]]:
