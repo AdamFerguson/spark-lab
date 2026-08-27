@@ -65,6 +65,19 @@ class _StubSFTPFile:
         return False
 
 
+class _StubSFTPClient:
+    """Stands in for the SFTP client that ``conn.open_sftp()`` returns."""
+
+    def __init__(self, store):
+        self._store = store
+
+    def open(self, path, mode="rb"):
+        return _StubSFTPFile(self._store, str(path))
+
+    def close(self):
+        pass
+
+
 class StubConnection:
     """A fake fabric ``Connection`` emulating remote.py's exact command grammar.
 
@@ -93,8 +106,9 @@ class StubConnection:
             inner = inner.split("; ", 1)[1]
         return inner
 
-    def open(self, path, mode="rb"):
-        return _StubSFTPFile(self.files, str(path))
+    def sftp(self):
+        """An SFTP client standing in for fabric's ``conn.sftp()``."""
+        return _StubSFTPClient(self.files)
 
     def put(self, local, remote_path):
         self.puts.append((str(local), str(remote_path)))

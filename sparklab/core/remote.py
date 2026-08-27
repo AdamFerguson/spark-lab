@@ -25,6 +25,8 @@ Design notes:
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import shlex
@@ -131,9 +133,14 @@ class RemoteRuntime:
         return self._conn
 
     def home_path(self) -> str:
-        """The remote node's ``$HOME`` (fetched once, cached)."""
+        """The remote node's ``$HOME`` (fetched once, cached).
+
+        Fetched quietly: the value is data for path expansion, not terminal
+        output (fabric echoes remote stdout to the local terminal).
+        """
         if self._remote_home is None:
-            r = self._conn.run(_login('echo "$HOME"'), warn=True)
+            with contextlib.redirect_stdout(io.StringIO()):
+                r = self._conn.run(_login('echo "$HOME"'), warn=True)
             self._remote_home = r.stdout.strip() or "/"
         return self._remote_home
 
@@ -157,12 +164,19 @@ class RemoteRuntime:
 
     # -- ADR-0002 runtime interface -------------------------------------------
     def locate(self, binary: str) -> Optional[str]:
-        """The node's absolute path to ``binary`` (login-shell PATH), or None."""
-        r = self._conn.run(_login("command -v " + shlex.quote(binary)), warn=True)
+        """The node's absolute path to ``binary`` (login-shell PATH), or None.
+
+        Runs quietly (the path is data, not terminal output).
+        """
+        with contextlib.redirect_stdout(io.StringIO()):
+            r = self._conn.run(_login("command -v " + shlex.quote(binary)), warn=True)
         return r.stdout.strip() or None
 
     def available(self, binary: str) -> bool:
-        return self.locate(binary) is not None
+        """Presence check without leaking the path to the terminal."""
+        r = self._conn.run(_login("command -v " + shlex.quote(binary) + " >/dev/null"),
+                           warn=True)
+        return r.return_code == 0
 
     def run(self, argv: List) -> subprocess.CompletedProcess:
         """Run ``argv`` on the node, streaming its output; return the result."""
@@ -211,9 +225,14 @@ class RemoteInstallFS:
         return r.return_code == 0
 
     def read(self, rel: str) -> Optional[bytes]:
-        """The file's bytes, or None if it does not exist on the node."""
+        """The file's bytes, or None if it does not exist on the node.
+
+        Via SFTP (binary-safe). Fabric memoizes the SFTP client per connection
+        (and it dies with the connection), so no per-read close.
+        """
+        sftp = self.rt.conn.sftp()
         try:
-            with self.rt.conn.open(self.path_str(rel), "rb") as fh:
+            with sftp.open(self.path_str(rel), "rb") as fh:
                 return fh.read()
         except (IOError, OSError):
             return None
@@ -241,8 +260,9 @@ class RemoteInstallFS:
     def list_recipes(self) -> List[str]:
         """Recipe basenames (no .yaml) under ``sparkrun/recipes`` on the node."""
         d = self.path_str("sparkrun/recipes")
-        r = self.rt.conn.run(_login(f"ls {shlex.quote(d)} 2>/dev/null | sed 's/\\.yaml$//'"),
-                             warn=True)
+        with contextlib.redirect_stdout(io.StringIO()):
+            r = self.rt.conn.run(
+                _login(f"ls {shlex.quote(d)} 2>/dev/null | sed 's/\\.yaml$//'"), warn=True)
         if r.return_code != 0:
             return []
         return sorted(r.stdout.split())
@@ -267,7 +287,8 @@ class RemoteState:
         return f"{self.rt.expand(self.rt.target.repo_dir)}/{self.STATE_REL}"
 
     def load(self) -> dict:
-        r = self.rt.conn.run(_login("cat " + shlex.quote(self.path)), warn=True)
+        with contextlib.redirect_stdout(io.StringIO()):
+            r = self.rt.conn.run(_login("cat " + shlex.quote(self.path)), warn=True)
         if r.return_code != 0 or not r.stdout.strip():
             return {"files": {}}
         try:
