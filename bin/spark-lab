@@ -8,7 +8,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 VENV=".venv"
 
-have_deps() { [ -x "$VENV/bin/python" ] && "$VENV/bin/python" -c "import yaml, jinja2" >/dev/null 2>&1; }
+have_deps() { [ -x "$VENV/bin/python" ] && "$VENV/bin/python" -c "import yaml, jinja2, fabric" >/dev/null 2>&1; }
 
 setup_env() {
   have_deps && return
