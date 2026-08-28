@@ -46,7 +46,7 @@ def find_sparkrun(runtime=None) -> str:
 
 class Plan:
     def __init__(self) -> None:
-        self.file_changes: List[tuple] = []   # (target_rel, "added" | "changed" | "removed")
+        self.file_changes: List[tuple] = []   # (target_rel, "added" | "changed" | "removed" | "kept")
         self.commands: List[tuple] = []       # (description, [argv])
         self.notes: List[str] = []
         # model convergence bookkeeping
@@ -127,7 +127,13 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
     # --- files: removed (managed before, no longer rendered) ----------------
     removed = [rel for rel in state_files if rel not in rendered]
     for rel in removed:
-        plan.file_changes.append((rel, "removed"))
+        # A scaled-down recipe is deliberately LEFT on disk (unmanaged): with the
+        # workload stopped the file is inert, re-scaling up just re-renders it, and
+        # nothing in spark-lab picks recipes up by directory scan (the ensure/stop
+        # paths always address an explicit path). All other managed files
+        # (gateway/monitoring configs) are still deleted.
+        kind = "kept" if rel.startswith("sparkrun/recipes/") else "removed"
+        plan.file_changes.append((rel, kind))
 
     litellm_touched = (
         any(r.startswith("litellm/") for r in changed)

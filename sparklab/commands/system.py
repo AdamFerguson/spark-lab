@@ -128,9 +128,12 @@ def install(results, runtime, include_optional: bool = False) -> tuple:
                 failed.append(r["name"])
             continue
         print(f"  installing {r['name']} -> $ {('sudo ' if r['sudo'] else '')}{cmd}")
-        argv = ["sudo", "sh", "-lc", cmd] if r["sudo"] else ["sh", "-lc", cmd]
+        if r["sudo"] and getattr(runtime, "is_remote", False):
+            print(f"      (root is needed on {getattr(runtime, 'label', r['name'])} -- "
+                  f"you may be asked for that node's sudo password)")
+        argv = ["sh", "-lc", cmd]
         try:
-            cp = runtime.run(argv)
+            cp = runtime.run_sudo(argv) if r["sudo"] else runtime.run(argv)
             rc = getattr(cp, "returncode", 0)
         except Exception as e:  # noqa: BLE001 - surface, don't crash the run
             print(f"      install errored: {e}")

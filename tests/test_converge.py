@@ -245,7 +245,8 @@ class TestConverge(unittest.TestCase):
         files = {"sparkrun/recipes/qwen.yaml": "y" * 64, "litellm/docker-compose.yml": "y" * 64}
         model = {"name": "qwen", "hash": "y" * 64}
         plan = plan_for(cfg, rendered, files, model, allow_restart=True)
-        self.assertIn(("sparkrun/recipes/qwen.yaml", "removed"), plan.file_changes)
+        # scaled-down recipe: kept on disk, unmanaged (not deleted)
+        self.assertIn(("sparkrun/recipes/qwen.yaml", "kept"), plan.file_changes)
         self.assertTrue(any("Stop model workload qwen" in d for d, _ in plan.commands))
         self.assertFalse(plan.model_restart_pending)
         # model converges to "none"

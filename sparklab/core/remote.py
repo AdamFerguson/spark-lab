@@ -26,11 +26,13 @@ Design notes:
 from __future__ import annotations
 
 import contextlib
+import getpass
 import io
 import json
 import os
 import shlex
 import subprocess
+import sys
 import tempfile
 from typing import Dict, List, Optional
 
@@ -183,6 +185,51 @@ class RemoteRuntime:
         """Run ``argv`` on the node, streaming its output; return the result."""
         r = self._conn.run(_login(_shell_argv(argv)), warn=True)
         return subprocess.CompletedProcess(list(argv), r.return_code, r.stdout, r.stderr)
+
+    def _sudo_needs_password(self) -> bool:
+        """True when the node's sudo has no valid credential cache for us.
+
+        ``sudo -n -v`` (non-interactive, validate only) exits 0 when the cache
+        is fresh or sudo is passwordless; anything else means a prompt is due.
+        """
+        ch = self._conn.create_session()
+        ch.exec_command(_login("sudo -n -v"))
+        return ch.recv_exit_status() != 0
+
+    def run_sudo(self, argv: List) -> subprocess.CompletedProcess:
+        """Run ``argv`` under ``sudo`` on the node, prompting on the operator's
+        terminal when the node's sudo needs a password.
+
+        The prompt is local (``getpass``, no echo): the password travels over
+        the encrypted SSH channel to ``sudo -S`` and is never part of the
+        remote command line, so it does not show up in the node's ``ps`` or
+        shell history. Cached / passwordless sudo skips the prompt entirely.
+        The command's output is echoed to the local terminal as it arrives.
+        """
+        if not self._sudo_needs_password():
+            return self.run(["sudo", "-n"] + list(argv))
+        if not sys.stdin.isatty():
+            raise RuntimeError(
+                f"sudo on {self.label} needs a password, but this terminal is "
+                f"not interactive -- re-run from a terminal (or cache "
+                f"credentials / allow passwordless sudo on that node).")
+        pw = getpass.getpass(f"sudo password for {self.label}: ")
+        ch = self._conn.create_session()
+        ch.set_combine_stderr(True)
+        stdin, stdout, _stderr = ch.exec_command(
+            _login("sudo -S -v && sudo -S " + _shell_argv(argv)))
+        stdin.write(pw.encode() + b"\n")
+        stdin.flush()
+        stdin.close()
+        out: List[bytes] = []
+        for raw in iter(stdout.readline, b""):
+            text = raw.decode("utf-8", "replace")
+            sys.stdout.write(text)
+            sys.stdout.flush()
+            out.append(raw)
+        rc = ch.recv_exit_status()
+        return subprocess.CompletedProcess(
+            list(argv), rc, b"".join(out).decode("utf-8", "replace"), "")
 
     def spawn(self, argv: List) -> _Detached:
         """Launch ``argv`` fully detached on the node (new session, stdio off).

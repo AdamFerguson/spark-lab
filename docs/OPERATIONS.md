@@ -28,7 +28,9 @@ docker compose -f <install_dir>/litellm/docker-compose.yml logs -f litellm
 `model stop` is gated like `teardown` and records the stop in state; the next
 routine `apply` starts the model again (`sparkrun run --ensure`). `model up` /
 `model down` edit the config's `models.<m>.hosts` and converge the affected
-hosts — that list *is* the scale.
+hosts — that list *is* the scale. `model down` stops the workload on the
+dropped host and leaves the old recipe file there, unmanaged (inert until a
+re-scale-up re-renders it).
 
 ## Changing something
 
@@ -134,7 +136,8 @@ keeps its state in its own spark-lab checkout
      sol keeps running its own copy, its entry stays local.
   2. `hosts: [luna]` + `apply --restart-model --hosts sol` — sol's entry flips
      to `http://luna:<port>/v1` (same model name; a best-effort litellm restart
-     makes it take effect, a few seconds), then sol's model workload stops.
+     makes it take effect, a few seconds), then sol's model workload stops
+     (its recipe file is left on sol, unmanaged).
   Reversal: `model up <m> --hosts sol` (start the local copy first) then
   `model down <m> --yes --hosts luna`.
   `check`/`validate` refuse configs where active models would run with no

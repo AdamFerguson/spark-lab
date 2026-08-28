@@ -50,6 +50,14 @@ class Runtime:
         """
         return subprocess.run(list(argv))
 
+    def run_sudo(self, argv) -> subprocess.CompletedProcess:
+        """Run ``argv`` under ``sudo`` on this machine.
+
+        ``subprocess`` inherits the controlling terminal, so sudo's password
+        prompt appears here and the password is typed on this machine (never
+        passed through the command line)."""
+        return subprocess.run(["sudo"] + list(argv))
+
     def spawn(self, argv) -> subprocess.Popen:
         """Launch ``argv`` fully **detached** and return the ``Popen`` without
         waiting for it to exit.

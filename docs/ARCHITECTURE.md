@@ -162,11 +162,16 @@ control-plane only.
 
 Two file-layer invariants (both learned live, 2026-08-28):
 
-- **Removed files are deleted, with two safety gates.** State-tracked files that
-  no longer render (an old recipe after a rename) are deleted only after the
-  apply's commands succeeded — the stop-model command addresses the old recipe
-  by its on-disk path — and are deferred entirely while the model restart is
-  still gated (the stale path must survive until the post-restart apply).
+- **Scaled-down / renamed recipes are KEPT on disk, unmanaged.** A recipe that
+  no longer renders (the model scaled off the host, or a rename) is dropped
+  from the state record but *left in place*: with the workload stopped the
+  file is inert — the ensure/stop paths always address an explicit path, and
+  nothing in spark-lab scans the recipes directory — and re-scaling up just
+  re-renders over it. (Earlier versions deleted it; the deletion bought
+  nothing but a moving part.) All other managed files (gateway/monitoring
+  configs) are still deleted, with two safety gates: only after the apply's
+  commands succeeded, and deferred entirely while the model restart is still
+  gated.
 - **Explicit file modes on every write.** SFTP-created files land 0600 and
   local writes honor the process umask (077 on the Sparks); both are unreadable
   by the container users of prometheus/grafana, which crash-loop on 0600

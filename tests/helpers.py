@@ -234,6 +234,10 @@ class FakeRuntime:
         r.returncode = self._fail.get(argv[0], 0)
         return r
 
+    def run_sudo(self, argv):
+        """Mirror of ``Runtime.run_sudo``: records ``["sudo", *argv]``."""
+        return self.run(["sudo"] + list(argv))
+
     def spawn(self, argv):
         """Record a detached launch (mirrors ``Runtime.spawn``).
 

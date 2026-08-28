@@ -18,6 +18,8 @@ def _print_diffs(cfg, rendered, file_changes, fs, limit=200):
     """Show a unified diff vs the current on-disk install for each change."""
     print("\n--- diff vs current install (a/ = on disk, b/ = would write) ---")
     for rel, kind in file_changes:
+        if kind == "kept":
+            continue   # left on disk, unmanaged -- nothing would be written
         new = rendered.get(rel, b"").decode("utf-8", "replace")
         old_bytes = fs.read(rel)
         old = old_bytes.decode("utf-8", "replace") if old_bytes else ""
@@ -88,6 +90,8 @@ def _converge_one(t, dry: bool, allow_restart: bool, diff: bool) -> int:
         # the file must exist until that command has run. When the restart is
         # still gated, the stop hasn't run at all -- defer the removals to the
         # next (post-restart) apply so the stale path still exists for it.
+        # ("kept" entries are scaled-down recipes: left on disk, unmanaged --
+        # nothing is deleted for them.)
         removed = [rel for rel, kind in plan.file_changes if kind == "removed"]
         if not plan.model_restart_pending:
             for rel in removed:
@@ -98,6 +102,12 @@ def _converge_one(t, dry: bool, allow_restart: bool, diff: bool) -> int:
                 for rel in removed:
                     print(f"   - {rel}")
         new_files = converge.compute_files_after_apply(rendered)
+        kept = [rel for rel, kind in plan.file_changes if kind == "kept"]
+        if kept:
+            print("Kept on disk, no longer managed (workload stopped; re-scaling up "
+                  "re-renders them):")
+            for rel in kept:
+                print(f"   - {rel}")
         has_model = plan.current_hash is not None
         converged_after = (not plan.model_restart_pending) if has_model else allow_restart
         new_model = converge.compute_model_after_apply(

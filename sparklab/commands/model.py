@@ -9,6 +9,10 @@ scale:
 * ``model down <model> --yes [--hosts a,b]`` -- remove host(s) from the model's
   ``hosts:`` and converge them, which stops the workloads that are no longer
   current (stale-recipe stops are gated, so this passes the gate deliberately).
+  The dropped host's recipe file is LEFT on disk, unmanaged: with the workload
+  stopped it is inert (the ensure/stop paths always address an explicit path,
+  nothing scans the recipes directory), and re-scaling up just re-renders over
+  it. The state record drops it either way.
 * ``model stop --yes`` (legacy) -- stop the active model on the target host(s)
   WITHOUT changing the config; a routine ``apply`` starts it again. Works on
   v1/v2/v3 alike.

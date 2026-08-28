@@ -48,9 +48,10 @@ class TestApplyIntegration(unittest.TestCase):
     def tearDown(self):
         self._env.stop()
 
-    def test_renamed_recipe_removes_stale_file_after_apply(self):
-        """A recipe rename converges by stopping the old workload + removing
-        the old recipe file (only once the commands succeeded)."""
+    def test_renamed_recipe_keeps_stale_file_on_disk(self):
+        """A recipe rename converges by stopping the old workload; the old
+        recipe file is LEFT on disk (unmanaged) -- only the state record drops
+        it. Re-scaling up re-renders the recipe over it."""
         rt = FakeRuntime()
         self.assertEqual(apply.run(_args(self.cfg_path, rt)), 0)
         old = self.install / "sparkrun" / "recipes" / "qwen.yaml"
@@ -60,7 +61,7 @@ class TestApplyIntegration(unittest.TestCase):
             config_text(str(self.install)).replace("recipe_name: qwen",
                                                    "recipe_name: qwen2"))
         self.assertEqual(apply.run(_args(self.cfg_path, rt, apply=True)), 0)
-        self.assertFalse(old.exists(), "stale recipe file must be removed")
+        self.assertTrue(old.exists(), "stale recipe file is kept on disk (unmanaged)")
         self.assertTrue(new.is_file())
         self.assertNotIn("sparkrun/recipes/qwen.yaml", self._state()["files"])
         self.assertIn("sparkrun/recipes/qwen2.yaml", self._state()["files"])

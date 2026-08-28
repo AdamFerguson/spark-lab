@@ -48,6 +48,14 @@ generalized form.
   `labs/<node>/config.yaml` + `labs/<node>/.env` (per-node secrets: luna and sol have
   different `LITELLM_MASTER_KEY` etc.).
 - ADR-0007's single-control-plane/worker architecture is a *later* step, unchanged.
+- **Sudo on the node** (`check system --install` on a remote host): when the
+  node's sudo needs a password, the CLI pauses and prompts **on the operator's
+  machine** (via `getpass`, no echo) for that node's sudo password; the password
+  travels over the encrypted SSH channel to `sudo -S` and is never part of the
+  remote command line (so it does not appear in the node's `ps` or shell
+  history, and is not stored anywhere). Cached / passwordless sudo skips the
+  prompt entirely; a non-interactive terminal (CI, pipes) is refused with a
+  clear error rather than hanging.
 
 ## Config surface (new block, v1 + v2)
 

@@ -48,6 +48,65 @@ class _Result:
         return self.return_code == 0
 
 
+class _StubStdin:
+    """Paramiko-stdin stand-in: records everything written to it."""
+
+    def __init__(self, sink):
+        self.sink = sink
+
+    def write(self, data):
+        self.sink.append(data)
+        return len(data)
+
+    def flush(self):
+        pass
+
+    def close(self):
+        pass
+
+
+class _StubStdout:
+    """Paramiko-stdout stand-in: readline() yields the canned lines, then b""."""
+
+    def __init__(self, text):
+        self._lines = [l.encode("utf-8") for l in text.splitlines(keepends=True)] \
+            if text else []
+
+    def readline(self):
+        return self._lines.pop(0) if self._lines else b""
+
+
+class _StubChannel:
+    """Raw-channel stand-in (fabric ``create_session()`` -> paramiko Channel).
+
+    ``exec_command`` dispatches against the stub's ``canned`` table exactly
+    like ``StubConnection.run``; written stdin bytes are captured for
+    assertion (the sudo password must arrive here, never in the command).
+    """
+
+    def __init__(self, stub):
+        self.stub = stub
+        self.cmds = []
+        self.stdin_sink = []
+        self.combined_stderr = False
+        self._result = _Result(0, "")
+
+    def set_combine_stderr(self, on):
+        self.combined_stderr = bool(on)
+
+    def exec_command(self, cmd, *a, **kw):
+        self.cmds.append(cmd)
+        self.stub.runs.append(cmd)
+        self._result = next(
+            (_Result(rc, out) for n, rc, out in self.stub.canned if n in cmd),
+            _Result(0, ""))
+        return (_StubStdin(self.stdin_sink), _StubStdout(self._result.stdout),
+                _StubStdout(""))
+
+    def recv_exit_status(self):
+        return self._result.return_code
+
+
 class _StubSFTPFile:
     def __init__(self, store, path):
         self._store = store
@@ -97,6 +156,7 @@ class StubConnection:
         self.files = dict(files or {})            # remote path (str) -> bytes
         self.runs = []                            # full command strings, in order
         self.puts = []                            # [(local_path, remote_path)]
+        self.sessions = []                        # raw channels (create_session)
 
     @staticmethod
     def _inner(cmd: str) -> str:
@@ -109,6 +169,12 @@ class StubConnection:
     def sftp(self):
         """An SFTP client standing in for fabric's ``conn.sftp()``."""
         return _StubSFTPClient(self.files)
+
+    def create_session(self):
+        """A raw channel stand-in for fabric's ``conn.create_session()``."""
+        ch = _StubChannel(self)
+        self.sessions.append(ch)
+        return ch
 
     def put(self, local, remote_path):
         self.puts.append((str(local), str(remote_path)))
@@ -215,6 +281,51 @@ class TestShellGrammar(unittest.TestCase):
         self.assertEqual(rt.expand("~/AI"), "/remote/home/AI")
         self.assertEqual(rt.expand("~"), "/remote/home")
         self.assertEqual(rt.expand("/opt/sparklab"), "/opt/sparklab")
+
+
+class TestRunSudo(unittest.TestCase):
+    """Remote sudo: prompt on the operator's terminal, password over the
+    channel (never in the command line), cached/pwdless sudo skips the prompt."""
+
+    def _rt(self, canned):
+        rt, _ = make_runtime(stub=StubConnection(canned=canned))
+        return rt
+
+    def test_passwordless_or_cached_sudo_skips_prompt(self):
+        stub = StubConnection(canned=[("sudo -n -v", 0, "")])
+        rt, _ = make_runtime(stub=stub)
+        with mock.patch("sparklab.core.remote.getpass.getpass") as gp:
+            cp = rt.run_sudo(["sh", "-lc", "apt-get install -y git"])
+        self.assertEqual(cp.returncode, 0)
+        gp.assert_not_called()
+        self.assertTrue(any("sudo -n sh -lc" in r for r in stub.runs))
+
+    def test_password_prompted_and_sent_over_channel_only(self):
+        stub = StubConnection(canned=[("sudo -n -v", 1, ""),
+                                      ("apt-get", 0, "ok\n")])
+        rt, _ = make_runtime(stub=stub)
+        with mock.patch("sparklab.core.remote.getpass.getpass",
+                        return_value="sekret") as gp, \
+             mock.patch.object(sys.stdin, "isatty", return_value=True):
+            cp = rt.run_sudo(["sh", "-lc", "apt-get install -y git"])
+        self.assertEqual(cp.returncode, 0)
+        self.assertEqual(cp.stdout, "ok\n")
+        gp.assert_called_once()
+        main = [r for r in stub.runs if "sudo -S -v && sudo -S" in r]
+        self.assertEqual(len(main), 1)
+        self.assertIn("sudo -S sh -lc", main[0])
+        self.assertIn("apt-get install -y git", main[0])
+        self.assertEqual(b"".join(stub.sessions[-1].stdin_sink), b"sekret\n")
+        # the password must never appear in any remote command string
+        self.assertTrue(all("sekret" not in r for r in stub.runs))
+
+    def test_non_interactive_terminal_refuses(self):
+        rt = self._rt(canned=[("sudo -n -v", 1, "")])
+        with mock.patch("sparklab.core.remote.getpass.getpass") as gp, \
+             mock.patch.object(sys.stdin, "isatty", return_value=False):
+            with self.assertRaises(RuntimeError):
+                rt.run_sudo(["sh", "-lc", "x"])
+        gp.assert_not_called()
 
 
 class TestRemoteState(unittest.TestCase):

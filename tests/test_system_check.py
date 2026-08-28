@@ -8,6 +8,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -81,9 +82,15 @@ class TestSystemCheck(_ConfigIsolated):
 
     def test_install_sudo_tool_uses_sudo(self):
         rt = _rt(_ALL - {"docker"})
-        with contextlib.redirect_stdout(io.StringIO()):
-            system.check(self._args(rt, install=True))
+        sudo_calls = []
+        with mock.patch.object(rt, "run_sudo", wraps=rt.run_sudo) as spy:
+            with contextlib.redirect_stdout(io.StringIO()):
+                system.check(self._args(rt, install=True))
         self.assertTrue(any(a[0] == "sudo" and "get.docker.com" in " ".join(a) for a in rt.commands))
+        # the sudo-flagged tool went through the run_sudo seam exactly once;
+        # non-sudo installs never do
+        self.assertEqual(len(spy.call_args_list), 1)
+        self.assertIn("get.docker.com", " ".join(spy.call_args_list[0].args[0]))
 
     def test_missing_required_without_command_flagged(self):
         rt = _rt(_ALL - {"python3"})   # python3 has no one-liner in the table
