@@ -48,6 +48,23 @@ class TestApplyIntegration(unittest.TestCase):
     def tearDown(self):
         self._env.stop()
 
+    def test_renamed_recipe_removes_stale_file_after_apply(self):
+        """A recipe rename converges by stopping the old workload + removing
+        the old recipe file (only once the commands succeeded)."""
+        rt = FakeRuntime()
+        self.assertEqual(apply.run(_args(self.cfg_path, rt)), 0)
+        old = self.install / "sparkrun" / "recipes" / "qwen.yaml"
+        new = self.install / "sparkrun" / "recipes" / "qwen2.yaml"
+        self.assertTrue(old.is_file())
+        self.cfg_path.write_text(
+            config_text(str(self.install)).replace("recipe_name: qwen",
+                                                   "recipe_name: qwen2"))
+        self.assertEqual(apply.run(_args(self.cfg_path, rt, apply=True)), 0)
+        self.assertFalse(old.exists(), "stale recipe file must be removed")
+        self.assertTrue(new.is_file())
+        self.assertNotIn("sparkrun/recipes/qwen.yaml", self._state()["files"])
+        self.assertIn("sparkrun/recipes/qwen2.yaml", self._state()["files"])
+
     def _state(self):
         return json.loads(self.state_file.read_text())
 

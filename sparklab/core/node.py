@@ -61,6 +61,10 @@ class LocalInstallFS:
         os.chmod(p, file_mode(rel))
         return str(p)
 
+    def delete(self, rel: str) -> None:
+        """Remove a managed file that no longer renders (best-effort)."""
+        Path(self.path_str(rel)).unlink(missing_ok=True)
+
     def hash_files(self, rels: List[str]) -> dict:
         out = {}
         for rel in rels:

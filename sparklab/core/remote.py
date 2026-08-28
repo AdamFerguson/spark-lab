@@ -253,6 +253,10 @@ class RemoteInstallFS:
         self.rt.conn.run(_login("chmod " + oct(file_mode(rel))[2:] + " " + shlex.quote(dest)))
         return dest
 
+    def delete(self, rel: str) -> None:
+        """Remove a managed file that no longer renders (best-effort)."""
+        self.rt.conn.run(_login("rm -f " + shlex.quote(self.path_str(rel))), warn=True)
+
     def hash_files(self, rels: List[str]) -> Dict[str, Optional[str]]:
         """sha256 per rel (None where the file is absent) — read, then hash."""
         out: Dict[str, Optional[str]] = {}

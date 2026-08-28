@@ -280,6 +280,13 @@ class TestRemoteInstallFS(unittest.TestCase):
         self.assertIn(f"chmod 600 {INSTALL}/litellm/.env", chmods[0])
         self.assertIn(f"chmod 644 {INSTALL}/litellm/prometheus.yml", chmods[1])
 
+    def test_delete_issues_rm(self):
+        rt, stub = make_runtime(install_dir=INSTALL)
+        fs = remote.RemoteInstallFS(rt)
+        fs.delete("sparkrun/recipes/old.yaml")
+        self.assertTrue(any(f"rm -f {INSTALL}/sparkrun/recipes/old.yaml" in r
+                            for r in stub.runs))
+
 
 class TestNodeEnv(unittest.TestCase):
     def test_local_write_sets_explicit_modes(self):
@@ -290,6 +297,14 @@ class TestNodeEnv(unittest.TestCase):
         fs.write("litellm/prometheus.yml", b"y")
         self.assertEqual(d.joinpath("litellm", ".env").stat().st_mode & 0o777, 0o600)
         self.assertEqual(d.joinpath("litellm", "prometheus.yml").stat().st_mode & 0o777, 0o644)
+
+    def test_local_delete_is_idempotent(self):
+        d = Path(tempfile.mkdtemp())
+        fs = node.LocalInstallFS(d)
+        fs.write("a/b.yaml", b"x")
+        fs.delete("a/b.yaml")
+        self.assertFalse(d.joinpath("a/b.yaml").exists())
+        fs.delete("a/b.yaml")   # missing file is not an error
 
     def test_local_backend_for_local_runtime(self):
         d = Path(tempfile.mkdtemp())

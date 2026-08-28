@@ -83,6 +83,20 @@ def _converge_one(t, dry: bool, allow_restart: bool, diff: bool) -> int:
         print(f"\nWrote {len(written)} file(s){where}")
     rc = converge.execute(plan, dry_run=False, runtime=runtime)
     if rc == 0:
+        # Removed files are deleted only after the commands succeeded: the
+        # stop-model command addresses the old recipe by its on-disk path, so
+        # the file must exist until that command has run. When the restart is
+        # still gated, the stop hasn't run at all -- defer the removals to the
+        # next (post-restart) apply so the stale path still exists for it.
+        removed = [rel for rel, kind in plan.file_changes if kind == "removed"]
+        if not plan.model_restart_pending:
+            for rel in removed:
+                fs.delete(rel)
+            if removed:
+                where = f" on {runtime.label}" if t.is_remote else f" in {cfg.install_dir}"
+                print(f"Removed {len(removed)} file(s){where}:")
+                for rel in removed:
+                    print(f"   - {rel}")
         new_files = converge.compute_files_after_apply(rendered)
         has_model = plan.current_hash is not None
         converged_after = (not plan.model_restart_pending) if has_model else allow_restart
