@@ -10,9 +10,33 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+import yaml as yaml_mod
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from . import config as config_mod
+
+# Base executor_config the recipe template emits when a model declares no
+# `executor_config:` overrides (kept static in the template for byte-identical
+# default renders; overrides replace whole keys in the merged dict instead).
+EXECUTOR_CONFIG_BASE: Dict[str, object] = {
+    "ipc": "host",
+    "shm_size": "32g",
+    "privileged": True,
+    "cap_add": ["SYS_PTRACE"],
+    "security_opt": ["seccomp=unconfined"],
+}
+
+
+def yaml_block(d: dict, indent: int = 2) -> str:
+    """A YAML mapping as indented text (for embedding under a template key).
+
+    ``safe_dump`` (sort_keys=False) keeps key order and emits valid YAML for
+    scalars/lists/dicts alike; every line is padded to *indent* spaces.
+    """
+    text = yaml_mod.safe_dump(
+        d, sort_keys=False, default_flow_style=False, allow_unicode=True)
+    return "\n".join(" " * indent + line for line in text.rstrip("\n").splitlines())
+
 
 # (template source under templates/, target path under install_dir)
 # The recipe target embeds the recipe name.
@@ -60,6 +84,17 @@ def build_context(cfg: config_mod.Config) -> dict:
     monitoring = cfg.monitoring
     db = cfg.db()
     redis = cfg.redis()
+    executor_overrides = model.get("executor_config") or {}
+    executor_final: Dict[str, object] = dict(EXECUTOR_CONFIG_BASE)
+    executor_final.update(executor_overrides)
+    hf_token = cfg.secret(model.get("hf_token_env"))
+    env_final: Dict[str, str] = {
+        "PYTORCH_CUDA_ALLOC_CONF": "",
+        "PYTORCH_ALLOC_CONF": "",
+    }
+    if hf_token:
+        env_final["HF_TOKEN"] = str(hf_token)
+    env_final.update({str(k): str(v) for k, v in (model.get("env") or {}).items()})
     return {
         "cfg": cfg.data,
         "install": cfg.install,
@@ -90,6 +125,16 @@ def build_context(cfg: config_mod.Config) -> dict:
         "flag_map": model.get("flag_map", {}),
         "model_image": cfg.image_model(),
         "hf_token": cfg.secret(model.get("hf_token_env")),
+        # Optional per-model recipe overrides (empty by default -> byte-identical
+        # renders): executor_config keys added to / replacing the base block,
+        # extra container env vars, and a pinned HF checkpoint revision. The
+        # *_final dicts merge base + overrides so the rendered recipe never
+        # carries duplicate YAML keys.
+        "executor_overrides": executor_overrides,
+        "executor_config_final": executor_final,
+        "extra_env": model.get("env") or {},
+        "env_final": env_final,
+        "model_revision": str(model.get("model_revision") or ""),
         # Defaults keep an omitted key-name from silently rendering an EMPTY
         # secret (an unauthenticated / broken gateway instead of a clear error).
         "master_key": cfg.secret(litellm.get("master_key_env", "LITELLM_MASTER_KEY")),
@@ -142,6 +187,7 @@ def render(cfg: config_mod.Config, deploy_dir: Path) -> Dict[str, bytes]:
         trim_blocks=True,
         lstrip_blocks=True,
     )
+    jenv.filters["yaml_block"] = yaml_block
     ctx = build_context(cfg)
     rendered: Dict[str, bytes] = {}
 

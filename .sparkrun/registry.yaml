@@ -2,7 +2,7 @@
 # This is the source of truth for the `sparkrun-registry` discovery source.
 # `file:` points at the runnable sparkrun recipe; the rest is discovery metadata.
 registry: spark-lab
-updated: "2026-08-22"
+updated: "2026-08-28"
 recipes:
   qwen38-27b:
     name: Qwen3.8-27B (NVFP4)
@@ -20,3 +20,14 @@ recipes:
     hardware: DGX Spark / GB10
     description: Compact 8B model for low-memory dev/test work.
     file: recipes/llama31-8b.yaml
+  qwen38-flash-next:
+    name: Qwen3.8-Flash-Next (NVFP4, MTP)
+    model: RadixArk/Qwen3.8-Flash-Next-NVFP4
+    image: lmsysorg/sglang:qwen38flashnext
+    tags: [ qwen, moe, 125b, nvfp4, speculative, mtp, 262k, single-node, needs-prepare ]
+    hardware: DGX Spark / GB10
+    description: >
+      125B MoE + 51B PLE (6B active), native 262k context, MTP 3/1/4. Needs the
+      one-time node-side preparation (scripts/flash-next-prepare.sh): image
+      patching + PLE dir + pinned revision weights.
+    file: recipes/qwen38-flash-next.yaml

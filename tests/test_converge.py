@@ -63,6 +63,19 @@ class TestConverge(unittest.TestCase):
         self._p = mock.patch.object(converge, "find_sparkrun", lambda *a: "sparkrun")
         self._p.start()
 
+    # 0. Readiness probe bound -------------------------------------------------
+    def test_readiness_probe_defaults_to_six_hundred_seconds(self):
+        loop = converge._model_readiness_probe(make_cfg())[2]
+        self.assertIn("seq 1 120", loop)      # 120 x 5s = 600s
+        self.assertIn("sleep 5", loop)
+
+    def test_readiness_probe_honors_readiness_seconds(self):
+        cfg = make_cfg()
+        cfg.model["readiness_seconds"] = 5400   # e.g. a 48 GB PLE-table fill
+        loop = converge._model_readiness_probe(cfg)[2]
+        self.assertIn("seq 1 1080", loop)     # 5400 / 5
+        self.assertIn("5400s", loop)
+
     def tearDown(self):
         self._p.stop()
 

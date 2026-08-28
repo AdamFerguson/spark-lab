@@ -143,6 +143,34 @@ keeps its state in its own spark-lab checkout
   `check`/`validate` refuse configs where active models would run with no
   control-plane host to serve them, or where two models share a serving name
   on one gateway.
+- **Qwen3.8-Flash-Next on luna (second model).** The 125B MoE + 51B PLE recipe
+  (`models.qwen38-flash-next`, registry recipe `recipes/qwen38-flash-next.yaml`)
+  needs a one-time node-side preparation on luna before the first `apply` —
+  the pinned SGLang image ships two source files that must be patched (PLE
+  NVMe-mmap allocation + shard-reuse fast path; the QSA sm_121 decode gate),
+  and sparkrun bind-mounts the patched files back into the image read-only:
+  ```bash
+  # on luna, from a repo checkout (idempotent; ~20 min for the image pull +
+  # the ~135 GB pinned-revision weight download when cold):
+  HF_TOKEN="$(sed -n 's/^HF_TOKEN=//p' ~/spark-lab/.env | tr -d '"')" \
+    bash scripts/flash-next-prepare.sh
+  ```
+  It creates `/home/adam/AI/flash-next/{build,ple,sglang-cache}` — the build
+  dir holds the patched `qwen4_exp.py` / `qwen_sparse_attn_backend.py` (and
+  `in_image_paths.txt`, which the script cross-checks against the recipe's
+  mount targets when the image tag ever changes layout). Then `apply` (or
+  `model up qwen38-flash-next --hosts luna`) converges it: first boot fills
+  the 48 GB PLE table, ~45-60 min of quiet (the config's
+  `readiness_seconds: 5400` covers it; later boots are ~10 min thanks to the
+  shard-reuse patch). The engine serves under its HF model id; sol's gateway
+  exposes it as `qwen38-flash-next` at `http://luna:30000/v1` (implicit
+  central serving). Client notes: thinking is on by default
+  (`chat_template_kwargs: {"enable_thinking": false}` to turn it off;
+  `reasoning_effort` does nothing on this build); vision is on; tool calls
+  use the `qwen3_coder` parser. Scale it off later with
+  `model down qwen38-flash-next --yes --hosts luna` (the PLE backing file and
+  weights stay on luna's disk — delete them by hand if you want the ~180 GB
+  back).
 - **Config drift:** because one file is the source of truth, edit it in one
   place and copy it to the other machines (it's small and gitignorable — the
   `.env` next to it is the only secret-bearing file).

@@ -76,14 +76,18 @@ def _model_readiness_probe(cfg) -> List[str]:
 
     Replaces the model's foreground log-tail as the "is it up?" signal: a bounded
     poll (default ~10 min) means a failed model start is surfaced as an apply
-    failure instead of the converge hanging. Probes the first host; refining the
+    failure instead of the converge hanging. The bound is ``model.readiness_seconds``
+    (default 600): slow-first-boot recipes (e.g. a 48 GB PLE table fill on
+    Qwen3.8-Flash-Next) raise it. Probes the first host; refining the
     per-model primary endpoint for multi-node clusters is a follow-up
     (see docs/CLUSTERING.md).
     """
     host = str(cfg.hosts[0]) if cfg.hosts else "127.0.0.1"
     port = int(cfg.model.get("port", 30000))
+    seconds = int(cfg.model.get("readiness_seconds", 600))
+    sleep_s = 5
+    polls = max(1, seconds // sleep_s)
     url = f"http://{host}:{port}/health"
-    polls, sleep_s = 120, 5
     loop = (
         f"for i in $(seq 1 {polls}); do "
         f"curl -fsS -m 5 {url} >/dev/null 2>&1 && exit 0; "
