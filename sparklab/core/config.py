@@ -160,6 +160,50 @@ class Config:
         """The host this config is a view for (None for the base/legacy config)."""
         return self._view_host
 
+    # -- v3 monitoring roles (ADR-0008 addendum) ----------------------------
+    def monitoring_role(self) -> str:
+        """This host's monitoring split: 'full' (default -- prometheus + grafana
+        + exporters), 'exporters' (the GPU/host exporter sidecars only; scraped
+        by a full host's central prometheus), or 'none' (no monitoring
+        services -- also reachable via the legacy ``monitoring.enabled: false``).
+        """
+        mon = self.data.get("monitoring") or {}
+        if not mon.get("enabled", True):
+            return "none"
+        role = str(mon.get("role", "full")).lower()
+        if role not in ("full", "exporters", "none"):
+            raise ValueError(f"monitoring.role must be 'full', 'exporters' or 'none' (got {role!r})")
+        return role
+
+    def remote_scrape_targets(self) -> List[Dict[str, Any]]:
+        """For this host's central prometheus: the other hosts whose
+        ``monitoring.role`` is 'exporters', with the address to scrape them at
+        (the host's ``ssh`` value -- resolvable on the node via Tailscale/LAN
+        DNS) and the instance label to tag their metrics with.
+
+        v3 only; legacy configs return [] (rendered prometheus.yml is
+        byte-identical to the historical output).
+        """
+        base = self._view_base if self._view_base is not None else self
+        if not base.is_v3:
+            return []
+        out: List[Dict[str, Any]] = []
+        for spec in base.host_specs:
+            if spec.name == self.view_host:
+                continue
+            other = base.view_for(spec.name)
+            if other.monitoring_role() != "exporters":
+                continue
+            port = None
+            if other.model:
+                port = other.model.get("port", 30000)
+            out.append({
+                "name": spec.ssh_host or spec.name,
+                "instance": (other.data.get("monitoring") or {}).get("instance_label", "spark"),
+                "model_port": port,
+            })
+        return out
+
     def _select_active(self) -> Tuple[str, Dict[str, Any]]:
         """Return ``(alias, model_dict)`` for the model that should be live.
 

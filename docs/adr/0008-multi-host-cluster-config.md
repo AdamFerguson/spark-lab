@@ -203,3 +203,34 @@ each Spark).
   (ADR-0007), optional `init --mesh` (node-to-node key exchange via the
   operator's connections), `recipes` as an agent-driven discovery/optimization
   tool.
+
+## Addendum (2026-08-28): monitoring roles
+
+The observability stack can now be split across the cluster per host via
+`monitoring.role` (a per-host override like any other):
+
+- `full` (default) — prometheus + grafana + the exporter sidecars, as before.
+- `exporters` — only the exporter sidecars (node/dcgm/cadvisor/gpu-textfile).
+  A `full` host's prometheus scrapes every `exporters` host over its `ssh`
+  address (Tailscale/LAN DNS), tagging the metrics with that host's
+  `instance_label` so the existing dashboards work across the cluster. This
+  is how "monitor luna from sol" works: one central Grafana, exporters
+  everywhere.
+- `none` — no monitoring services (equivalent to the legacy
+  `monitoring.enabled: false`).
+
+Rendered-file consequences: an `exporters`/`none` host's render drops
+`prometheus.yml` + the grafana provisioning/dashboards (converge deletes them
+on transition), and its compose only carries the enabled services/volumes.
+Legacy v1/v2 configs render byte-identically (the remote-scrape loop is empty).
+
+Design notes:
+- The scrape address is the host's `ssh` value — the same address operators
+  already use, so no new networking knob.
+- Remote jobs are named `sglang_<host>` / `node_<host>` / `dcgm_<host>` /
+  `cadvisor_<host>`; dashboards select hosts by the `instance` label, which
+  is set explicitly per job, so job-name suffixes are irrelevant to queries.
+- The `sglang_<host>` remote job only renders when that host actually serves a
+  model (its model `port` is present).
+- Unchanged: exporters bind 0.0.0.0 on the host, so tailnet/LAN reachability
+  is all that's required (the node firewall, if any, is out of scope).

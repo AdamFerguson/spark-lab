@@ -18,22 +18,31 @@ from . import config as config_mod
 # The recipe target embeds the recipe name.
 def target_mapping(cfg: config_mod.Config) -> List[Tuple[str, str]]:
     recipe = cfg.recipe_name
+    role = cfg.monitoring_role()
     entries = [
         ("docker-compose.yaml.j2", "litellm/docker-compose.yml"),
         ("litellm_config.yaml.j2", "litellm/config.yaml"),
         ("litellm_model_config.yaml.j2", "litellm/model_config.yaml"),
         ("litellm.env.j2", "litellm/.env"),
-        ("prometheus.yml.j2", "litellm/prometheus.yml"),
-        ("grafana/provisioning/datasources/prometheus.yml.j2",
-         "litellm/grafana/provisioning/datasources/prometheus.yml"),
-        ("grafana/provisioning/dashboards/dashboards.yml.j2",
-         "litellm/grafana/provisioning/dashboards/dashboards.yml"),
-        ("grafana/dashboards/sglang-dashboard.json",
-         "litellm/grafana/dashboards/sglang-dashboard.json"),
-        ("grafana/dashboards/spark-host-overview.json",
-         "litellm/grafana/dashboards/spark-host-overview.json"),
-        ("scripts/nvidia-gpu-textfile.sh", "litellm/scripts/nvidia-gpu-textfile.sh"),
     ]
+    if role == "full":
+        # Central observability stack: prometheus config + the grafana
+        # provisioning/dashboards that only a 'full' host's grafana consumes.
+        entries += [
+            ("prometheus.yml.j2", "litellm/prometheus.yml"),
+            ("grafana/provisioning/datasources/prometheus.yml.j2",
+             "litellm/grafana/provisioning/datasources/prometheus.yml"),
+            ("grafana/provisioning/dashboards/dashboards.yml.j2",
+             "litellm/grafana/provisioning/dashboards/dashboards.yml"),
+            ("grafana/dashboards/sglang-dashboard.json",
+             "litellm/grafana/dashboards/sglang-dashboard.json"),
+            ("grafana/dashboards/spark-host-overview.json",
+             "litellm/grafana/dashboards/spark-host-overview.json"),
+        ]
+    if role in ("full", "exporters"):
+        # The gpu_textfile sidecar script (consumed by the exporters' node
+        # textfile collector) runs on every host that carries exporters.
+        entries.append(("scripts/nvidia-gpu-textfile.sh", "litellm/scripts/nvidia-gpu-textfile.sh"))
     # The recipe file is rendered only when a model is actually active for this
     # config/host view (a v3 host may serve no model at all -- control plane only).
     if recipe:
@@ -85,6 +94,10 @@ def build_context(cfg: config_mod.Config) -> dict:
         "redis_image": cfg.image("redis"),
         "redis_port": redis.get("port", 6379),
         "monitoring_enabled": bool(monitoring.get("enabled", True)),
+        "monitoring_role": cfg.monitoring_role(),
+        "monitoring_exporters_enabled": cfg.monitoring_role() in ("full", "exporters"),
+        "monitoring_stack_enabled": cfg.monitoring_role() == "full",
+        "remote_scrape_targets": cfg.remote_scrape_targets(),
         "prometheus_image": cfg.image("prometheus"),
         "prometheus_port": cfg.prometheus().get("port", 9090),
         "prometheus_retention": cfg.prometheus().get("retention", "15d"),

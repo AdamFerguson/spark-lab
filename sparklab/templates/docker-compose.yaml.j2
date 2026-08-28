@@ -65,7 +65,7 @@ services:
     volumes:
       - redis_data:/data
 {% endif %}
-{% if monitoring_enabled %}
+{% if monitoring_stack_enabled %}
 
   prometheus:
     image: {{ prometheus_image }}
@@ -98,6 +98,8 @@ services:
     depends_on:
       - prometheus
     restart: always
+{% endif %}
+{% if monitoring_exporters_enabled %}
 
   node_exporter:
     image: {{ node_exporter_image }}
@@ -155,25 +157,23 @@ services:
               capabilities: [gpu]
     command: ["bash", "/opt/nvidia-gpu-textfile.sh"]
     restart: always
+{% endif %}
 
 volumes:
+{% if monitoring_exporters_enabled %}
   gpu_textfile_data:
+{% endif %}
+{% if monitoring_stack_enabled %}
   prometheus_data:
     name: litellm_prometheus_data
+{% endif %}
   postgres_data:
     name: litellm_postgres_data
 {% if redis_enabled %}
   redis_data:
     name: litellm_redis_data
 {% endif %}
+{% if monitoring_stack_enabled %}
   grafana_data:
     name: litellm_grafana_data
-{% else %}
-volumes:
-  postgres_data:
-    name: litellm_postgres_data
-{% if redis_enabled %}
-  redis_data:
-    name: litellm_redis_data
-{% endif %}
 {% endif %}

@@ -163,6 +163,10 @@ state**, including the running model:
   config's `models.<m>.hosts` and converge the affected hosts); stopping just
   the model without changing config: `model stop --yes` (the next routine
   `apply` re-starts it — converge semantics).
+- **Split the observability stack** with `monitoring.role` per host:
+  `full` (default: prometheus + grafana + exporters), `exporters` (exporter
+  sidecars only — a `full` host's prometheus scrapes it remotely, so one
+  central Grafana covers the whole cluster), or `none`.
 - `spark-lab upgrade --yes` refreshes the engine deps, `sparkrun`, and the stack
   images per host, then re-applies with the model restart allowed.
 

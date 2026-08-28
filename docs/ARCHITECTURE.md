@@ -111,6 +111,10 @@ byte-identically. **v2** adds multi-model, an explicit image map, and profiles:
   that host's overrides applied; the engine converges per view, so v1/v2 keep
   byte-identical behavior. Local auto-detection makes the same file work on
   every Spark (its own entry converges locally, the rest over SSH).
+  `monitoring.role` (per host) splits the observability stack: `full`
+  (default: prometheus + grafana + exporters) / `exporters` (sidecars only —
+  a `full` host's prometheus scrapes it over its `ssh` address, tagged with
+  its `instance_label`) / `none`. See ADR 0008's addendum.
 
 `spark-lab migrate` rewrites a v1/v2 file to v3 on disk (idempotent,
 value-preserving, chained through `upgrade_to_v2` + `upgrade_to_v3`); the

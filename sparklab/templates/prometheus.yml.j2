@@ -52,3 +52,43 @@ scrape_configs:
       - targets: [cadvisor:8080]
         labels:
           instance: {{ instance }}
+{% for h in remote_scrape_targets %}
+  # Remote exporters host '{{ h.name }}' (monitoring.role: exporters) --
+  # scraped over the Tailscale/LAN address, tagged with that host's instance
+  # label so the dashboards keep working across the cluster.
+{% if h.model_port %}
+  - job_name: sglang_{{ h.name }}
+    scrape_interval: 5s
+    metrics_path: /metrics
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: "sglang:(.*)"
+        target_label: __name__
+        replacement: "sglang_$1"
+    static_configs:
+      - targets: [{{ h.name }}:{{ h.model_port }}]
+        labels:
+          instance: {{ h.instance }}
+{% endif %}
+  - job_name: node_{{ h.name }}
+    scrape_interval: 30s
+    scrape_timeout: 25s
+    static_configs:
+      - targets: [{{ h.name }}:9100]
+        labels:
+          instance: {{ h.instance }}
+
+  - job_name: dcgm_{{ h.name }}
+    scrape_interval: 5s
+    static_configs:
+      - targets: [{{ h.name }}:9835]
+        labels:
+          instance: {{ h.instance }}
+
+  - job_name: cadvisor_{{ h.name }}
+    static_configs:
+      - targets: [{{ h.name }}:8080]
+        labels:
+          instance: {{ h.instance }}
+
+{% endfor %}

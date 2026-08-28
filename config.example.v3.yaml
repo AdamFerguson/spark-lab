@@ -40,6 +40,11 @@ hosts:
     remote: true
     monitoring:
       instance_label: luna
+      # 'exporters' = host/GPU exporter sidecars only (no local
+      # prometheus/grafana); the 'full' host's prometheus scrapes this one
+      # over its `ssh` address. 'full' (default) = the whole observability
+      # stack; 'none' = no monitoring services at all.
+      role: exporters
   - name: sol
     ssh: sol.tail9d5411.ts.net
     remote: true

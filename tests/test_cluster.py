@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from sparklab.core import cluster, config as config_mod, render  # noqa: E402
 from sparklab.core.config import HostSpec  # noqa: E402
-from tests.helpers import FakeRuntime, REFERENCE_ENV, SECRET_DUMMY, V3_CLUSTER_CONFIG  # noqa: E402
+from tests.helpers import FakeRuntime, REFERENCE_CONFIG, REFERENCE_ENV, SECRET_DUMMY, V3_CLUSTER_CONFIG  # noqa: E402
 
 
 def load_v3(d: Path) -> config_mod.Config:
@@ -107,6 +107,93 @@ class TestHostViews(unittest.TestCase):
         self.assertEqual(alpha.active_alias, "qwen")
         self.assertIn("sparkrun/recipes/qwen.yaml",
                       render.render(alpha, sub / "deploy-a"))
+
+
+class TestMonitoringRoles(unittest.TestCase):
+    """monitoring.role split: 'full' (central prometheus + grafana +
+    exporters), 'exporters' (scraped by a full host), 'none'."""
+
+    V3_EXPORTERS = V3_CLUSTER_CONFIG.replace(
+        "    monitoring:\n      instance_label: beta-node",
+        "    monitoring:\n      instance_label: beta-node\n      role: exporters")
+
+    def _load(self, text, name="role"):
+        sub = self.d / name
+        sub.mkdir()
+        (sub / "config.yaml").write_text(text)
+        (sub / ".env").write_text(REFERENCE_ENV)
+        return config_mod.load(str(sub / "config.yaml"))
+
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp())
+        self._env = mock.patch.dict(os.environ, SECRET_DUMMY)
+        self._env.start()
+
+    def tearDown(self):
+        self._env.stop()
+
+    def test_role_accessor_defaults_and_validation(self):
+        cfg = self._load(V3_CLUSTER_CONFIG)
+        self.assertEqual(cfg.view_for("alpha").monitoring_role(), "full")
+        self.assertEqual(cfg.view_for("beta").monitoring_role(), "full")
+        cfg = self._load(self.V3_EXPORTERS, "exporters")
+        self.assertEqual(cfg.view_for("beta").monitoring_role(), "exporters")
+        off = V3_CLUSTER_CONFIG.replace("enabled: true\n  instance_label: alpha-node",
+                                        "enabled: false\n  instance_label: alpha-node")
+        self.assertEqual(self._load(off, "off").monitoring_role(), "none")
+        bad = V3_CLUSTER_CONFIG.replace("hosts:\n", "hosts:\n  - name: bad\n"
+                                          "    monitoring: {role: bogus}\n")
+        with self.assertRaises(ValueError):
+            self._load(bad, "bad").view_for("bad").monitoring_role()
+
+    def test_exporters_host_renders_no_stack_but_keeps_exporters(self):
+        cfg = self._load(self.V3_EXPORTERS, "exporters")
+        beta = cfg.view_for("beta")
+        rendered = render.render(beta, self.d / "beta-deploy")
+        self.assertNotIn("litellm/prometheus.yml", rendered)
+        self.assertNotIn("litellm/grafana/provisioning/dashboards/dashboards.yml", rendered)
+        self.assertIn("litellm/scripts/nvidia-gpu-textfile.sh", rendered)
+        compose = rendered["litellm/docker-compose.yml"].decode()
+        self.assertNotIn("prometheus:", compose)
+        self.assertNotIn("grafana:", compose)
+        self.assertIn("node_exporter:", compose)
+        self.assertIn("dcgm_exporter:", compose)
+        self.assertIn("cadvisor:", compose)
+        self.assertIn("gpu_textfile:", compose)
+        self.assertNotIn("prometheus_data", compose)
+
+    def test_full_host_scrapes_remote_exporters(self):
+        cfg = self._load(self.V3_EXPORTERS, "exporters")
+        alpha = cfg.view_for("alpha")
+        targets = alpha.remote_scrape_targets()
+        self.assertEqual(targets, [{"name": "beta.tailx.ts.net",
+                                    "instance": "beta-node", "model_port": 30000}])
+        prom = render.render(alpha, self.d / "alpha-deploy")["litellm/prometheus.yml"].decode()
+        for needle in ("job_name: sglang_beta.tailx.ts.net",
+                       "targets: [beta.tailx.ts.net:30000]",
+                       "job_name: node_beta.tailx.ts.net",
+                       "targets: [beta.tailx.ts.net:9100]",
+                       "targets: [beta.tailx.ts.net:9835]",
+                       "targets: [beta.tailx.ts.net:8080]",
+                       "instance: beta-node"):
+            self.assertIn(needle, prom)
+        # the local jobs are unchanged and the remote host is not self-targeted
+        self.assertIn("targets: [node_exporter:9100]", prom)
+        self.assertNotIn("targets: [alpha.tailx.ts.net:9100]", prom)
+        # and vice versa: an exporters host has no prometheus config at all,
+        # so no remote targets surface on its side either
+        self.assertEqual(cfg.view_for("beta").remote_scrape_targets(), [])
+
+    def test_legacy_config_has_no_remote_targets(self):
+        sub = self.d / "legacy"
+        sub.mkdir()
+        (sub / "config.yaml").write_text(REFERENCE_CONFIG)
+        (sub / ".env").write_text(REFERENCE_ENV)
+        cfg = config_mod.load(str(sub / "config.yaml"))
+        self.assertEqual(cfg.monitoring_role(), "full")
+        self.assertEqual(cfg.remote_scrape_targets(), [])
+        prom = render.render(cfg, sub / "deploy")["litellm/prometheus.yml"].decode()
+        self.assertNotIn("Remote exporters host", prom)
 
     def test_multi_active_models_disjoint_hosts_are_ok(self):
         text = V3_CLUSTER_CONFIG.replace(
