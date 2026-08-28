@@ -377,6 +377,16 @@ class Config:
         if active_models:
             alias = str(active_models[0])
             if alias in models:
+                if self._is_v3 and self._view_host is None:
+                    # A legacy top-level ``active_models:`` key must not paper
+                    # over a v3 placement conflict: validate one-active-model
+                    # per host before honoring the named model.
+                    if self.active_host_conflicts():
+                        raise ValueError(
+                            "v3 config: two active models would both serve "
+                            "the same host: "
+                            f"{self._conflict_pairs()} -- one host runs one "
+                            "active model (scale one down or give it hosts: [])")
                 return alias, models[alias] or {}
             if self._view_host is not None:
                 active_models = None   # named active model serves other hosts; fall through
@@ -399,8 +409,14 @@ class Config:
             if self.active_host_conflicts():
                 raise ValueError(
                     "v3 config: two active models would both serve the same host: "
-                    f"{self._conflict_pairs()}")
+                    f"{self._conflict_pairs()} -- one host runs one active model "
+                    "(scale one down or give it hosts: [])")
             return active[0], models[active[0]] or {}
+        if self._is_v3 and self._view_host is not None:
+            raise ValueError(
+                f"host '{self._view_host}': active models {active} all serve "
+                "it, but a host runs at most one active model -- scale one down "
+                "(model down <name> --yes --hosts ...) or set its hosts: to []")
         raise ValueError(f"v2 config: multiple active models {active}; set exactly one "
                          f"(or use active_models:)")
 

@@ -237,8 +237,51 @@ class TestMonitoringRoles(unittest.TestCase):
         sub.mkdir()
         (sub / "config.yaml").write_text(text)
         (sub / ".env").write_text(REFERENCE_ENV)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValueError) as cm:
             config_mod.load(str(sub / "config.yaml"))
+        # the error names the host and the model so the fix is obvious
+        self.assertIn("beta", str(cm.exception))
+        self.assertIn("llama", str(cm.exception))
+
+    def test_vestigial_active_models_does_not_mask_v3_conflict(self):
+        # Regression: a v2-style top-level active_models: used to short-circuit
+        # the base active-model selection, masking per-host conflicts until a
+        # host view was built (with a misleading 'v2 config' message).
+        text = V3_CLUSTER_CONFIG.replace(
+            "litellm:\n  model_name:",
+            "  llama:\n    active: true\n    hosts: [beta]\n"
+            "    hf_model: test-llm/llama\n    image: lmsysorg/sglang:llama\n"
+            "active_models:\n"
+            "  - qwen\n"
+            "litellm:\n  model_name:", 1)
+        sub = self.d / "sub5"
+        sub.mkdir()
+        (sub / "config.yaml").write_text(text)
+        (sub / ".env").write_text(REFERENCE_ENV)
+        with self.assertRaises(ValueError) as cm:
+            config_mod.load(str(sub / "config.yaml"))
+        self.assertIn("beta", str(cm.exception))
+        self.assertIn("v3 config", str(cm.exception))
+
+    def test_vestigial_active_models_still_honored_when_valid(self):
+        # Disjoint placement + legacy active_models: still loads; the named
+        # model is the base representative, per-host views pick their own.
+        text = V3_CLUSTER_CONFIG.replace(
+            "hosts: [alpha, beta]", "hosts: [alpha]", 1).replace(
+            "litellm:\n  model_name:",
+            "  llama:\n    active: true\n    hosts: [beta]\n"
+            "    hf_model: test-llm/llama\n    image: lmsysorg/sglang:llama\n"
+            "active_models:\n"
+            "  - qwen\n"
+            "litellm:\n  model_name:", 1)
+        sub = self.d / "sub6"
+        sub.mkdir()
+        (sub / "config.yaml").write_text(text)
+        (sub / ".env").write_text(REFERENCE_ENV)
+        cfg = config_mod.load(str(sub / "config.yaml"))
+        self.assertEqual(cfg.active_alias, "qwen")
+        self.assertEqual(cfg.view_for("alpha").active_alias, "qwen")
+        self.assertEqual(cfg.view_for("beta").active_alias, "llama")
 
 
 class TestControlPlane(unittest.TestCase):
