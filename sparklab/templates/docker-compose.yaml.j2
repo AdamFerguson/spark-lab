@@ -2,6 +2,7 @@
 # LiteLLM gateway + Postgres + Redis, and (optionally) a Prometheus/Grafana
 # observability stack with GPU-aware exporters tuned for the GB10.
 services:
+{% if control_plane_enabled %}
   litellm:
     image: {{ litellm_image }}
     ports:
@@ -64,6 +65,7 @@ services:
       start_period: 5s
     volumes:
       - redis_data:/data
+{% endif %}
 {% endif %}
 {% if monitoring_stack_enabled %}
 
@@ -167,9 +169,11 @@ volumes:
   prometheus_data:
     name: litellm_prometheus_data
 {% endif %}
+{% if control_plane_enabled %}
   postgres_data:
     name: litellm_postgres_data
-{% if redis_enabled %}
+{% endif %}
+{% if control_plane_enabled and redis_enabled %}
   redis_data:
     name: litellm_redis_data
 {% endif %}

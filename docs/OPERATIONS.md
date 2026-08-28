@@ -86,6 +86,11 @@ upgrades — per-host pins via the host entry's `images:` overrides.
 
 ## Rebuilding from scratch
 
+> **Volumes:** a plain `teardown --yes` KEEPS all named volumes (the LiteLLM
+> database, redis, prometheus/grafana data) — a re-apply restores the stack on
+> the same data. `--purge` is the ONLY path that destroys them (it prints an
+> explicit per-volume warning, naming the database as unrecoverable).
+
 ```bash
 ./bin/spark-lab teardown --yes --purge   # per selected host (--hosts to scope): stop model, down + remove volumes
 rm -rf <install_dir>/litellm <install_dir>/sparkrun/recipes   # on each host
@@ -110,6 +115,16 @@ keeps its state in its own spark-lab checkout
 - **Long commands** (the bounded model-readiness probe can run up to ~10 min)
   execute inside one SSH session; if the node drops idle connections early,
   raise its `ClientAliveInterval` or shorten the probe.
+- **Host roles.** Two per-host switches shape what runs where: `monitoring.role`
+  (`full` / `exporters` / `none`) and `control_plane.enabled` (default `true`).
+  An observability-only host — e.g. `monitoring: {role: exporters}` +
+  `control_plane: {enabled: false}` — runs just the exporter sidecars, scraped
+  by a `full` host's central prometheus. Disabling the control plane stops the
+  gateway/db/redis containers and removes their config files, but the
+  `litellm_postgres_data` / `litellm_redis_data` volumes stay on disk: flip the
+  flag back to `true` and `apply --hosts <host>` restores the gateway on its
+  previous database. `check`/`validate` refuse configs where a model-serving
+  host has the control plane off, or where a host would run nothing.
 - **Config drift:** because one file is the source of truth, edit it in one
   place and copy it to the other machines (it's small and gitignorable — the
   `.env` next to it is the only secret-bearing file).

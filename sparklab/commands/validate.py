@@ -48,6 +48,9 @@ def run(args) -> int:
             print(f"[INVALID] two active models share a host: {cfg._conflict_pairs()}",
                   file=sys.stderr)
             return 1
+        for problem in cfg.control_plane_conflicts():
+            print(f"[INVALID] {problem}", file=sys.stderr)
+            return 1
 
     names = cluster.parse_hosts_arg(getattr(args, "hosts", None))
     try:

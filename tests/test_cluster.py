@@ -10,6 +10,7 @@ import os
 import sys
 import tempfile
 import unittest
+import yaml
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -234,6 +235,114 @@ class TestMonitoringRoles(unittest.TestCase):
         (sub / ".env").write_text(REFERENCE_ENV)
         with self.assertRaises(ValueError):
             config_mod.load(str(sub / "config.yaml"))
+
+
+class TestControlPlane(unittest.TestCase):
+    """control_plane.enabled split: on (default -- gateway + DB + Redis),
+    off (observability-only host: no gateway, no litellm config files)."""
+
+    MODEL_ALPHA_ONLY = V3_CLUSTER_CONFIG.replace("    hosts: [alpha, beta]",
+                                                 "    hosts: [alpha]")
+
+    BETA_OFF = (
+        "    control_plane:\n      enabled: false\n"
+        "    monitoring:\n      instance_label: beta-node")
+
+    def _load(self, text, name="cp"):
+        sub = self.d / name
+        sub.mkdir()
+        (sub / "config.yaml").write_text(text)
+        (sub / ".env").write_text(REFERENCE_ENV)
+        return config_mod.load(str(sub / "config.yaml"))
+
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp())
+        self._env = mock.patch.dict(os.environ, SECRET_DUMMY)
+        self._env.start()
+
+    def tearDown(self):
+        self._env.stop()
+
+    def test_accessor_defaults_and_validation(self):
+        cfg = self._load(V3_CLUSTER_CONFIG)
+        self.assertTrue(cfg.view_for("alpha").control_plane_enabled())
+        self.assertTrue(cfg.view_for("beta").control_plane_enabled())
+        off = self._load(V3_CLUSTER_CONFIG.replace(
+            "    monitoring:\n      instance_label: beta-node", self.BETA_OFF), "off")
+        self.assertFalse(off.view_for("beta").control_plane_enabled())
+        self.assertTrue(off.view_for("alpha").control_plane_enabled())
+        s = self._load(V3_CLUSTER_CONFIG.replace(
+            "    monitoring:\n      instance_label: beta-node",
+            "    control_plane:\n      enabled: \"false\"\n"
+            "    monitoring:\n      instance_label: beta-node"), "s")
+        self.assertFalse(s.view_for("beta").control_plane_enabled())
+        bad = self._load(V3_CLUSTER_CONFIG.replace(
+            "    monitoring:\n      instance_label: beta-node",
+            "    control_plane:\n      enabled: bogus\n"
+            "    monitoring:\n      instance_label: beta-node"), "bad")
+        with self.assertRaises(ValueError):
+            bad.view_for("beta").control_plane_enabled()
+
+    def test_off_host_renders_no_control_plane_files_or_services(self):
+        text = self.MODEL_ALPHA_ONLY.replace(
+            "    monitoring:\n      instance_label: beta-node",
+            self.BETA_OFF + "\n      role: exporters")
+        cfg = self._load(text, "off")
+        self.assertEqual(cfg.control_plane_conflicts(), [])
+        rendered = render.render(cfg.view_for("beta"), self.d / "beta-deploy")
+        self.assertNotIn("litellm/config.yaml", rendered)
+        self.assertNotIn("litellm/model_config.yaml", rendered)
+        self.assertNotIn("litellm/.env", rendered)
+        self.assertIn("litellm/docker-compose.yml", rendered)
+        self.assertIn("litellm/scripts/nvidia-gpu-textfile.sh", rendered)
+        compose = rendered["litellm/docker-compose.yml"].decode()
+        for svc in ("  litellm:", "  db:", "  redis:"):
+            self.assertNotIn(svc, compose)
+        for svc in ("node_exporter:", "dcgm_exporter:", "cadvisor:", "gpu_textfile:"):
+            self.assertIn(svc, compose)
+        self.assertNotIn("postgres_data", compose)
+        self.assertNotIn("redis_data", compose)
+        parsed = yaml.safe_load(compose)
+        self.assertEqual(set(parsed["services"]),
+                         {"node_exporter", "dcgm_exporter", "cadvisor", "gpu_textfile"})
+        self.assertEqual(set(parsed["volumes"]), {"gpu_textfile_data"})
+
+    def test_default_host_still_renders_full_control_plane(self):
+        cfg = self._load(self.MODEL_ALPHA_ONLY)
+        compose = render.render(
+            cfg.view_for("alpha"), self.d / "alpha-deploy")[
+            "litellm/docker-compose.yml"].decode()
+        for svc in ("  litellm:", "  db:", "  redis:"):
+            self.assertIn(svc, compose)
+        self.assertIn("postgres_data", compose)
+        self.assertIn("redis_data", compose)
+
+    def test_conflict_model_host_control_plane_off(self):
+        text = V3_CLUSTER_CONFIG.replace(
+            "    monitoring:\n      instance_label: beta-node", self.BETA_OFF)
+        cfg = self._load(text, "conflict")
+        problems = cfg.control_plane_conflicts()
+        self.assertEqual(len(problems), 1)
+        self.assertIn("beta", problems[0])
+        self.assertIn("qwen", problems[0])
+
+    def test_conflict_host_would_run_nothing(self):
+        text = self.MODEL_ALPHA_ONLY.replace(
+            "    monitoring:\n      instance_label: beta-node",
+            "    control_plane:\n      enabled: false\n"
+            "    monitoring:\n      enabled: false")
+        cfg = self._load(text, "nothing")
+        problems = cfg.control_plane_conflicts()
+        self.assertEqual(len(problems), 1)
+        self.assertIn("would run nothing", problems[0])
+
+    def test_legacy_config_has_no_conflicts(self):
+        sub = self.d / "legacy"
+        sub.mkdir()
+        (sub / "config.yaml").write_text(REFERENCE_CONFIG)
+        (sub / ".env").write_text(REFERENCE_ENV)
+        cfg = config_mod.load(str(sub / "config.yaml"))
+        self.assertEqual(cfg.control_plane_conflicts(), [])
 
 
 class TestLocalDetection(unittest.TestCase):

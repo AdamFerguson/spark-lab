@@ -88,6 +88,12 @@ def up(args) -> int:
     except ValueError as e:
         print(f"[ERROR] {e}", file=sys.stderr)
         return 1
+    off = [n for n in targets_names if not cfg.view_for(n).control_plane_enabled()]
+    if off:
+        print(f"[ERROR] control_plane is disabled on: {', '.join(off)} -- the LiteLLM "
+              f"gateway is how the model is served there. Re-enable it "
+              f"(`control_plane: {{enabled: true}}`) and `apply` first.", file=sys.stderr)
+        return 1
 
     fresh = [n for n in targets_names if n not in current]
     # keep config order, append the new hosts in config order

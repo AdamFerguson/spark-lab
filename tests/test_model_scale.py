@@ -106,6 +106,20 @@ class TestModelUp(ScaleBase):
         cp = self._setup()
         self.assertEqual(model_cmd.up(_args(cp, FakeRuntime(), model="nope", hosts="beta")), 1)
 
+    def test_up_refuses_control_plane_off_host(self):
+        text = LOCAL_V3.replace("hosts: [alpha, beta]", "hosts: [alpha]", 1).replace(
+            "    monitoring:\n      instance_label: beta-node",
+            "    control_plane:\n      enabled: false\n"
+            "    monitoring:\n      instance_label: beta-node")
+        cp = self._setup(text)
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            rc = model_cmd.up(_args(cp, FakeRuntime(), model="qwen", hosts="beta"))
+        self.assertEqual(rc, 1)
+        self.assertIn("control_plane", buf.getvalue())
+        self.assertEqual(yaml.safe_load((self.d / "config.yaml").read_text())["models"][
+            "qwen"]["hosts"], ["alpha"])
+
     def test_up_requires_v3(self):
         from tests.helpers import config_text
         (self.d / "v1.yaml").write_text(config_text(str(self.install)))

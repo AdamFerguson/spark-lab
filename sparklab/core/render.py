@@ -19,12 +19,16 @@ from . import config as config_mod
 def target_mapping(cfg: config_mod.Config) -> List[Tuple[str, str]]:
     recipe = cfg.recipe_name
     role = cfg.monitoring_role()
-    entries = [
-        ("docker-compose.yaml.j2", "litellm/docker-compose.yml"),
-        ("litellm_config.yaml.j2", "litellm/config.yaml"),
-        ("litellm_model_config.yaml.j2", "litellm/model_config.yaml"),
-        ("litellm.env.j2", "litellm/.env"),
-    ]
+    entries = [("docker-compose.yaml.j2", "litellm/docker-compose.yml")]
+    if cfg.control_plane_enabled():
+        # The gateway's own config files. A control-plane-off host still gets
+        # the compose file (it carries the observability services) but none of
+        # these three.
+        entries += [
+            ("litellm_config.yaml.j2", "litellm/config.yaml"),
+            ("litellm_model_config.yaml.j2", "litellm/model_config.yaml"),
+            ("litellm.env.j2", "litellm/.env"),
+        ]
     if role == "full":
         # Central observability stack: prometheus config + the grafana
         # provisioning/dashboards that only a 'full' host's grafana consumes.
@@ -97,6 +101,7 @@ def build_context(cfg: config_mod.Config) -> dict:
         "monitoring_role": cfg.monitoring_role(),
         "monitoring_exporters_enabled": cfg.monitoring_role() in ("full", "exporters"),
         "monitoring_stack_enabled": cfg.monitoring_role() == "full",
+        "control_plane_enabled": cfg.control_plane_enabled(),
         "remote_scrape_targets": cfg.remote_scrape_targets(),
         "prometheus_image": cfg.image("prometheus"),
         "prometheus_port": cfg.prometheus().get("port", 9090),

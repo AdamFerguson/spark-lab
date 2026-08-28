@@ -114,7 +114,11 @@ byte-identically. **v2** adds multi-model, an explicit image map, and profiles:
   `monitoring.role` (per host) splits the observability stack: `full`
   (default: prometheus + grafana + exporters) / `exporters` (sidecars only —
   a `full` host's prometheus scrapes it over its `ssh` address, tagged with
-  its `instance_label`) / `none`. See ADR 0008's addendum.
+  its `instance_label`) / `none`. `control_plane.enabled` (per host, default
+  `true`) splits the LiteLLM control plane: `false` makes a host
+  observability-only (no gateway/DB/Redis, no litellm config files). Invariants:
+  a model-serving host keeps the control plane on; a control-plane-off host
+  must still run monitoring. See ADR 0008's addendum.
 
 `spark-lab migrate` rewrites a v1/v2 file to v3 on disk (idempotent,
 value-preserving, chained through `upgrade_to_v2` + `upgrade_to_v3`); the
@@ -165,6 +169,15 @@ Two file-layer invariants (both learned live, 2026-08-28):
   this fix are not re-written by an unchanged apply, so a node that shows
   `permission denied` in its prometheus/grafana logs needs a one-time manual
   `chmod 644` on the install-dir config files (see OPERATIONS).
+- **Named volumes are destroyed only by `teardown --yes --purge`** (the
+  single `docker compose down -v` in the codebase). No other command —
+  apply/converge reconcile, `model up/down/stop`, disabling
+  `control_plane` — deletes `litellm_postgres_data` (the LiteLLM database),
+  `litellm_redis_data`, `litellm_prometheus_data` or
+  `litellm_grafana_data`. Disabling the control plane on a host stops its
+  gateway/db/redis containers (`--remove-orphans`) and removes their config
+  files, but the named volumes remain on disk, so re-enabling + `apply`
+  restores the stack on the previous data.
 
 ## Recipe discovery + auto-conversion (Phase 5, ADR 0003)
 

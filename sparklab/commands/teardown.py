@@ -41,9 +41,20 @@ def run(args) -> int:
     if not args.yes:
         print("Refusing to tear down without --yes.", file=sys.stderr)
         print("This stops the model workload and removes the LiteLLM containers", file=sys.stderr)
-        print("(named volumes are kept; add --purge to remove them too) on every selected", file=sys.stderr)
-        print("host. --")
+        print("on every selected host. Named volumes are KEPT -- the LiteLLM", file=sys.stderr)
+        print("database (litellm_postgres_data), redis (litellm_redis_data) and the", file=sys.stderr)
+        print("observability data all survive; a re-apply restores the stack on the", file=sys.stderr)
+        print("same data. Add --purge to destroy the named volumes too. --", file=sys.stderr)
         return 1
+    if args.purge:
+        print("WARNING: --purge DESTROYS the named volumes on every selected host:",
+              file=sys.stderr)
+        print("  litellm_postgres_data   -- the LiteLLM/Postgres database (model list,",
+              file=sys.stderr)
+        print("                            spend/auth data): UNRECOVERABLE", file=sys.stderr)
+        print("  litellm_redis_data      -- gateway cache/queues", file=sys.stderr)
+        print("  litellm_prometheus_data / litellm_grafana_data -- observability state",
+              file=sys.stderr)
     names = cluster.parse_hosts_arg(getattr(args, "hosts", None))
     ts = cluster.targets(cfg, names, runtime=getattr(args, "runtime", None))
     if not ts:

@@ -38,6 +38,10 @@ hosts:
   - name: luna
     ssh: luna.tail9d5411.ts.net
     remote: true
+    # Observability-only host: exporter sidecars only -- no LiteLLM gateway,
+    # no DB, no Redis (the full host's prometheus scrapes it over the tailnet).
+    control_plane:
+      enabled: false
     monitoring:
       instance_label: luna
       # 'exporters' = host/GPU exporter sidecars only (no local
@@ -71,7 +75,10 @@ hosts:
 models:
   qwen38-27b:
     active: true
-    hosts: [luna, sol]
+    # luna has control_plane disabled (exporters-only host), so the gateway --
+    # and therefore the model -- lives on sol. `model up qwen38-27b --hosts luna`
+    # refuses until luna's control plane is re-enabled.
+    hosts: [sol]
     runtime: sglang
     hf_model: RadixArk/Qwen3.8-27B-NVFP4
     image: lmsysorg/sglang:qwen38-27b

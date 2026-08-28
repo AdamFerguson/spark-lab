@@ -175,6 +175,58 @@ class Config:
             raise ValueError(f"monitoring.role must be 'full', 'exporters' or 'none' (got {role!r})")
         return role
 
+    # -- v3 control-plane split (ADR-0008 addendum) -------------------------
+    def control_plane_enabled(self) -> bool:
+        """Whether this host runs the LiteLLM control plane (gateway + DB +
+        Redis). Default True; ``control_plane: {enabled: false}`` makes the
+        host observability-only (no gateway, no recipe registration)."""
+        cp = self.data.get("control_plane")
+        if cp is None:
+            return True
+        if isinstance(cp, bool):
+            return cp
+        if not isinstance(cp, dict) or "enabled" not in cp:
+            raise ValueError(
+                "control_plane must be a boolean or {enabled: <bool>} "
+                f"(got {cp!r})")
+        enabled = cp["enabled"]
+        if isinstance(enabled, str):
+            enabled = enabled.strip().lower()
+            if enabled not in ("true", "false"):
+                raise ValueError(f"control_plane.enabled must be a boolean (got {enabled!r})")
+            enabled = enabled == "true"
+        if not isinstance(enabled, bool):
+            raise ValueError(f"control_plane.enabled must be a boolean (got {enabled!r})")
+        return enabled
+
+    def control_plane_conflicts(self) -> List[str]:
+        """v3: human-readable problems with the per-host control-plane split.
+
+        Two invariants:
+        1. a host that serves the active model must keep the control plane
+           on (the LiteLLM gateway is how that model is served);
+        2. a host with the control plane off must still run something
+           (monitoring role != 'none'), otherwise it converges to an empty
+           stack.
+        """
+        if not self.is_v3 or self._view_base is not None:
+            return []
+        problems: List[str] = []
+        for spec in self.host_specs:
+            view = self.view_for(spec.name)
+            if view.control_plane_enabled():
+                continue
+            if view.active_alias:
+                problems.append(
+                    f"host '{spec.name}' serves model '{view.active_alias}' but "
+                    "control_plane is disabled there -- the gateway is how the "
+                    "model is served; re-enable it (or move the model off the host)")
+            elif view.monitoring_role() == "none":
+                problems.append(
+                    f"host '{spec.name}' would run nothing (control_plane disabled "
+                    "and monitoring.role: none)")
+        return problems
+
     def remote_scrape_targets(self) -> List[Dict[str, Any]]:
         """For this host's central prometheus: the other hosts whose
         ``monitoring.role`` is 'exporters', with the address to scrape them at

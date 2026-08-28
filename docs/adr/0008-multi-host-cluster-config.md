@@ -234,3 +234,35 @@ Design notes:
   model (its model `port` is present).
 - Unchanged: exporters bind 0.0.0.0 on the host, so tailnet/LAN reachability
   is all that's required (the node firewall, if any, is out of scope).
+
+## Addendum (2026-08-28): control-plane split + volume-destruction invariant
+
+The LiteLLM control plane (gateway + Postgres + Redis) is now a per-host
+override like `monitoring.role`, via `control_plane: {enabled: <bool>}`
+(default `true`):
+
+- `enabled: false` makes a host observability-only: the compose omits the
+  `litellm`/`db`/`redis` services and their `postgres_data`/`redis_data`
+  volume declarations, and the render skips `litellm/config.yaml`,
+  `litellm/model_config.yaml` and `litellm/.env` (the gateway's own files).
+  `docker compose up -d --remove-orphans` stops the now-absent containers on
+  transition; the named volumes stay on disk (Docker never deletes named
+  volumes on `up`), so re-enabling + `apply` restores the previous database.
+- Invariants (enforced by `validate`/`check`, and `model up` refuses the
+  target host):
+  1. a host that serves the active model must keep the control plane on —
+     the gateway is how that model is served;
+  2. a host with the control plane off must still run something
+     (`monitoring.role != none`), otherwise it would converge to an empty
+     stack.
+- Legacy v1/v2 configs are unaffected (the flag defaults on; renders are
+  byte-identical — the sha256 goldens prove it).
+
+**Volume-destruction invariant:** the named volumes
+(`litellm_postgres_data` — the LiteLLM/Postgres DB —, `litellm_redis_data`,
+`litellm_prometheus_data`, `litellm_grafana_data`) are destroyed **only** by
+`spark-lab teardown --yes --purge` (`docker compose down -v`). No other
+command — `apply`/converge reconcile, `model up/down/stop`, disabling the
+control plane — deletes them. `teardown --yes` (default) keeps them, and
+`--purge` prints an explicit, per-volume warning naming the database as
+unrecoverable before proceeding.

@@ -69,6 +69,26 @@ class TestCliCommands(unittest.TestCase):
                                   "--hosts", "127.0.0.1"] for a in rt.commands))
         self.assertTrue(any(a[0] == "docker" and "down" in a and "-v" in a for a in rt.commands))
 
+    def test_teardown_refusal_names_the_kept_volumes(self):
+        rt = FakeRuntime(available=_AVAIL)
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            self.assertEqual(teardown.run(_args(self.cp, rt, yes=False)), 1)
+        out = buf.getvalue()
+        self.assertIn("KEPT", out)
+        self.assertIn("litellm_postgres_data", out)
+        self.assertIn("litellm_redis_data", out)
+
+    def test_teardown_purge_warns_about_destroyed_volumes(self):
+        rt = FakeRuntime(available=_AVAIL)
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            self.assertEqual(teardown.run(_args(self.cp, rt, yes=True, purge=True)), 0)
+        out = buf.getvalue()
+        self.assertIn("DESTROYS", out)
+        self.assertIn("litellm_postgres_data", out)
+        self.assertIn("UNRECOVERABLE", out)
+
     def test_teardown_clears_state(self):
         rt = FakeRuntime(available=_AVAIL)
         st_dir = self.d / ".sparklab-state"
