@@ -146,6 +146,22 @@ Every host-targeted command takes `--hosts a,b` (v3; unset = all hosts).
 resolvable image (ADR 0004), and a host serving no model converges
 control-plane only.
 
+Two file-layer invariants (both learned live, 2026-08-28):
+
+- **Removed files are deleted, with two safety gates.** State-tracked files that
+  no longer render (an old recipe after a rename) are deleted only after the
+  apply's commands succeeded — the stop-model command addresses the old recipe
+  by its on-disk path — and are deferred entirely while the model restart is
+  still gated (the stale path must survive until the post-restart apply).
+- **Explicit file modes on every write.** SFTP-created files land 0600 and
+  local writes honor the process umask (077 on the Sparks); both are unreadable
+  by the container users of prometheus/grafana, which crash-loop on 0600
+  config files. Converge therefore sets the mode explicitly: rendered
+  `litellm/.env` (secrets) 0600, everything else 0644. Files written *before*
+  this fix are not re-written by an unchanged apply, so a node that shows
+  `permission denied` in its prometheus/grafana logs needs a one-time manual
+  `chmod 644` on the install-dir config files (see OPERATIONS).
+
 ## Recipe discovery + auto-conversion (Phase 5, ADR 0003)
 
 Discovery is **plugin-based and config-driven**. A `RecipeSource` emits

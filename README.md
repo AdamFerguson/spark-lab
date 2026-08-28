@@ -152,6 +152,9 @@ state**, including the running model:
 - **Add / change** a recipe or service → detected and applied.
 - **Switch or drop** a model → the old workload is stopped (gated) and the new
   one started; a removed service is reconciled via `docker compose up --remove-orphans`.
+- **Files that no longer render are removed** (e.g. an old recipe file after a
+  rename) — only after the model commands have run, so the stop step can still
+  address the old recipe by path, and never while a restart is still gated.
 - **Files-on-disk vs model-running are tracked separately.** A recipe change that
   hasn't been restarted stays *pending* and keeps prompting you to run
   `apply --restart-model` — it does **not** silently record the new recipe as applied.

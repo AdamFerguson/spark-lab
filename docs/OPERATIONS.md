@@ -116,6 +116,13 @@ keeps its state in its own spark-lab checkout
 - **Prerequisite**: SSH key access to each remote host (any machine that will
   drive it). `spark-lab check` checks each target node's binaries remotely,
   so a missing tool on a *node* is reported on your machine.
+- **Crash-looping prometheus/grafana** (`permission denied` on their config in
+  the container logs): an early version of the tool wrote install files with
+  0600 modes, unreadable by the containers' users. Converge now sets modes on
+  write, but only *changed* files are re-written, so a pre-fix node needs a
+  one-time fix: `chmod 644 <install_dir>/litellm/{prometheus.yml,config.yaml,
+  model_config.yaml,docker-compose.yml} <install_dir>/litellm/grafana/...` and
+  `docker restart litellm-prometheus-1 litellm-grafana-1`.
 
 Design + full history: [ADR-0008](adr/0008-multi-host-cluster-config.md) and
 [REMOTE_OPERATOR_MODE.md](REMOTE_OPERATOR_MODE.md) (the original per-node remote
