@@ -210,6 +210,21 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
         plan.commands.append(
             ("Reconcile LiteLLM + monitoring stack (up + remove orphans)",
              ["docker", "compose", "-f", compose_file, "up", "-d", "--remove-orphans"]))
+        # A bind-mounted config change is invisible to a RUNNING prometheus:
+        # compose up only recreates services whose definition changed, and the
+        # prometheus service definition does not when only prometheus.yml does.
+        # Hot-reload it -- but only when the file was tracked before (a fresh
+        # stack reads the file at boot). Best-effort: a briefly-down daemon
+        # just misses the reload and picks the file up on its next start.
+        if ("litellm/prometheus.yml" in state_files
+                and "litellm/prometheus.yml" in changed
+                and cfg.monitoring_role() == "full"):
+            prom_port = str(cfg.prometheus().get("port", 9090))
+            reload_desc = "Reload prometheus config (hot, best-effort)"
+            plan.commands.append(
+                (reload_desc, ["curl", "-fsS", "-o", "/dev/null", "-X", "POST",
+                               f"http://127.0.0.1:{prom_port}/-/reload"]))
+            plan.best_effort.add(reload_desc)
     else:
         plan.notes.append("LiteLLM stack unchanged (skipping `docker compose up`).")
 

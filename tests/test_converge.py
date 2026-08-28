@@ -32,6 +32,8 @@ def make_cfg(recipe="mymodel", cluster=False):
     c.model = {"port": 30000}      # active model definition (probe reads .port)
     c.tailscale = lambda: {"enabled": False}
     c.cloudflare = lambda: {"enabled": False}
+    c.prometheus = lambda: {"port": 9090}
+    c.monitoring_role = lambda: "full"
     return c
 
 
@@ -91,6 +93,43 @@ class TestConverge(unittest.TestCase):
         new_model = converge.compute_model_after_apply(
             None, "mymodel", plan.current_hash, converged_after(plan, False))
         self.assertEqual(new_model, {"name": "mymodel", "hash": plan.current_hash})
+
+    # 2c. Changed prometheus.yml triggers a hot reload, not a recreate --------
+    def test_changed_prometheus_yml_triggers_hot_reload(self):
+        cfg = make_cfg()
+        old = {**recipe_bytes(), **LIT, "litellm/prometheus.yml": b"old: 1\n"}
+        new = {**recipe_bytes(), **LIT, "litellm/prometheus.yml": b"old: 2\n"}
+        files = converge.compute_files_after_apply(old)
+        model = {"name": "mymodel",
+                 "hash": state.sha256_bytes(old["sparkrun/recipes/mymodel.yaml"])}
+        plan = plan_for(cfg, new, files, model, allow_restart=False)
+        descs = [d for d, _ in plan.commands]
+        self.assertIn("Reload prometheus config (hot, best-effort)", descs)
+        # it is best-effort: a first-boot stack has no daemon yet
+        self.assertIn("Reload prometheus config (hot, best-effort)", plan.best_effort)
+        # and the reload targets the configured prometheus port
+        reload_argv = next(a for d, a in plan.commands if d.startswith("Reload prometheus"))
+        self.assertIn("http://127.0.0.1:9090/-/reload", " ".join(map(str, reload_argv)))
+
+    def test_unchanged_prometheus_yml_does_not_reload(self):
+        cfg = make_cfg()
+        rendered = {**recipe_bytes(), **LIT, "litellm/prometheus.yml": b"same: 1\n"}
+        files = converge.compute_files_after_apply(rendered)
+        model = {"name": "mymodel",
+                 "hash": state.sha256_bytes(rendered["sparkrun/recipes/mymodel.yaml"])}
+        plan = plan_for(cfg, rendered, files, model, allow_restart=False)
+        self.assertFalse(any(d.startswith("Reload prometheus") for d, _ in plan.commands))
+
+    def test_exporters_role_host_skips_reload(self):
+        cfg = make_cfg()
+        cfg.monitoring_role = lambda: "exporters"
+        old = {**recipe_bytes(), **LIT, "litellm/prometheus.yml": b"old: 1\n"}
+        new = {**recipe_bytes(), **LIT, "litellm/prometheus.yml": b"old: 2\n"}
+        files = converge.compute_files_after_apply(old)
+        model = {"name": "mymodel",
+                 "hash": state.sha256_bytes(old["sparkrun/recipes/mymodel.yaml"])}
+        plan = plan_for(cfg, new, files, model, allow_restart=False)
+        self.assertFalse(any(d.startswith("Reload prometheus") for d, _ in plan.commands))
 
     # 2. Recipe content change, not restarted -> stays pending ---------------
     def test_recipe_change_stays_pending_without_flag(self):
