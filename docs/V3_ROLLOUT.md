@@ -42,6 +42,27 @@
   and v2 examples were removed; refs updated (README/ARCHITECTURE/REGISTRY/
   SPEC).
 
+## Control-plane split + volume invariant (2026-08-28, follow-on)
+
+- **`control_plane.enabled` per host** (commit `86c62a6`, ADR-0008 addendum
+  #2): `false` makes a host observability-only — no LiteLLM gateway/DB/Redis
+  services, no `litellm/config.yaml`/`model_config.yaml`/`.env` (converge
+  removes them; `--remove-orphans` stops the containers). Invariants enforced
+  by `check`/`validate` (and `model up`): a model-serving host keeps the
+  control plane on; a control-plane-off host must still run monitoring.
+  193 tests green; default renders byte-identical (goldens unchanged).
+- **Live:** luna is now `control_plane: {enabled: false}` + `role: exporters`
+  — it runs just the four exporter sidecars; its gateway/DB/Redis containers
+  were stopped. **Volume-destruction invariant** (documented in ARCHITECTURE /
+  OPERATIONS): the named volumes are destroyed *only* by `teardown --yes
+  --purge` (per-volume warning, DB named unrecoverable). Verified live on
+  luna: `docker volume ls` still shows `litellm_postgres_data` +
+  `litellm_redis_data` after the gateway went away. Re-enabling + `apply`
+  restores the gateway on the previous database.
+- **Live layout today:** SOL = model + gateway + full observability; LUNA =
+  exporter sidecars only (scraped by sol's prometheus, tagged
+  `instance: luna`).
+
 Live-state notes (2026-08-28):
 - sol's model had been stopped since ~Aug 17 (no sparkrun container); the
   routine `apply --hosts sol` restored it (ensure, no restart gate needed).
