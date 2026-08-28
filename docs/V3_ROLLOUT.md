@@ -13,9 +13,34 @@
   - `2e5fdd7` explicit file modes on converge writes (0644, .env 0600) —
     luna's prometheus/grafana had been crash-looping on 0600 SFTP files
   - `3742599` removal of files that no longer render (stale-recipe cleanup)
-- Remaining: user confirmation to `rm -rf labs/` (superseded; values now in
-  the cluster config + merged `.env`), then merge `cli-simplify` → `main`.
-  Node checkouts are on `cli-simplify` until the merge; re-pull `main` after.
+- Remaining: merge `cli-simplify` → `main` (node checkouts sit on the branch
+  until then, re-pull `main` after). `labs/` still on disk (user to confirm
+  deletion; contents are superseded by the cluster config + merged `.env`).
+
+## Monitoring-role split + example cleanup (2026-08-28, follow-on)
+
+- **`monitoring.role` per host** (commit `70b54c2`, ADR-0008 addendum): `full`
+  (default: prometheus+grafana+exporters) / `exporters` (sidecars only — a
+  `full` host's prometheus scrapes it over its `ssh` address, tagged with its
+  `instance_label`) / `none`. The user's ask — *Grafana on sol, exporters on
+  luna, monitor luna from sol* — is now one config line: luna =
+  `role: exporters`. Live-verified: sol's prometheus shows `node_luna` /
+  `dcgm_luna` / `cadvisor_luna` all `up`; `count(node_uname_info)` = 2.
+- **Prometheus hot-reload** (commit `f0b61d9`): a changed bind-mounted
+  `prometheus.yml` is invisible to a running daemon (compose up only recreates
+  on service-definition change). The plan now appends a best-effort
+  `curl -X POST .../-/reload` when a previously-tracked `prometheus.yml`
+  changes on a `full` host. (Caught live: sol stayed on the old config after
+  the migration until a manual reload.)
+- **Live config the user then set:** the single model is `hosts: [sol]` (luna
+  scaled down to control-plane + exporters only). Today: **sol** = model +
+  full observability stack; **luna** = litellm gateway (no model) + exporter
+  sidecars, scraped by sol. Both nodes + the laptop converge cleanly (remote
+  and node-local dry-runs: "already converged"); 184 tests green.
+- **Config example cleanup** (commit `1bf3504`): only the v3 example remains,
+  under its canonical name `config.example.yaml` (so `init` ships v3). The v1
+  and v2 examples were removed; refs updated (README/ARCHITECTURE/REGISTRY/
+  SPEC).
 
 Live-state notes (2026-08-28):
 - sol's model had been stopped since ~Aug 17 (no sparkrun container); the
