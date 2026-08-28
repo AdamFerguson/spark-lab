@@ -1,5 +1,43 @@
 # v3 rollout: one cluster config + model scaling — plan + status
 
+**Status (2026-08-28): COMPLETE.** Phases 1–4 all done and verified live:
+
+- Phases 1–3: feature + tests on `cli-simplify` (commit `94a262b`).
+- Phase 4 live migration: done 2026-08-28. Both Sparks run the single cluster
+  config from the laptop (`--hosts` remote fan-out) AND node-local (local
+  auto-detection verified: `[luna] local` / `[sol] local`). Completions
+  verified end-to-end: `LUNA-OK-7` / `SOL-OK-42`.
+- Fixes found + shipped during the live migration (all on `cli-simplify`, CI
+  green at tip `3742599`):
+  - `38ba4fd` test isolation (system-check tests vs repo-root config)
+  - `2e5fdd7` explicit file modes on converge writes (0644, .env 0600) —
+    luna's prometheus/grafana had been crash-looping on 0600 SFTP files
+  - `3742599` removal of files that no longer render (stale-recipe cleanup)
+- Remaining: user confirmation to `rm -rf labs/` (superseded; values now in
+  the cluster config + merged `.env`), then merge `cli-simplify` → `main`.
+  Node checkouts are on `cli-simplify` until the merge; re-pull `main` after.
+
+Live-state notes (2026-08-28):
+- sol's model had been stopped since ~Aug 17 (no sparkrun container); the
+  routine `apply --hosts sol` restored it (ensure, no restart gate needed).
+- sol's `.env`-driven DB password differs from luna's → `LITELLM_DB_PASSWORD_SOL`
+  (sol's `litellm.db.password_env` override), same for the litellm master/salt
+  keys and the grafana admin password (per-host env-var NAMES, one merged
+  `.env` on the laptop).
+- `install.name` is a per-host override (luna-lab / adam-spark) because it is
+  rendered into the recipe `metadata.description` — a shared name would have
+  changed sol's recipe hash and forced a needless restart.
+- luna's `sparkrun status` display shows 2 hosts (10.0.4.27 = sol via LAN) —
+  display quirk from a pre-existing sparkrun multi-host registry; converge
+  always scopes with `--hosts 127.0.0.1`, so it's harmless.
+- luna's `~/AI/sparkrun/recipes/qwen3-0.6b.yaml` and sol's
+  `deepseek-v4-flash-0731.yaml` + `.bak` files are unmanaged user files —
+  left alone by converge (only state-tracked files are removed).
+
+---
+
+Original plan (kept for reference):
+
 **Status (2026-08-27):** Phases 1–3 implemented, tested, committed on branch
 `cli-simplify` (commit `94a262b`). **Phase 4 (live migration of luna + sol) is
 the remaining work** — detailed below. Read this top-to-bottom after a compact;
