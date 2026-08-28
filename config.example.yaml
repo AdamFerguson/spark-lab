@@ -1,174 +1,166 @@
 # =============================================================================
-# spark-lab configuration
+# spark-lab v3 config — ONE FILE for the whole cluster (ADR-0008).
 # -----------------------------------------------------------------------------
-# Copy this file to `config.yaml` and edit it for your setup. `spark-lab init`
-# does this for you and generates the matching `.env` for the secret values.
+# Copy to `config.yaml` and edit for your hosts / model / ports / secrets.
+# `spark-lab init` does the copy + .env generation for you.
 #
-# Secrets are NEVER stored here or in the repo. Reference the *name* of an
-# environment variable under `.env` and the deployer injects it at render time.
-# Only `config.yaml` + `.env` are gitignored; everything else is code-as-config.
+# Secrets are NEVER stored here or in the repo: reference the *name* of an
+# environment variable from `.env` (next to this file) and it is injected at
+# render time. Per-host-different secrets use per-host env-var names, e.g.
+# host sol overrides `litellm: {master_key_env: LITELLM_MASTER_KEY_SOL}`.
 # =============================================================================
+
+version: 3
 
 install:
   # Short workspace label used in logs / status output.
-  name: my-spark-lab
-  # Where sparkrun recipes + the litellm stack live on each node.
-  #   <install_dir>/sparkrun/recipes/<recipe_name>.yaml
-  #   <install_dir>/litellm/...
+  name: spark-lab
+  # Where sparkrun recipes + the litellm stack live on each node
+  # (per-host overridable). `~/...` is expanded ON THE NODE.
   install_dir: ~/AI
-  # Hosts to deploy to. A single Spark = just this node (127.0.0.1 or your
-  # hostname). For a cluster of Sparks, list every node; spark-lab builds a
-  # sparkrun SSH mesh + named cluster and runs the recipe across them.
-  hosts:
-    - 127.0.0.1
-  # Username used for the inter-node SSH mesh on a cluster.
-  ssh_user: null            # default: current user
-  # Name for the saved `sparkrun cluster`. Only used when hosts > 1.
-  cluster_name: mylab
-  # ------------------------------------------------------------------
-  # REMOTE OPERATOR MODE (optional).
-  # When `remote.host` is set, spark-lab runs on THIS machine but converges
-  # the node at `remote.host` over SSH (Fabric). Omit it to converge this
-  # machine (the default, node-local behavior).
-  #   * `install_dir` above then refers to the TARGET node's filesystem.
-  #   * The state file lives on the target node (in its spark-lab checkout,
-  #     `repo_dir` below), so local + remote operation share one record.
-  #   * Secrets still come from the .env next to THIS config file; rendered
-  #     files (incl. the stack's .env) are pushed to the node.
-  #   * One config targets one node: manage two Sparks with two configs
-  #     (e.g. labs/luna/config.yaml + labs/sol/config.yaml) and --config.
-  # Prerequisite: SSH key access to the node from this machine.
-  # remote:
-  #   host: my-spark              # SSH target (hostname / tailnet name / IP)
-  #   user: adam                  # default: current user
-  #   port: 22                    # default: 22
-  #   identity_file: ~/.ssh/id_ed25519   # default: your usual SSH keys/agent
-  #   repo_dir: ~/spark-lab       # the node's spark-lab checkout (state + upgrade)
+  # The node-side spark-lab checkout that holds the state file (~/spark-lab/.sparklab-state)
+  # and what `upgrade` refreshes. Per-host overridable.
+  # repo_dir: ~/spark-lab
+  # What `spark-lab init --hosts <bare-host> --yes` clones when a node has no
+  # checkout yet (skip it if you clone manually).
+  # repo_url: git@github.com:<you>/spark-lab.git
 
-model:
-  # Base name of the recipe file written to <install_dir>/sparkrun/recipes/.
-  recipe_name: qwen38-27b
-  # The inference engine. spark-lab is engine-agnostic: this + the recipe's
-  # command decide the engine. `sglang` is the default; set `vllm` (or anything)
-  # and, for non-SGLang engines, supply `serve_command` below to override the
-  # generated serve block.
-  runtime: sglang
-  # Hugging Face model id used as the engine's model path (e.g. SGLang --model-path).
-  # (EXAMPLE -- a public model; point this at whatever you serve.)
-  hf_model: RadixArk/Qwen3.8-27B-NVFP4
-  # Container image that serves the model (the SGLang build here; any engine image works).
-  image: lmsysorg/sglang:qwen38-27b
-  # Name of the env var (in .env) holding your Hugging Face token. Leave null
-  # for open models that don't need one.
-  hf_token_env: HF_TOKEN
-  # Host + port the inference server binds to. `port` is also what the LiteLLM
-  # gateway uses to reach it.
-  host: 0.0.0.0
-  port: 30000
-  # Number of nodes the recipe needs. 1 for a single Spark; raise for a cluster.
-  min_nodes: 1
-  # Optional: a verbatim serve command that overrides the generated block
-  # (for non-SGLang engines). Uses the same {placeholder} values as defaults.
-  # serve_command: |
-  #   vllm serve {model} --port {port}
-  # Inference-engine serve parameters. Each key becomes a `defaults:` entry in the recipe
-  # and an `--<key-with-dashes> {key}` flag on the server (SGLang flags in this example).
-  # Working example for a ~27B NVFP4 model with DSPARK speculative decoding + fp8 KV cache.
-  params:
-    kv_cache_dtype: fp8_e4m3
-    mem_fraction_static: 0.85
-    attention_backend: flashinfer
-    chunked_prefill_size: 2048
-    max_running_requests: 12
-    reasoning_parser: qwen3
-    tool_call_parser: qwen3_coder
-    mamba_full_memory_ratio: 0.5
-    max_mamba_cache_size: 48
-    speculative_algorithm: DSPARK
-    speculative_draft_model: RadixArk/Qwen3.8-27B-DSpark   # EXAMPLE — configurable
-    speculative_draft_attention_backend: flashinfer
-    mamba_radix_cache_strategy: extra_buffer_lazy
-    mamba_ssm_dtype: float32
-  # Map a param key to a non-obvious flag name (default is key with
-  # underscores -> dashes). Only needed where the flag differs.
-  flag_map:
-    speculative_draft_model: speculative-draft-model-path
-  # Extra engine flags added verbatim to the serve command.
-  extra_flags:
-    - --enable-metrics
-    - --enable-mfu-metrics
-    - --enable-cache-report
-    - --trust-remote-code
-    - --disable-prefill-cuda-graph
+# -----------------------------------------------------------------------------
+# Managed nodes. `name` = the identifier used with --hosts; `ssh` = connection
+# target (user@host works); `remote: true` = reach over SSH (Fabric) when we
+# are NOT on that node — running spark-lab ON the node converges it locally
+# automatically. `remote: false` = this machine (no ssh target needed).
+#
+# Any other key in an entry is a PER-HOST OVERRIDE, deep-merged over the
+# cluster-wide document below (monitoring:, images:, install:, litellm:, ...).
+# -----------------------------------------------------------------------------
+hosts:
+  - name: luna
+    ssh: luna.tail9d5411.ts.net
+    remote: true
+    monitoring:
+      instance_label: luna
+      # 'exporters' = host/GPU exporter sidecars only (no local
+      # prometheus/grafana); the 'full' host's prometheus scrapes this one
+      # over its `ssh` address. 'full' (default) = the whole observability
+      # stack; 'none' = no monitoring services at all.
+      role: exporters
+  - name: sol
+    ssh: sol.tail9d5411.ts.net
+    remote: true
+    monitoring:
+      instance_label: sol
+      dashboards:
+        - sglang-dashboard
+        - spark-host-overview
+    images:
+      # e.g. keep a node on a pinned gateway image while the rest tracks main-stable
+      litellm: ghcr.io/berriai/litellm:v1.99.0-dev.2
 
+# -----------------------------------------------------------------------------
+# Models. `hosts:` = where the model is served (absent = all hosts; `[]` =
+# scaled down everywhere). This list IS the scale:
+#   spark-lab model up  <model> --hosts sol     adds sol + converges it
+#   spark-lab model down <model> --yes --hosts sol   removes sol + stops it there
+# At most ONE active model may serve a given host (enforced).
+#
+# `host_overrides.<host>` deep-merges over this model's own fields for that
+# host (a "recipe tailored to a host": params, image, litellm serving
+# identity, ...).
+# -----------------------------------------------------------------------------
+models:
+  qwen38-27b:
+    active: true
+    hosts: [luna, sol]
+    runtime: sglang
+    hf_model: RadixArk/Qwen3.8-27B-NVFP4
+    image: lmsysorg/sglang:qwen38-27b
+    hf_token_env: HF_TOKEN
+    host: 0.0.0.0
+    port: 30000
+    min_nodes: 1
+    params:
+      # any SGLang param key -> --param flag; see docs/MODEL_RECIPES.md
+      kv_cache_dtype: fp8_e4m3
+      mem_fraction_static: 0.85
+      attention_backend: flashinfer
+    flag_map:
+      # param key -> exact CLI flag when it differs (e.g. draft-model path)
+      speculative_draft_model: speculative-draft-model-path
+    extra_flags:
+      - --enable-metrics
+      - --enable-mfu-metrics
+      - --enable-cache-report
+    host_overrides:
+      sol:
+        # per-host tuning (deep-merged over the shared params above)
+        params:
+          mamba_ssm_dtype: bfloat16
+        litellm:
+          # this node serves it under its own gateway name + token limits
+          model_name: adam-spark-qwen3-8-27b
+          model_info:
+            max_input_tokens: 262144
+            max_output_tokens: 131072
+
+# Exactly one cluster-wide "first" model for bookkeeping; per-host selection is
+# done by `models.<m>.hosts` + `active: true` (one active model per host).
+active_models:
+  - qwen38-27b
+
+# -----------------------------------------------------------------------------
+# Shared stack images (per-host overridable under hosts:). env
+# SPARKLAB_IMAGE_<KEY> still wins over everything (see core/config.py).
+# -----------------------------------------------------------------------------
+images:
+  litellm: docker.litellm.ai/berriai/litellm:main-stable
+  db: pgvector/pgvector:pg16
+  redis: redis:7-alpine
+  prometheus: prom/prometheus
+  grafana: grafana/grafana
+  node_exporter: prom/node-exporter:latest
+  dcgm_exporter: utkuozdemir/nvidia_gpu_exporter:latest
+  cadvisor: gcr.io/cadvisor/cadvisor:latest
+  gpu_textfile: ubuntu:24.04
+
+# -----------------------------------------------------------------------------
+# The LiteLLM gateway (per node; one gateway per host).
+# model_name/model_info below are the DEFAULTS; a model's host_overrides
+# (above) win for that host+model.
+# -----------------------------------------------------------------------------
 litellm:
-  # The model name clients address. This is YOUR label, not a personal name.
-  model_name: my-spark-model
-  # LiteLLM proxy port.
+  model_name: qwen38-27b
   port: 4000
-  # How the LiteLLM container reaches the SGLang server. SGLang runs on the
-  # same host's Docker, so `host.docker.internal` (+ host-gateway) is the
-  # self-contained default. Set a LAN/Tailscale name if SGLang runs elsewhere.
   model_api_base_host: host.docker.internal
-  # Env-var names (in .env) for the two keys LiteLLM needs.
   master_key_env: LITELLM_MASTER_KEY
   salt_key_env: LITELLM_SALT_KEY
-  # Database (Postgres) connection. The user/password/db are generated by
-  # `init` into .env unless you override here.
   db:
-    image: pgvector/pgvector:pg16
     user: litellm
     password_env: LITELLM_DB_PASSWORD
     db: litellm
-  # Optional: Redis for caching / multi-instance routing.
   redis:
     enabled: true
-    image: redis:7-alpine
     port: 6379
-  # How the LiteLLM gateway registers the served model.
   model_info:
     supports_vision: true
-    max_input_tokens: 262144
-    max_output_tokens: 131072
-    # Approximate costs so LiteLLM spend tracking is meaningful.
-    input_cost_per_token: 0.00000045
-    output_cost_per_token: 0.00000320
-    cache_read_input_token_cost: 0.000000045
     supports_reasoning: true
-    supported_reasoning_efforts:
-      - none
-      - low
-      - medium
-      - xhigh
+    max_input_tokens: 32768
+    max_output_tokens: 8192
 
 monitoring:
   enabled: true
   prometheus:
-    image: prom/prometheus
     port: 9090
     retention: 15d
   grafana:
-    image: grafana/grafana
     port: 3000
     admin_password_env: GRAFANA_ADMIN_PASSWORD
-  # Host label applied to scraped series (kept generic so the repo is portable).
   instance_label: spark
-  # Dashboards to ship + auto-provision into Grafana.
   dashboards:
     - sglang-dashboard
-    - spark-host-overview
 
 network:
   tailscale:
     enabled: true
-    # Nothing secret here: Tailscale auth happens interactively on the node.
   cloudflare:
-    # Optional public exposure via a Cloudflare Tunnel.
     enabled: false
-    # Env-var name (in .env) for the tunnel token.
-    tunnel_token_env: CF_TUNNEL_TOKEN
-    # Public hostname(s) to expose, mapped to local services.
-    public_hostname: llm.example.com
-    services:
-      - name: litellm
-        url: http://localhost:4000

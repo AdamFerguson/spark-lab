@@ -151,8 +151,10 @@ live:
   <ref>` (the last produces a validated, never-applied sparkrun **candidate**;
   LLM-assisted refinement is opt-in and falls back to the deterministic
   transform on any failure).
-- **Config**: the `discovery:` section (see `config.example.v2.yaml`) declares
-  which sources are enabled; enabling/redirecting one is a config change only.
+- **Config**: the `discovery:` section (a list of source entries, e.g.
+  `discovery: {sources: [{kind: sparkrun_registry}, {kind: huggingface, alias: hf}]}`)
+  declares which sources are enabled; enabling/redirecting one is a config
+  change only.
 
 **Manifest shape (as shipped).** The index is a flat map, not the `registries:`
 list sketched above:

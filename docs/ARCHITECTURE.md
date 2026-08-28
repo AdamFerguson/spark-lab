@@ -119,7 +119,7 @@ byte-identically. **v2** adds multi-model, an explicit image map, and profiles:
 `spark-lab migrate` rewrites a v1/v2 file to v3 on disk (idempotent,
 value-preserving, chained through `upgrade_to_v2` + `upgrade_to_v3`); the
 compat loader makes the on-disk format optional.
-See `config.example.v2.yaml` and `config.example.v3.yaml` for full documents.
+See `config.example.yaml` (v3) for the full document.
 
 ## Commands
 

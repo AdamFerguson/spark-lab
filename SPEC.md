@@ -184,4 +184,7 @@ kit (teardown is the only destructive path, and it needs `--yes`).
 - Link to the `spark-lab` repo for the hands-on path.
 
 ## 12. Deviations
-(none yet)
+- Schema has evolved past this spec: v1 `model:` → v2 `models:` (ADR 0004) →
+  v3 cluster `hosts:` + per-model `hosts:`/`host_overrides` (ADR 0008). The
+  committed `config.example.yaml` is now the v3 example; v1/v2 configs keep
+  loading unchanged via the compat loader.
