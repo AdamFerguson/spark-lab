@@ -1,0 +1,74 @@
+# Nemotron 3.5 Lightning 30B-A3B NVFP4 + DFlash speculative decoding, tuned
+# for a single DGX Spark (GB10) from the SGLang cookbook's dgx-spark cell
+# (docs.sglang.io/cookbook/autoregressive/NVIDIA/Nemotron3.5-Lightning,
+# hw=dgx-spark & variant=default & quant=nvfp4 & strategy=dflash & nodes=single).
+#
+# Spark-tuned knobs and why:
+#   --mem-fraction-static 0.78     page's Spark value (0.85 on b200/h100)
+#   --cuda-graph-max-bs-decode 4   decode CUDA graphs only to batch 4 on Spark
+#                                  (16 on b200/h100) -> the page's target
+#   --max-running-requests 4       the page leaves this unset and warns that
+#                                  spec decoding resets it to 48; 4 matches the
+#                                  CUDA-graph decode ceiling (the page says to
+#                                  size it for target concurrency). Raise it if
+#                                  you want more concurrent requests -- excess
+#                                  decodes above the graph ceiling fall back to
+#                                  eager.
+#   --speculative-dflash-block-size 4   page's Spark value (6 on b200)
+#   target model NVFP4 runs via Marlin W4A16 on GB10; 1M context validated.
+#   DFlash draft is a small (1.2 GB) public repo; downloads to the host HF
+#   cache on first boot.
+name: nemotron35-lightning
+model: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+runtime: sglang
+min_nodes: 1
+container: lmsysorg/sglang:dev-nemotron3-5-lightning
+executor: docker
+executor_config:
+  ipc: host
+  shm_size: 32g
+  # Required on Blackwell / GB10 for this SGLang build.
+  # See https://github.com/radixark/miles/issues/364
+  privileged: true
+  cap_add:
+    - SYS_PTRACE
+  security_opt:
+    - seccomp=unconfined
+env:
+  PYTORCH_CUDA_ALLOC_CONF: ""
+  # Gated model -- the token is injected at deploy time from your .env.
+  HF_TOKEN: "{env:HF_TOKEN}"
+
+metadata:
+  description: "mylab -- nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 served by SGLang"
+  model_dtype: nvfp4
+
+defaults:
+  host: 0.0.0.0
+  port: 30000
+  mamba_ssm_dtype: float16
+  mem_fraction_static: 0.78
+  cuda_graph_max_bs_decode: 4
+  max_running_requests: 4
+  speculative_algorithm: DFLASH
+  speculative_draft_model: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DFlash
+  speculative_dflash_block_size: 4
+  reasoning_parser: nemotron_3
+  tool_call_parser: qwen3_coder
+
+command: |
+  sglang serve \
+    --enable-metrics \
+    --enable-mfu-metrics \
+    --model-path {model} \
+    --mamba-ssm-dtype {mamba_ssm_dtype} \
+    --mem-fraction-static {mem_fraction_static} \
+    --cuda-graph-max-bs-decode {cuda_graph_max_bs_decode} \
+    --max-running-requests {max_running_requests} \
+    --speculative-algorithm {speculative_algorithm} \
+    --speculative-draft-model-path {speculative_draft_model} \
+    --speculative-dflash-block-size {speculative_dflash_block_size} \
+    --reasoning-parser {reasoning_parser} \
+    --tool-call-parser {tool_call_parser} \
+    --host {host} \
+    --port {port}

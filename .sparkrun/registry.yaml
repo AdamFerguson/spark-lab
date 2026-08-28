@@ -31,3 +31,15 @@ recipes:
       one-time node-side preparation (scripts/flash-next-prepare.sh): image
       patching + PLE dir + pinned revision weights.
     file: recipes/qwen38-flash-next.yaml
+  nemotron35-lightning:
+    name: Nemotron 3.5 Lightning (NVFP4, DFlash)
+    model: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+    image: lmsysorg/sglang:dev-nemotron3-5-lightning
+    tags: [ nemotron, 30b, moe, nvfp4, speculative, dflash, 1m, single-node ]
+    hardware: DGX Spark / GB10
+    description: >
+      30B MoE (3B active), NVFP4 via Marlin on GB10, 1M context, DFlash
+      speculative decoding with a 1.2 GB public draft. Tuned from the SGLang
+      cookbook dgx-spark cell: mem-fraction 0.78, CUDA-graph decode ceiling
+      4, max-running-requests 4.
+    file: recipes/nemotron35-lightning.yaml
