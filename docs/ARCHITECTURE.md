@@ -116,9 +116,15 @@ byte-identically. **v2** adds multi-model, an explicit image map, and profiles:
   a `full` host's prometheus scrapes it over its `ssh` address, tagged with
   its `instance_label`) / `none`. `control_plane.enabled` (per host, default
   `true`) splits the LiteLLM control plane: `false` makes a host
-  observability-only (no gateway/DB/Redis, no litellm config files). Invariants:
-  a model-serving host keeps the control plane on; a control-plane-off host
-  must still run monitoring. See ADR 0008's addendum.
+  observability-only (no gateway/DB/Redis, no litellm config files).
+  **Run vs serve:** `models.<m>.hosts` is where the model RUNS; serving is
+  implicit — every active model with a running host is registered in the
+  `model_list` of every control-plane host, with `api_base` pointing at the
+  local engine when the model runs on that host and at the running host's
+  tailnet/LAN address otherwise (so a model on luna is served by sol's
+  gateway). Invariants: a control-plane-off host must still run monitoring;
+  active models need ≥1 control-plane host to serve them; distinct serving
+  names per gateway. See ADR 0008's addenda.
 
 `spark-lab migrate` rewrites a v1/v2 file to v3 on disk (idempotent,
 value-preserving, chained through `upgrade_to_v2` + `upgrade_to_v3`); the
@@ -178,6 +184,15 @@ Two file-layer invariants (both learned live, 2026-08-28):
   gateway/db/redis containers (`--remove-orphans`) and removes their config
   files, but the named volumes remain on disk, so re-enabling + `apply`
   restores the stack on the previous data.
+- **Changed gateway files hot-swap the running daemons.** A bind-mounted
+  config change is invisible to a running service whose compose definition
+  didn't change: when a previously-tracked `litellm/prometheus.yml` changes
+  the plan hot-reloads prometheus (`POST /-/reload`), and when a tracked
+  `litellm/model_config.yaml` or `litellm/config.yaml` changes it
+  best-effort `docker compose restart litellm` — a running gateway keeps its
+  boot-time model list, so entry flips (add/remove, local → remote `api_base`)
+  would otherwise sit inert until a manual restart. Both are best-effort: a
+  fresh stack already booted from the new files.
 
 ## Recipe discovery + auto-conversion (Phase 5, ADR 0003)
 

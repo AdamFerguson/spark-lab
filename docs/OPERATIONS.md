@@ -123,8 +123,23 @@ keeps its state in its own spark-lab checkout
   gateway/db/redis containers and removes their config files, but the
   `litellm_postgres_data` / `litellm_redis_data` volumes stay on disk: flip the
   flag back to `true` and `apply --hosts <host>` restores the gateway on its
-  previous database. `check`/`validate` refuse configs where a model-serving
-  host has the control plane off, or where a host would run nothing.
+  previous database.
+- **Central gateway (implicit serving).** Every active model is registered in
+  the `model_list` of every control-plane host — no per-model declaration.
+  The entry's `api_base` is the local engine when the model runs on that host,
+  the running host's tailnet/LAN address otherwise. So "move the model between
+  Sparks" behind one gateway is just changing `models.<m>.hosts`. Safe two-step
+  move (zero client disruption until you say so):
+  1. `hosts: [luna, sol]` + `apply --hosts luna` — starts the model on luna;
+     sol keeps running its own copy, its entry stays local.
+  2. `hosts: [luna]` + `apply --restart-model --hosts sol` — sol's entry flips
+     to `http://luna:<port>/v1` (same model name; a best-effort litellm restart
+     makes it take effect, a few seconds), then sol's model workload stops.
+  Reversal: `model up <m> --hosts sol` (start the local copy first) then
+  `model down <m> --yes --hosts luna`.
+  `check`/`validate` refuse configs where active models would run with no
+  control-plane host to serve them, or where two models share a serving name
+  on one gateway.
 - **Config drift:** because one file is the source of truth, edit it in one
   place and copy it to the other machines (it's small and gitignorable — the
   `.env` next to it is the only secret-bearing file).

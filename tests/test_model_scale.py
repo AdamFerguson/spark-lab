@@ -106,19 +106,37 @@ class TestModelUp(ScaleBase):
         cp = self._setup()
         self.assertEqual(model_cmd.up(_args(cp, FakeRuntime(), model="nope", hosts="beta")), 1)
 
-    def test_up_refuses_control_plane_off_host(self):
+    def test_up_onto_control_plane_off_host_is_allowed(self):
+        # beta has no gateway; the model is still served by alpha's gateway, so
+        # scaling onto beta is the intended central-gateway flow
         text = LOCAL_V3.replace("hosts: [alpha, beta]", "hosts: [alpha]", 1).replace(
             "    monitoring:\n      instance_label: beta-node",
             "    control_plane:\n      enabled: false\n"
             "    monitoring:\n      instance_label: beta-node")
         cp = self._setup(text)
+        rc = model_cmd.up(_args(cp, FakeRuntime(), model="qwen", hosts="beta"))
+        self.assertEqual(rc, 0)
+        data = yaml.safe_load((self.d / "config.yaml").read_text())
+        self.assertEqual(data["models"]["qwen"]["hosts"], ["alpha", "beta"])
+
+    def test_up_refuses_when_no_gateway_could_serve(self):
+        # both gateways off: scaling anywhere would leave the model unserved
+        text = LOCAL_V3.replace(
+            "  - name: alpha\n    remote: false\n",
+            "  - name: alpha\n    remote: false\n    control_plane:\n      enabled: false\n")
+        text = text.replace(
+            "    monitoring:\n      instance_label: beta-node",
+            "    control_plane:\n      enabled: false\n"
+            "    monitoring:\n      instance_label: beta-node")
+        text = text.replace("hosts: [alpha, beta]", "hosts: [alpha]", 1)
+        cp = self._setup(text)
         buf = io.StringIO()
         with contextlib.redirect_stderr(buf):
             rc = model_cmd.up(_args(cp, FakeRuntime(), model="qwen", hosts="beta"))
         self.assertEqual(rc, 1)
-        self.assertIn("control_plane", buf.getvalue())
+        self.assertIn("no host has the control plane", buf.getvalue())
         self.assertEqual(yaml.safe_load((self.d / "config.yaml").read_text())["models"][
-            "qwen"]["hosts"], ["alpha"])
+            "qwen"]["hosts"], ["alpha", "beta"])   # rewrite kept, user reverts or fixes
 
     def test_up_requires_v3(self):
         from tests.helpers import config_text

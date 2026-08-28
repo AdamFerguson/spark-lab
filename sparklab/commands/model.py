@@ -88,12 +88,6 @@ def up(args) -> int:
     except ValueError as e:
         print(f"[ERROR] {e}", file=sys.stderr)
         return 1
-    off = [n for n in targets_names if not cfg.view_for(n).control_plane_enabled()]
-    if off:
-        print(f"[ERROR] control_plane is disabled on: {', '.join(off)} -- the LiteLLM "
-              f"gateway is how the model is served there. Re-enable it "
-              f"(`control_plane: {{enabled: true}}`) and `apply` first.", file=sys.stderr)
-        return 1
 
     fresh = [n for n in targets_names if n not in current]
     # keep config order, append the new hosts in config order
@@ -110,6 +104,11 @@ def up(args) -> int:
               f"[{', '.join(new_hosts)}]\n")
 
     cfg2 = config.load(args.config)
+    for problem in (*cfg2.control_plane_conflicts(), *cfg2.serving_conflicts()):
+        print(f"[ERROR] {problem}", file=sys.stderr)
+        print("(the config was updated on disk; revert it or fix the cluster before retrying)",
+              file=sys.stderr)
+        return 1
     ts = cluster.targets(cfg2, targets_names, runtime=getattr(args, "runtime", None))
     if not ts:
         return 1
@@ -170,6 +169,11 @@ def down(args) -> int:
           f"[{', '.join(remaining) or '(scaled down)'}]\n")
 
     cfg2 = config.load(args.config)
+    for problem in (*cfg2.control_plane_conflicts(), *cfg2.serving_conflicts()):
+        print(f"[ERROR] {problem}", file=sys.stderr)
+        print("(the config was updated on disk; revert it or fix the cluster before retrying)",
+              file=sys.stderr)
+        return 1
     ts = cluster.targets(cfg2, targets_names, runtime=getattr(args, "runtime", None))
     if not ts:
         return 1

@@ -266,3 +266,44 @@ command — `apply`/converge reconcile, `model up/down/stop`, disabling the
 control plane — deletes them. `teardown --yes` (default) keeps them, and
 `--purge` prints an explicit, per-volume warning naming the database as
 unrecoverable before proceeding.
+
+## Addendum (2026-08-28): implicit central serving (`model_list` beyond the local host)
+
+A host's role is now cleanly split into **run** vs **serve**:
+
+- **run** — `models.<m>.hosts` (unchanged): the recipe renders there,
+  `sparkrun run --ensure` + the bounded readiness probe target it, and stale
+  stops happen there.
+- **serve** — *implicit, no new key*: **every active model with at least one
+  running host is registered in the `model_list` of every control-plane host.**
+  The entry's `api_base` points at the gateway's own engine when the model
+  runs there (`model_api_base_host`, default `host.docker.internal`) and at
+  the first running host's `ssh` address (Tailscale/LAN DNS) otherwise.
+
+This is what makes "the model runs on luna, the API lives on sol" a config
+change, not a networking project: with luna control-plane-off, sol's gateway
+registers the model under its existing serving identity pointing at
+`http://luna:<port>/v1`, and clients keep hitting `sol:<gateway_port>` with the
+same model name.
+
+Design notes:
+- **Serving identity** resolves per entry: gateway-litellm base < model
+  `litellm:` block < `host_overrides.<gateway>.litellm` (last wins). A model's
+  per-host `host_overrides.litellm` no longer merges into the view-wide
+  gateway section — it only shapes that host's entry.
+- **Escape hatch**: an explicit `litellm.api_base` (model-level or per gateway
+  host) overrides the derived address (load-balancer front, alias, non-
+  tailnet addressing). Multi-target entries under one name (true cross-host
+  load balancing) are a follow-up.
+- **Scaled-down models register nowhere** (no running hosts ⇒ no entries); a
+  gateway with zero entries renders `model_list: []` and boots model-less.
+- **Invariants** (replacing the earlier "model host keeps its control plane"):
+  a control-plane-off host may RUN the model freely; a cluster must have at
+  least one CP-on host whenever active models run; and two active models must
+  not resolve to the same serving `model_name` on one gateway (LiteLLM refuses
+  duplicate names at boot).
+- **Litellm hot-swap**: a changed tracked `litellm/model_config.yaml` or
+  `litellm/config.yaml` triggers a best-effort `docker compose restart
+  litellm` (same bug class as the prometheus hot-reload — a running gateway
+  keeps its boot-time model list, and `up` does not recreate it). This is
+  what makes entry flips (local → remote, add, remove) take effect.

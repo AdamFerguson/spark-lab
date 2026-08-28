@@ -34,6 +34,7 @@ def make_cfg(recipe="mymodel", cluster=False):
     c.cloudflare = lambda: {"enabled": False}
     c.prometheus = lambda: {"port": 9090}
     c.monitoring_role = lambda: "full"
+    c.control_plane_enabled = lambda: True
     return c
 
 
@@ -130,6 +131,53 @@ class TestConverge(unittest.TestCase):
                  "hash": state.sha256_bytes(old["sparkrun/recipes/mymodel.yaml"])}
         plan = plan_for(cfg, new, files, model, allow_restart=False)
         self.assertFalse(any(d.startswith("Reload prometheus") for d, _ in plan.commands))
+
+    # 2d. Changed gateway model-list restarts the running litellm -----------
+    def _gateway_plan(self, old_litellm_cfg, new_litellm_cfg, cfg=None):
+        cfg = cfg or make_cfg()
+        old = {**recipe_bytes(), **LIT, "litellm/model_config.yaml": old_litellm_cfg,
+               "litellm/config.yaml": b"gateway: 1\n"}
+        new = {**recipe_bytes(), **LIT, "litellm/model_config.yaml": new_litellm_cfg,
+               "litellm/config.yaml": b"gateway: 1\n"}
+        files = converge.compute_files_after_apply(old)
+        model = {"name": "mymodel",
+                 "hash": state.sha256_bytes(old["sparkrun/recipes/mymodel.yaml"])}
+        return plan_for(cfg, new, files, model, allow_restart=False)
+
+    def test_changed_model_config_triggers_litellm_restart(self):
+        plan = self._gateway_plan(b"model_list: [a]\n", b"model_list: [b]\n")
+        descs = [d for d, _ in plan.commands]
+        self.assertIn("Restart litellm to apply the changed model list (best-effort)", descs)
+        self.assertIn("Restart litellm to apply the changed model list (best-effort)",
+                      plan.best_effort)
+        restart_argv = next(a for d, a in plan.commands if d.startswith("Restart litellm"))
+        self.assertEqual(restart_argv[-2:], ["restart", "litellm"])
+
+    def test_changed_litellm_gateway_config_triggers_restart(self):
+        old = {**recipe_bytes(), **LIT, "litellm/model_config.yaml": b"same\n",
+               "litellm/config.yaml": b"gateway: 1\n"}
+        new = {**recipe_bytes(), **LIT, "litellm/model_config.yaml": b"same\n",
+               "litellm/config.yaml": b"gateway: 2\n"}
+        files = converge.compute_files_after_apply(old)
+        model = {"name": "mymodel",
+                 "hash": state.sha256_bytes(old["sparkrun/recipes/mymodel.yaml"])}
+        plan = plan_for(make_cfg(), new, files, model, allow_restart=False)
+        self.assertTrue(any(d.startswith("Restart litellm") for d, _ in plan.commands))
+
+    def test_fresh_gateway_files_do_not_restart(self):
+        # first apply: the gateway booted from the new files already
+        cfg = make_cfg()
+        plan = plan_for(cfg, {**recipe_bytes(), **LIT,
+                              "litellm/model_config.yaml": b"model_list: [a]\n",
+                              "litellm/config.yaml": b"gateway: 1\n"},
+                        files={}, model=None, allow_restart=False)
+        self.assertFalse(any(d.startswith("Restart litellm") for d, _ in plan.commands))
+
+    def test_control_plane_off_host_never_restarts_litellm(self):
+        cfg = make_cfg()
+        cfg.control_plane_enabled = lambda: False
+        plan = self._gateway_plan(b"model_list: [a]\n", b"model_list: [b]\n", cfg=cfg)
+        self.assertFalse(any(d.startswith("Restart litellm") for d, _ in plan.commands))
 
     # 2. Recipe content change, not restarted -> stays pending ---------------
     def test_recipe_change_stays_pending_without_flag(self):

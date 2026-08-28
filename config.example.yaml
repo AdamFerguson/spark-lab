@@ -76,9 +76,21 @@ models:
   qwen38-27b:
     active: true
     # luna has control_plane disabled (exporters-only host), so the gateway --
-    # and therefore the model -- lives on sol. `model up qwen38-27b --hosts luna`
-    # refuses until luna's control plane is re-enabled.
+    # and therefore the API -- lives on sol. Serving is implicit: every active
+    # model with a running host is registered in EVERY control-plane host's
+    # model_list, with api_base pointing at the running host (sol's entry
+    # below points at its own engine; if you set hosts: [luna] instead, sol's
+    # entry automatically points at http://luna:30000/v1 -- same model name,
+    # clients keep hitting sol).
     hosts: [sol]
+    # A second model running on the exporter-only host, served centrally:
+    #   llama31-8b:
+    #     active: true
+    #     hosts: [luna]              # runs on luna (no gateway there)
+    #     litellm:
+    #       model_name: luna-llama31-8b   # distinct serving name per gateway
+    #     runtime: sglang
+    #     hf_model: ...
     runtime: sglang
     hf_model: RadixArk/Qwen3.8-27B-NVFP4
     image: lmsysorg/sglang:qwen38-27b

@@ -83,11 +83,15 @@ class TestHostViews(unittest.TestCase):
         self.assertEqual(beta.active_alias, "qwen")
         self.assertEqual(alpha.active_alias, "qwen")
 
-    def test_host_override_litellm_serving_identity_applies_to_gateway_section(self):
+    def test_host_override_litellm_serving_identity_applies_to_entries_only(self):
+        # the host-override litellm identity no longer bleeds into the view-wide
+        # gateway section -- it resolves PER ENTRY (serving_entries) instead
         beta = self.cfg.view_for("beta")
         alpha = self.cfg.view_for("alpha")
-        self.assertEqual(beta.litellm.get("model_name"), "beta-served-name")
-        self.assertEqual(alpha.litellm.get("model_name"), "my-spark-model")  # base kept
+        self.assertEqual(beta.litellm.get("model_name"), "my-spark-model")  # gateway base
+        self.assertEqual(alpha.litellm.get("model_name"), "my-spark-model")
+        self.assertEqual(beta.serving_entries()[0]["model_name"], "beta-served-name")
+        self.assertEqual(alpha.serving_entries()[0]["model_name"], "my-spark-model")
 
     def test_view_for_is_cached_per_host(self):
         self.assertIs(self.cfg.view_for("beta"), self.cfg.view_for("beta"))
@@ -317,14 +321,45 @@ class TestControlPlane(unittest.TestCase):
         self.assertIn("postgres_data", compose)
         self.assertIn("redis_data", compose)
 
-    def test_conflict_model_host_control_plane_off(self):
+    def test_model_host_control_plane_off_is_fine_when_served(self):
+        # beta runs the model with the control plane off; alpha (CP on) serves
+        # it -> valid (the implicit central-gateway case)
         text = V3_CLUSTER_CONFIG.replace(
             "    monitoring:\n      instance_label: beta-node", self.BETA_OFF)
-        cfg = self._load(text, "conflict")
-        problems = cfg.control_plane_conflicts()
+        cfg = self._load(text, "served")
+        self.assertEqual(cfg.control_plane_conflicts(), [])
+        self.assertEqual(cfg.serving_conflicts(), [])
+
+    def test_conflict_no_gateway_host_to_serve_model(self):
+        text = V3_CLUSTER_CONFIG.replace(
+            "    monitoring:\n      instance_label: beta-node", self.BETA_OFF)
+        text = text.replace("remote: false", "remote: false\n    control_plane:\n"
+                            "      enabled: false", 1)   # alpha off too
+        cfg = self._load(text, "nogw")
+        problems = cfg.serving_conflicts()
         self.assertEqual(len(problems), 1)
-        self.assertIn("beta", problems[0])
+        self.assertIn("no host has the control plane", problems[0])
         self.assertIn("qwen", problems[0])
+
+    def test_conflict_duplicate_serving_names_on_one_gateway(self):
+        # qwen serves beta, llama serves alpha -- disjoint host sets (no run
+        # conflict), but both gateways would register both models under the
+        # default serving name. Only alpha keeps its control plane, so the
+        # duplicate surfaces on alpha's gateway.
+        text = V3_CLUSTER_CONFIG.replace(
+            "    active: true\n    hosts: [alpha, beta]",
+            "    active: true\n    hosts: [beta]")
+        text = text.replace(
+            "    monitoring:\n      instance_label: beta-node", self.BETA_OFF)
+        text = text.replace(
+            "litellm:\n  model_name:",
+            "  llama:\n    active: true\n    hosts: [alpha]\n"
+            "    hf_model: test-llm/llama\n    image: lmsysorg/sglang:llama\n"
+            "litellm:\n  model_name:", 1)
+        cfg = self._load(text, "dup")
+        problems = cfg.serving_conflicts()
+        self.assertTrue(any("'qwen'" in p and "'llama'" in p and "'alpha'" in p
+                            for p in problems), problems)
 
     def test_conflict_host_would_run_nothing(self):
         text = self.MODEL_ALPHA_ONLY.replace(
@@ -343,6 +378,117 @@ class TestControlPlane(unittest.TestCase):
         (sub / ".env").write_text(REFERENCE_ENV)
         cfg = config_mod.load(str(sub / "config.yaml"))
         self.assertEqual(cfg.control_plane_conflicts(), [])
+
+
+class TestServingEntries(unittest.TestCase):
+    """Implicit central serving: every active model with a running host is
+    registered on every control-plane host (ADR-0008 addendum #3)."""
+
+    def _load(self, text, name="sv"):
+        sub = self.d / name
+        sub.mkdir()
+        (sub / "config.yaml").write_text(text)
+        (sub / ".env").write_text(REFERENCE_ENV)
+        return config_mod.load(str(sub / "config.yaml"))
+
+    def setUp(self):
+        self.d = Path(tempfile.mkdtemp())
+        self._env = mock.patch.dict(os.environ, SECRET_DUMMY)
+        self._env.start()
+
+    def tearDown(self):
+        self._env.stop()
+
+    def test_local_entry_matches_historical_values(self):
+        cfg = self._load(V3_CLUSTER_CONFIG)
+        entries = cfg.view_for("alpha").serving_entries()
+        self.assertEqual(entries, [{
+            "alias": "qwen",
+            "model_name": "my-spark-model",
+            "hf_model": "test-llm/model",
+            "api_base": "http://host.docker.internal:30000/v1",
+            "model_info": {"supports_vision": True},
+            "model_settings": {"temperature": 1.0, "top_p": 0.95, "top_k": 20},
+        }])
+
+    def test_remote_entry_points_at_running_host(self):
+        text = V3_CLUSTER_CONFIG.replace("hosts: [alpha, beta]", "hosts: [beta]")
+        cfg = self._load(text, "remote")
+        a = cfg.view_for("alpha").serving_entries()
+        b = cfg.view_for("beta").serving_entries()
+        self.assertEqual(a[0]["api_base"], "http://beta.tailx.ts.net:30000/v1")
+        self.assertEqual(b[0]["api_base"], "http://host.docker.internal:30000/v1")
+        # alpha does not run the model: no recipe rendered for it
+        alpha_rendered = render.render(cfg.view_for("alpha"), self.d / "a")
+        self.assertNotIn("sparkrun/recipes/qwen.yaml", alpha_rendered)
+        self.assertIn("litellm/model_config.yaml", alpha_rendered)
+
+    def test_serving_identity_precedence(self):
+        text = V3_CLUSTER_CONFIG.replace(
+            "    host_overrides:\n      beta:\n",
+            "    litellm:\n      model_name: model-level-name\n"
+            "    host_overrides:\n      beta:\n")
+        text = text.replace(
+            "        litellm:\n          model_name: beta-served-name",
+            "        litellm:\n          model_name: host-level-name")
+        cfg = self._load(text, "prec")
+        # beta (the model host): its host_overrides identity wins
+        self.assertEqual(cfg.view_for("beta").serving_entries()[0]["model_name"],
+                         "host-level-name")
+        # alpha (remote gateway): no host_overrides there -> the model-level name
+        self.assertEqual(cfg.view_for("alpha").serving_entries()[0]["model_name"],
+                         "model-level-name")
+
+    def test_explicit_api_base_wins(self):
+        text = V3_CLUSTER_CONFIG.replace(
+            "    host_overrides:",
+            "    litellm:\n      api_base: http://lb.internal:30001/v1\n"
+            "    host_overrides:")
+        cfg = self._load(text, "lb")
+        for host in ("alpha", "beta"):
+            self.assertEqual(cfg.view_for(host).serving_entries()[0]["api_base"],
+                             "http://lb.internal:30001/v1")
+
+    def test_scaled_down_model_registers_nowhere(self):
+        text = V3_CLUSTER_CONFIG.replace("hosts: [alpha, beta]", "hosts: []")
+        cfg = self._load(text, "scaled")
+        self.assertEqual(cfg.view_for("alpha").serving_entries(), [])
+        self.assertEqual(cfg.view_for("beta").serving_entries(), [])
+        rendered = render.render(cfg.view_for("alpha"), self.d / "scaled")
+        self.assertIn("model_list: []", rendered["litellm/model_config.yaml"].decode())
+        yaml.safe_load(rendered["litellm/model_config.yaml"].decode())
+
+    def test_inactive_model_registers_nowhere(self):
+        text = V3_CLUSTER_CONFIG.replace("    active: true", "    active: false")
+        cfg = self._load(text, "inactive")
+        self.assertEqual(cfg.view_for("alpha").serving_entries(), [])
+        mc = render.render(cfg.view_for("alpha"), self.d / "inact")[
+            "litellm/model_config.yaml"].decode()
+        self.assertIn("model_list: []", mc)
+        self.assertEqual(cfg.serving_conflicts(), [])
+
+    def test_two_models_two_entries_one_gateway(self):
+        text = V3_CLUSTER_CONFIG.replace(
+            "    active: true\n    hosts: [alpha, beta]",
+            "    active: true\n    hosts: [alpha]")
+        text = text.replace(
+            "litellm:\n  model_name:",
+            "  llama:\n    active: true\n    hosts: [beta]\n"
+            "    litellm:\n      model_name: llama-served\n"
+            "    hf_model: test-llm/llama\n    image: lmsysorg/sglang:llama\n"
+            "litellm:\n  model_name:", 1)
+        cfg = self._load(text, "two")
+        entries = cfg.view_for("alpha").serving_entries()
+        self.assertEqual([e["alias"] for e in entries], ["qwen", "llama"])
+        self.assertEqual(entries[0]["api_base"], "http://host.docker.internal:30000/v1")
+        self.assertEqual(entries[1]["api_base"], "http://beta.tailx.ts.net:30000/v1")
+        self.assertEqual(entries[1]["model_name"], "llama-served")
+        mc = render.render(cfg.view_for("alpha"), self.d / "two")[
+            "litellm/model_config.yaml"].decode()
+        parsed = yaml.safe_load(mc)
+        self.assertEqual([e["model_name"] for e in parsed["model_list"]],
+                         ["my-spark-model", "llama-served"])
+        self.assertEqual(cfg.serving_conflicts(), [])
 
 
 class TestLocalDetection(unittest.TestCase):

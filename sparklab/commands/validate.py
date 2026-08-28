@@ -51,6 +51,9 @@ def run(args) -> int:
         for problem in cfg.control_plane_conflicts():
             print(f"[INVALID] {problem}", file=sys.stderr)
             return 1
+        for problem in cfg.serving_conflicts():
+            print(f"[INVALID] {problem}", file=sys.stderr)
+            return 1
 
     names = cluster.parse_hosts_arg(getattr(args, "hosts", None))
     try:

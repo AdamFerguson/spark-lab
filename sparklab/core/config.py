@@ -202,12 +202,10 @@ class Config:
     def control_plane_conflicts(self) -> List[str]:
         """v3: human-readable problems with the per-host control-plane split.
 
-        Two invariants:
-        1. a host that serves the active model must keep the control plane
-           on (the LiteLLM gateway is how that model is served);
-        2. a host with the control plane off must still run something
-           (monitoring role != 'none'), otherwise it converges to an empty
-           stack.
+        Invariant: a host with the control plane off must still run something
+        (monitoring role != 'none'), otherwise it converges to an empty stack.
+        (A host that RUNS the model with the control plane off is fine -- any
+        control-plane host serves it; see :meth:`serving_conflicts`.)
         """
         if not self.is_v3 or self._view_base is not None:
             return []
@@ -216,15 +214,115 @@ class Config:
             view = self.view_for(spec.name)
             if view.control_plane_enabled():
                 continue
-            if view.active_alias:
-                problems.append(
-                    f"host '{spec.name}' serves model '{view.active_alias}' but "
-                    "control_plane is disabled there -- the gateway is how the "
-                    "model is served; re-enable it (or move the model off the host)")
-            elif view.monitoring_role() == "none":
+            if view.monitoring_role() == "none":
                 problems.append(
                     f"host '{spec.name}' would run nothing (control_plane disabled "
                     "and monitoring.role: none)")
+        return problems
+
+    # -- v3 implicit central serving (ADR-0008 addendum #3) -----------------
+    def _active_model_aliases(self) -> List[str]:
+        """The active models' aliases (config order; v2/v3)."""
+        models = self.data.get("models") or {}
+        active = [a for a, m in models.items() if (m or {}).get("active")]
+        first = str((self.data.get("active_models") or [None])[0] or "")
+        if first and first in models and first not in active:
+            active.append(first)
+        return active
+
+    def serving_entries(self) -> List[Dict[str, Any]]:
+        """The gateway-facing ``model_list`` entries this host's LiteLLM should
+        register (implicit central serving).
+
+        Every ACTIVE model that has at least one running host is served by
+        every control-plane host -- no per-model declaration. The entry's
+        ``api_base`` points at THIS host when the model runs here (the
+        ``model_api_base_host`` default ``host.docker.internal``) and at the
+        first running host's ``ssh`` address otherwise (Tailscale/LAN DNS).
+        An explicit ``litellm.api_base`` (on the model, or in this host's
+        ``host_overrides`` block) wins over both. Serving identity resolves as
+        gateway-litellm base < model ``litellm:`` block < this host's
+        ``host_overrides`` ``litellm:`` block.
+
+        Legacy (v1) configs: the single local entry, exactly the historical
+        values (byte-identical renders).
+        """
+        if not self._is_v2:
+            model, lit = self.model, self.litellm
+            return [{
+                "alias": self.active_alias,
+                "model_name": lit.get("model_name", "my-spark-model"),
+                "hf_model": model.get("hf_model", ""),
+                "api_base": self.model_api_base,
+                "model_info": lit.get("model_info", {}),
+                "model_settings": {"temperature": 1.0, "top_p": 0.95, "top_k": 20,
+                                   **(lit.get("model_settings") or {})},
+            }]
+        base = self._view_base if self._view_base is not None else self
+        entries: List[Dict[str, Any]] = []
+        for alias in self._active_model_aliases():
+            mdef = (self.data.get("models") or {}).get(alias) or {}
+            run_hosts = base.model_host_list(alias)
+            if not run_hosts:
+                continue            # scaled down: nothing to serve
+            lit = deep_merge(self.litellm, mdef.get("litellm") or {})
+            port = int(mdef.get("port", 30000))
+            explicit = str(lit.get("api_base") or "").strip()
+            if explicit:
+                api_base = explicit
+            elif self._view_host in run_hosts:
+                host = self.litellm.get("model_api_base_host", "host.docker.internal")
+                api_base = f"http://{host}:{port}/v1"
+            elif base.is_v3:
+                spec = base.select_hosts([run_hosts[0]])[0]
+                api_base = f"http://{spec.ssh_host or spec.name}:{port}/v1"
+            else:   # v2: historical single-node path -- local engine
+                host = self.litellm.get("model_api_base_host", "host.docker.internal")
+                api_base = f"http://{host}:{port}/v1"
+            entries.append({
+                "alias": alias,
+                "model_name": lit.get("model_name", "my-spark-model"),
+                "hf_model": mdef.get("hf_model", ""),
+                "api_base": api_base,
+                "model_info": lit.get("model_info", {}),
+                "model_settings": {"temperature": 1.0, "top_p": 0.95, "top_k": 20,
+                                   **(lit.get("model_settings") or {})},
+            })
+        return entries
+
+    def serving_conflicts(self) -> List[str]:
+        """v3: cluster-level serving problems.
+
+        1. active model(s) with running hosts but no control-plane host
+           anywhere in the cluster -- nothing could serve them;
+        2. two active models resolving to the same serving ``model_name`` on
+           one gateway host (LiteLLM refuses duplicate names at boot).
+        """
+        if not self.is_v3 or self._view_base is not None:
+            return []
+        problems: List[str] = []
+        running = [a for a in self._active_model_aliases()
+                   if self.model_host_list(a)]
+        if running and not any(self.view_for(s.name).control_plane_enabled()
+                               for s in self.host_specs):
+            problems.append(
+                "model(s) " + ", ".join(running) +
+                " run but no host has the control plane enabled -- nothing can "
+                "serve them (enable control_plane on at least one host)")
+        for spec in self.host_specs:
+            view = self.view_for(spec.name)
+            if not view.control_plane_enabled():
+                continue
+            seen: Dict[str, str] = {}
+            for entry in view.serving_entries():
+                name = str(entry["model_name"])
+                if name in seen:
+                    problems.append(
+                        f"gateway on '{spec.name}': models '{seen[name]}' and "
+                        f"'{entry['alias']}' would both be served as '{name}' -- "
+                        "give each a distinct litellm.model_name")
+                else:
+                    seen[name] = str(entry["alias"])
         return problems
 
     def remote_scrape_targets(self) -> List[Dict[str, Any]]:
@@ -541,22 +639,20 @@ class Config:
         merged = deep_merge(self.data, {k: v for k, v in spec.overrides.items() if k != "hosts"})
         merged.pop("hosts", None)   # host selection lives on the base config
         models = dict(merged.get("models") or {})
-        serving_litellm: Dict[str, Any] = {}
         for alias, mdef in models.items():
             mdef = dict(mdef or {})
             per_host = mdef.pop("host_overrides", None) or {}
             ov = per_host.get(host_name)
             if ov:
+                # Deep-merge the host's tailoring (params, image, litellm
+                # serving identity, ...) over the model's own fields. The
+                # ``litellm`` sub-dict stays on the model definition: serving
+                # identity is resolved PER ENTRY (see serving_entries), not
+                # folded into the view-wide litellm block.
                 mdef = deep_merge(mdef, ov)
-                # A model's per-host litellm block is its serving identity on
-                # this host: it also applies to the gateway section itself.
-                if isinstance(ov.get("litellm"), dict):
-                    serving_litellm = deep_merge(serving_litellm, ov["litellm"])
             models[alias] = mdef
         if models:
             merged["models"] = models
-        if serving_litellm:
-            merged["litellm"] = deep_merge(merged.get("litellm") or {}, serving_litellm)
         view = Config(merged, self.config_path, self.env, _host=host_name, _base=self)
         cached[host_name] = view
         return view

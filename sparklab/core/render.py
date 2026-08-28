@@ -76,6 +76,10 @@ def build_context(cfg: config_mod.Config) -> dict:
         "model_info": litellm.get("model_info", {}),
         "model_settings": {"temperature": 1.0, "top_p": 0.95, "top_k": 20,
                            **(litellm.get("model_settings") or {})},
+        # Gateway-facing model_list entries (implicit central serving):
+        # one per active model with a running host; api_base local when the
+        # model runs on this host, remote (tailnet/LAN address) otherwise.
+        "served_models": cfg.serving_entries(),
         "hf_model": model.get("hf_model", ""),
         "model_host": model.get("host", "0.0.0.0"),
         "min_nodes": model.get("min_nodes", 1),

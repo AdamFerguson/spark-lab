@@ -225,6 +225,21 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
                 (reload_desc, ["curl", "-fsS", "-o", "/dev/null", "-X", "POST",
                                f"http://127.0.0.1:{prom_port}/-/reload"]))
             plan.best_effort.add(reload_desc)
+        # Same bug class, gateway edition: a changed model list / gateway config
+        # is invisible to a RUNNING litellm (it reads model_list at boot and
+        # keeps it in its DB), so a model add/remove or an api_base flip would
+        # sit inert until a manual restart. Restart the service when a
+        # previously-tracked gateway file changed (best-effort: a fresh stack
+        # already booted from the new file; a briefly-down gateway just misses
+        # the restart and picks it up on its next start).
+        gateway_files = [rel for rel in ("litellm/model_config.yaml", "litellm/config.yaml")
+                         if rel in state_files and rel in changed]
+        if gateway_files and getattr(cfg, "control_plane_enabled", lambda: True)():
+            restart_desc = "Restart litellm to apply the changed model list (best-effort)"
+            plan.commands.append(
+                (restart_desc, ["docker", "compose", "-f", compose_file,
+                                "restart", "litellm"]))
+            plan.best_effort.add(restart_desc)
     else:
         plan.notes.append("LiteLLM stack unchanged (skipping `docker compose up`).")
 
