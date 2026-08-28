@@ -28,6 +28,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
+from . import recipes as recipe_mod
+
 # Default image references. These equal the values the legacy (v1) templates
 # hard-coded / defaulted to, so a v1 config with no overrides renders
 # byte-identically (the R3 regression the golden tests assert).
@@ -133,10 +135,12 @@ class Config:
 
     def __init__(self, data: Dict[str, Any], config_path: Path, env: Dict[str, str],
                  _host: Optional[str] = None, _base: Optional["Config"] = None):
-        self.data = data or {}
         self.config_path = Path(config_path)
         self.repo_root = self.config_path.parent
         self.env = env
+        # v3: fold referenced recipes (models.<m>.recipe -> recipes/<m>.yaml)
+        # into the model blocks before anything selects/validates them.
+        self.data = recipe_mod.resolve_all(data or {}, self.repo_root)
         self._is_v2 = "models" in self.data or self.data.get("version") in (2, 3)
         self._is_v3 = self.data.get("version") == 3
         # Per-host view bookkeeping (v3): ``_host`` names the host this view is
@@ -144,6 +148,7 @@ class Config:
         self._view_host = _host
         self._view_base = _base
         self._active_alias, self._active_model = self._select_active()
+        self._validate_recipe_spans()
 
     # -- version + active-model selection ----------------------------------
     @property
@@ -154,6 +159,53 @@ class Config:
     def is_v3(self) -> bool:
         """True for a base v3 cluster config or a per-host view of one."""
         return self._is_v3 or self._view_host is not None
+
+    def _validate_recipe_spans(self) -> None:
+        """A referenced recipe whose model spans N hosts needs N placement
+        hosts (``layout`` must cover all ranks). Cheap load-time check."""
+        if not self._is_v3 or self._view_host is not None:
+            return
+        for alias, mdef in (self.data.get("models") or {}).items():
+            mdef = mdef or {}
+            if "recipe" not in mdef:
+                continue
+            try:
+                min_nodes = int(mdef.get("min_nodes", 1))
+            except (TypeError, ValueError):
+                continue
+            if min_nodes <= 1:
+                continue
+            if len(self.model_host_list(alias)) < min_nodes:
+                raise ValueError(
+                    f"model '{alias}' spans {min_nodes} hosts (its recipe's "
+                    f"min_nodes) but is placed on fewer: hosts: "
+                    f"{mdef.get('hosts')!r}")
+
+    def placement_table(self) -> List[Tuple[str, str, str, bool]]:
+        """Derived host -> model view (v3 base only): one row per host, config
+        order. ``(host, model_alias, gateway_name, control_plane_on)``; alias
+        and name are '' when no active model serves the host. Read-only -- the
+        source of truth remains ``models.<m>.hosts`` (ADR-0009)."""
+        if not self._is_v3 or self._view_host is not None:
+            return []
+        models = self.data.get("models") or {}
+        rows: List[Tuple[str, str, str, bool]] = []
+        for spec in self.host_specs:
+            alias = ""
+            for a, m in models.items():
+                if (m or {}).get("active") and self._serves(spec.name, m):
+                    alias = a
+                    break
+            name = ""
+            view = self.view_for(spec.name)
+            if alias:
+                # view data: host_overrides folded into the model block
+                mdef_view = (view.data.get("models") or {}).get(alias) or {}
+                lit = deep_merge(view.litellm, mdef_view.get("litellm") or {})
+                name = str(lit.get("model_name") or "my-spark-model")
+            cp = view.control_plane_enabled()
+            rows.append((spec.name, alias, name, cp))
+        return rows
 
     @property
     def view_host(self) -> Optional[str]:

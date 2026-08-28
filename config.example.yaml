@@ -62,15 +62,21 @@ hosts:
       litellm: ghcr.io/berriai/litellm:v1.99.0-dev.2
 
 # -----------------------------------------------------------------------------
-# Models. `hosts:` = where the model is served (absent = all hosts; `[]` =
-# scaled down everywhere). This list IS the scale:
+# Models. `recipe:` = which recipes/<name>.yaml this model is (the launch
+# spec -- a plain, directly-runnable sparkrun recipe; `sparkrun run
+# recipes/<name>.yaml` works standalone). `hosts:` = where it is served
+# (absent = all hosts; `[]` = scaled down everywhere). This list IS the
+# scale:
 #   spark-lab model up  <model> --hosts sol     adds sol + converges it
 #   spark-lab model down <model> --yes --hosts sol   removes sol + stops it there
 # At most ONE active model may serve a given host (enforced).
 #
-# `host_overrides.<host>` deep-merges over this model's own fields for that
-# host (a "recipe tailored to a host": params, image, litellm serving
-# identity, ...).
+# `hf_token_env:` names the .env var carrying the HF token for this model;
+# the secret is injected into the RENDERED recipe only (repo recipes stay
+# clean; direct sparkrun users authenticate host-side via `hf auth`).
+#
+# `host_overrides.<host>` deep-merges over the model (for that host) -- the
+# per-host escape hatch (params, image, litellm serving identity, ...).
 # -----------------------------------------------------------------------------
 models:
   qwen38-27b:
@@ -83,49 +89,19 @@ models:
     # entry automatically points at http://luna:30000/v1 -- same model name,
     # clients keep hitting sol).
     hosts: [sol]
-    # A second model running on the exporter-only host, served centrally:
-    #   llama31-8b:
-    #     active: true
-    #     hosts: [luna]              # runs on luna (no gateway there)
-    #     litellm:
-    #       model_name: luna-llama31-8b   # distinct serving name per gateway
-    #     runtime: sglang
-    #     hf_model: ...
-    runtime: sglang
-    hf_model: RadixArk/Qwen3.8-27B-NVFP4
-    image: lmsysorg/sglang:qwen38-27b
+    # Launch details live in recipes/qwen38-27b.yaml (a plain sparkrun recipe).
+    # spark-lab renders a node-side copy that adds a `layout:` placement pin
+    # (from hosts:) + the HF token; gateway name/costs come from the recipe's
+    # metadata.litellm section.
+    recipe: qwen38-27b
     hf_token_env: HF_TOKEN
-    host: 0.0.0.0
-    port: 30000
-    min_nodes: 1
-    params:
-      # any SGLang param key -> --param flag; see docs/MODEL_RECIPES.md
-      kv_cache_dtype: fp8_e4m3
-      mem_fraction_static: 0.85
-      attention_backend: flashinfer
-    flag_map:
-      # param key -> exact CLI flag when it differs (e.g. draft-model path)
-      speculative_draft_model: speculative-draft-model-path
-    extra_flags:
-      - --enable-metrics
-      - --enable-mfu-metrics
-      - --enable-cache-report
-    host_overrides:
-      sol:
-        # per-host tuning (deep-merged over the shared params above)
-        params:
-          mamba_ssm_dtype: bfloat16
-        litellm:
-          # this node serves it under its own gateway name + token limits
-          model_name: adam-spark-qwen3-8-27b
-          model_info:
-            max_input_tokens: 262144
-            max_output_tokens: 131072
-
-# Exactly one cluster-wide "first" model for bookkeeping; per-host selection is
-# done by `models.<m>.hosts` + `active: true` (one active model per host).
-active_models:
-  - qwen38-27b
+    # Optional per-host tailoring (deep-merged over the recipe for that host):
+    # host_overrides:
+    #   sol:
+    #     params: { mamba_ssm_dtype: bfloat16 }
+    #     litellm:
+    #       model_name: adam-spark-qwen3-8-27b   # gateway name on this host
+    #       model_info: { max_input_tokens: 262144 }
 
 # -----------------------------------------------------------------------------
 # Shared stack images (per-host overridable under hosts:). env

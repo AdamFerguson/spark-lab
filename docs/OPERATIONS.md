@@ -143,8 +143,20 @@ keeps its state in its own spark-lab checkout
   `check`/`validate` refuse configs where active models would run with no
   control-plane host to serve them, or where two models share a serving name
   on one gateway.
+- **Recipes as source of truth + placement pins (ADR 0009).** v3 model blocks
+  reference `recipes/<name>.yaml` (plain sparkrun recipes — directly
+  `sparkrun run`-able, no secrets, no layout) instead of declaring the launch
+  inline; gateway metadata + the readiness bound live in the recipe's
+  `metadata:` section, and the HF token env-var name in
+  `models.<m>.hf_token_env`. `apply` renders a node-side copy that adds a
+  `layout:` pin from `hosts:` (structural placement — the scheduler honors it
+  verbatim) and the token. Migration note: adding the layout block changes
+  the rendered recipe's content hash, so the one-time apply after migrating
+  to the reference form offers a model restart that is **skippable** —
+  `sparkrun run --ensure` matches the running workload by intent (layout is
+  not part of it), so the live container is unaffected.
 - **Qwen3.8-Flash-Next on luna (second model).** The 125B MoE + 51B PLE recipe
-  (`models.qwen38-flash-next`, registry recipe `recipes/qwen38-flash-next.yaml`)
+  (`models.qwen38-flash-next`, plain sparkrun recipe `recipes/qwen38-flash-next.yaml`)
   needs a one-time node-side preparation on luna before the first `apply` —
   the pinned SGLang image ships two source files that must be patched (PLE
   NVMe-mmap allocation + shard-reuse fast path; the QSA sm_121 decode gate),

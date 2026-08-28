@@ -18,6 +18,13 @@
 #   target model NVFP4 runs via Marlin W4A16 on GB10; 1M context validated.
 #   DFlash draft is a small (1.2 GB) public repo; downloads to the host HF
 #   cache on first boot.
+#
+# A plain, directly-runnable sparkrun recipe (no spark-lab-specific keys):
+#   sparkrun run recipes/nemotron35-lightning.yaml
+# Gated checkpoint: authenticate host-side first (hf auth / huggingface-cli
+# login). spark-lab (v3) references this file (models.<alias>.recipe:) and
+# renders a node-side copy with a `layout:` placement pin + HF token.
+
 name: nemotron35-lightning
 model: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
 runtime: sglang
@@ -27,28 +34,36 @@ executor: docker
 executor_config:
   ipc: host
   shm_size: 32g
-  # Required on Blackwell / GB10 for this SGLang build.
-  # See https://github.com/radixark/miles/issues/364
   privileged: true
   cap_add:
     - SYS_PTRACE
   security_opt:
     - seccomp=unconfined
-env:
-  PYTORCH_CUDA_ALLOC_CONF: ""
-  # Gated model -- the token is injected at deploy time from your .env.
-  HF_TOKEN: "{env:HF_TOKEN}"
 
 metadata:
-  description: "mylab -- nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 served by SGLang"
+  description: "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 (DFlash) served by SGLang"
   model_dtype: nvfp4
+  # spark-lab apply probe bound: first boot = dev-image pull (~40 GB) +
+  # 1.2 GB DFlash draft download + kernel JIT.
+  readiness_seconds: 3600
+  # spark-lab gateway metadata (sparkrun ignores metadata extras).
+  litellm:
+    model_name: nemotron35-lightning
+    model_info:
+      supports_reasoning: true
+      max_input_tokens: 1048576
+      max_output_tokens: 131072
 
+# Values available as {name} placeholders inside `command` below.
+# (Key order here is part of the rendered recipe -- keep it stable.)
 defaults:
   host: 0.0.0.0
   port: 30000
   mamba_ssm_dtype: float16
   mem_fraction_static: 0.78
   cuda_graph_max_bs_decode: 4
+  # The page leaves MRR unset and warns spec decoding resets it to 48;
+  # 4 matches the CUDA-graph decode ceiling (--cuda-graph-max-bs-decode).
   max_running_requests: 4
   speculative_algorithm: DFLASH
   speculative_draft_model: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4-DFlash
@@ -57,18 +72,18 @@ defaults:
   tool_call_parser: qwen3_coder
 
 command: |
-  sglang serve \
-    --enable-metrics \
-    --enable-mfu-metrics \
-    --model-path {model} \
-    --mamba-ssm-dtype {mamba_ssm_dtype} \
-    --mem-fraction-static {mem_fraction_static} \
-    --cuda-graph-max-bs-decode {cuda_graph_max_bs_decode} \
-    --max-running-requests {max_running_requests} \
-    --speculative-algorithm {speculative_algorithm} \
-    --speculative-draft-model-path {speculative_draft_model} \
-    --speculative-dflash-block-size {speculative_dflash_block_size} \
-    --reasoning-parser {reasoning_parser} \
-    --tool-call-parser {tool_call_parser} \
-    --host {host} \
-    --port {port}
+    sglang serve \
+        --enable-metrics \
+        --enable-mfu-metrics \
+        --model-path {model} \
+        --mamba-ssm-dtype {mamba_ssm_dtype} \
+        --mem-fraction-static {mem_fraction_static} \
+        --cuda-graph-max-bs-decode {cuda_graph_max_bs_decode} \
+        --max-running-requests {max_running_requests} \
+        --speculative-algorithm {speculative_algorithm} \
+        --speculative-draft-model-path {speculative_draft_model} \
+        --speculative-dflash-block-size {speculative_dflash_block_size} \
+        --reasoning-parser {reasoning_parser} \
+        --tool-call-parser {tool_call_parser} \
+        --host {host} \
+        --port {port}

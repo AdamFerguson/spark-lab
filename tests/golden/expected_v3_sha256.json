@@ -10,7 +10,7 @@
     "litellm/model_config.yaml": "30b254e9c478af48f76c7eaf23342cb55b23ff518493327c7bbe0def1cbfd0e2",
     "litellm/prometheus.yml": "a9dfe89bd88e7614c403e18d99ab9728c1a27c7afa1702f15d11a4dbefaf07e3",
     "litellm/scripts/nvidia-gpu-textfile.sh": "44fe78928bd981f0868afe33993772f3802eafa3d52167412b2dea49958a9cba",
-    "sparkrun/recipes/qwen.yaml": "8ea232a5f2a20e9b7c1cb7f1d600b26557b0ac0831c42f6863a6043c1b341ac2"
+    "sparkrun/recipes/qwen.yaml": "c535221953627a164daf8eb1c3ff4355788bcd2310e217582237967f29ab710f"
   },
   "beta": {
     "litellm/.env": "753284545b68c66f186c0f81665a7106f8b9d9dec0a7884cf88d3bd3167f2e2c",
@@ -23,6 +23,6 @@
     "litellm/model_config.yaml": "ac9868231483b9e2784dd62a562a194106a0f0199735db1184e906f37876ad89",
     "litellm/prometheus.yml": "5921da42474f166db9fd52a92a76a9c1565f9524d2837f0269abda3f08b08bf6",
     "litellm/scripts/nvidia-gpu-textfile.sh": "44fe78928bd981f0868afe33993772f3802eafa3d52167412b2dea49958a9cba",
-    "sparkrun/recipes/qwen.yaml": "10e552c9171e9dd640ab2887a96656e0c933d8d54ca0f34d990db65137825b13"
+    "sparkrun/recipes/qwen.yaml": "247a4cc8e7b4602aaa988c31c8e53ec9a9692434ed7c97134f6c9d530adc02c2"
   }
 }

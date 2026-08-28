@@ -22,9 +22,29 @@ def _status_one(t) -> int:
     return 0
 
 
+def _placement_table(cfg) -> int:
+    """Print the derived host -> model table (once, from the cluster config).
+
+    The source of truth remains ``models.<m>.hosts``; this is a read-only
+    inverse view (ADR-0009) so 'which model ends up where' is always visible.
+    """
+    rows = cfg.placement_table()
+    if not rows:
+        return 0
+    print("== placement (from config) ==")
+    print(f"{'host':<8} {'model':<32} {'gateway name':<24} control plane")
+    for host, alias, name, cp in rows:
+        m = alias or "(none)"
+        n = name or "-"
+        print(f"{host:<8} {m:<32} {n:<24} {'on' if cp else 'off'}")
+    print()
+    return 0
+
+
 def run(args) -> int:
     cfg = config.load(args.config)
     names = cluster.parse_hosts_arg(getattr(args, "hosts", None))
+    _placement_table(cfg)
     ts = cluster.targets(cfg, names, runtime=getattr(args, "runtime", None))
     if not ts:
         return 1

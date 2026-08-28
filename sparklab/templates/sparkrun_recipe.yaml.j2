@@ -7,11 +7,34 @@ model_revision: {{ model_revision | tojson }}
 {% endif %}
 runtime: {{ runtime }}
 min_nodes: {{ min_nodes }}
+{% if layout_placements %}
+# Placement pin: rendered by spark-lab from the config's hosts: list (the
+# repo recipe this was rendered from is placement-agnostic). sparkrun honors
+# an explicit layout verbatim, on every scheduler.
+layout:
+  placements:
+{% for host, ranks in layout_placements %}
+    - host: {{ host }}
+      ranks: [{{ ranks | join(', ') }}]
+{% endfor %}
+{% endif %}
 container: {{ model_image }}
 executor: docker
 {% if executor_overrides %}
 executor_config:
+{% if executor_is_base %}
+  ipc: host
+  shm_size: 32g
+  # Required on Blackwell / GB10 for this SGLang build.
+  # See https://github.com/radixark/miles/issues/364
+  privileged: true
+  cap_add:
+    - SYS_PTRACE
+  security_opt:
+    - seccomp=unconfined
+{% else %}
 {{ executor_config_final | yaml_block }}
+{% endif %}
 {% else %}
 executor_config:
   ipc: host
@@ -24,25 +47,14 @@ executor_config:
   security_opt:
     - seccomp=unconfined
 {% endif %}
-{% if extra_env %}
 env:
-{% if hf_token %}
-  # Gated model -- the token is injected at deploy time from your .env.
-{% endif %}
-{{ env_final | yaml_block }}
-{% else %}
-env:
-  PYTORCH_CUDA_ALLOC_CONF: ""
-  PYTORCH_ALLOC_CONF: ""
-{% if hf_token %}
-  # Gated model -- the token is injected at deploy time from your .env.
-  HF_TOKEN: "{{ hf_token }}"
-{% endif %}
-{% endif %}
+{% for line in env_lines %}
+{{ line }}
+{% endfor %}
 
 metadata:
   description: "{{ install.name }} -- {{ hf_model }} served by {{ runtime }}"
-  model_dtype: nvfp4
+  model_dtype: {{ model_metadata.get("model_dtype", "nvfp4") }}
 
 # Values available as {name} placeholders inside `command` below.
 defaults:

@@ -14,6 +14,7 @@ import yaml as yaml_mod
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from . import config as config_mod
+from . import recipes as recipe_mod
 
 # Base executor_config the recipe template emits when a model declares no
 # `executor_config:` overrides (kept static in the template for byte-identical
@@ -78,6 +79,43 @@ def target_mapping(cfg: config_mod.Config) -> List[Tuple[str, str]]:
     return entries
 
 
+def _env_line(key: str, value: str) -> str:
+    """One rendered `env:` line (2-space indented).
+
+    Dumped in *mapping-value* context (via a one-key dict) so PyYAML's
+    document-end marker (appended to bare top-level scalars) can never leak
+    into the line. Empty values render as "" -- the historical hardcoded
+    template style, which the live on-disk recipes carry."""
+    if "\n" in str(value):
+        raise ValueError(
+            f"env value for '{key}' must be a single line (got {value!r})")
+    if value == "":
+        return f'  {key}: ""'
+    dumped = yaml_mod.safe_dump({key: str(value)}, default_flow_style=False,
+                                allow_unicode=True, sort_keys=False).rstrip("\n")
+    return "  " + dumped
+
+
+def _env_lines(model_env: Dict[str, Any], hf_token: str) -> List[str]:
+    """The rendered `env:` block, line by line (order: base keys, model keys,
+    injected token last). The HF_TOKEN line keeps its historical explicit
+    double quotes + gated-model comment."""
+    lines: List[str] = [_env_line("PYTORCH_CUDA_ALLOC_CONF", ""),
+                        _env_line("PYTORCH_ALLOC_CONF", "")]
+    by_key = {l.split(":")[0].strip(): i for i, l in enumerate(lines)}
+    for k, v in (model_env or {}).items():
+        k = str(k)
+        if k in by_key:
+            lines[by_key[k]] = _env_line(k, str(v))
+        else:
+            by_key[k] = len(lines)
+            lines.append(_env_line(k, str(v)))
+    if hf_token:
+        lines.append("  # Gated model -- the token is injected at deploy time from your .env.")
+        lines.append(f'  HF_TOKEN: "{hf_token}"')
+    return lines
+
+
 def build_context(cfg: config_mod.Config) -> dict:
     """Assemble the flat context the templates read from."""
     model, litellm = cfg.model, cfg.litellm
@@ -88,13 +126,10 @@ def build_context(cfg: config_mod.Config) -> dict:
     executor_final: Dict[str, object] = dict(EXECUTOR_CONFIG_BASE)
     executor_final.update(executor_overrides)
     hf_token = cfg.secret(model.get("hf_token_env"))
-    env_final: Dict[str, str] = {
-        "PYTORCH_CUDA_ALLOC_CONF": "",
-        "PYTORCH_ALLOC_CONF": "",
-    }
-    if hf_token:
-        env_final["HF_TOKEN"] = str(hf_token)
-    env_final.update({str(k): str(v) for k, v in (model.get("env") or {}).items()})
+    # Placement pin is a v3 (cluster) feature: v1/v2 renders stay byte-frozen
+    # (their single-node placement needs no pin, and legacy goldens must not
+    # move).
+    layout_placements = recipe_mod.layout_for_view(cfg) if cfg.is_v3 else []
     return {
         "cfg": cfg.data,
         "install": cfg.install,
@@ -119,7 +154,7 @@ def build_context(cfg: config_mod.Config) -> dict:
         "model_host": model.get("host", "0.0.0.0"),
         "min_nodes": model.get("min_nodes", 1),
         "runtime": model.get("runtime", "sglang"),
-        "serve_command": model.get("serve_command", ""),
+        "serve_command": str(model.get("serve_command") or "").rstrip(),
         "params": cfg.effective_params(),
         "extra_flags": model.get("extra_flags", []),
         "flag_map": model.get("flag_map", {}),
@@ -131,10 +166,16 @@ def build_context(cfg: config_mod.Config) -> dict:
         # *_final dicts merge base + overrides so the rendered recipe never
         # carries duplicate YAML keys.
         "executor_overrides": executor_overrides,
+        "executor_is_base": bool(executor_overrides)
+        and executor_overrides == EXECUTOR_CONFIG_BASE,
         "executor_config_final": executor_final,
         "extra_env": model.get("env") or {},
-        "env_final": env_final,
+        "env_lines": _env_lines(model.get("env") or {}, hf_token),
+        "model_metadata": model.get("metadata") or {},
         "model_revision": str(model.get("model_revision") or ""),
+        # Placement pin rendered into the recipe (repo recipes stay
+        # placement-agnostic; direct sparkrun users get scheduler placement).
+        "layout_placements": layout_placements,
         # Defaults keep an omitted key-name from silently rendering an EMPTY
         # secret (an unauthenticated / broken gateway instead of a clear error).
         "master_key": cfg.secret(litellm.get("master_key_env", "LITELLM_MASTER_KEY")),

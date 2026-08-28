@@ -29,8 +29,10 @@
 #     {"enable_thinking": false} (reasoning_effort does nothing on this build).
 #   - vision is ON (tower always active with this checkpoint); tool calls use
 #     the qwen3_coder parser.
+
 name: qwen38-flash-next
 model: RadixArk/Qwen3.8-Flash-Next-NVFP4
+# Pinned checkpoint revision (the recipe's `--revision` flag matches this).
 model_revision: 7b719225242aacd3dbd3f9407468c2ee9a9d2594
 runtime: sglang
 min_nodes: 1
@@ -39,79 +41,80 @@ executor: docker
 executor_config:
   ipc: host
   shm_size: 16g
-  # Required on Blackwell / GB10 for this SGLang build.
-  # See https://github.com/radixark/miles/issues/364
   privileged: true
   cap_add:
     - SYS_PTRACE
   security_opt:
     - seccomp=unconfined
-  # Non-root: the HF cache + PLE backing file stay host-owned (sparkrun
-  # resolves $SHELL_USER to the launching uid:gid and sets HOME=/tmp).
-  user: "$SHELL_USER"
+  # Non-root: HF cache + PLE backing file stay host-owned
+  user: $SHELL_USER
   # Keep the container inside the UMA budget the recipe was tuned with
-  # (upstream pins 116g; the host has no swap, so --memory-swap is a no-op).
   memory_limit: 116g
   volumes:
-    # PLE n-gram table backing dir (SGLANG_QWEN4_PLE_MMAP_DIR=/ple)
     - /home/adam/AI/flash-next/ple:/ple
-    # SGlang/flashinfer cache under $HOME (/tmp) so reboots reuse it
     - /home/adam/AI/flash-next/sglang-cache:/tmp/.cache/sglang
-    # Patched image sources, mounted read-only over the image's copies
     - /home/adam/AI/flash-next/build/qwen4_exp.py:/sgl-workspace/sglang/python/sglang/srt/models/qwen4_exp.py:ro
     - /home/adam/AI/flash-next/build/qwen_sparse_attn_backend.py:/sgl-workspace/sglang/python/sglang/srt/layers/attention/qwen_sparse_attn_backend.py:ro
+
 env:
-  PYTORCH_CUDA_ALLOC_CONF: ""
-  PYTORCH_ALLOC_CONF: ""
-  # Gated model -- the token is injected at deploy time from your .env.
-  HF_TOKEN: "{env:HF_TOKEN}"
-  # PLE table backing store (the mmap patch reads this dir for the .bin)
   SGLANG_QWEN4_PLE_MMAP_DIR: /ple
   PYTHONUNBUFFERED: "1"
 
 metadata:
-  description: "mylab -- RadixArk/Qwen3.8-Flash-Next-NVFP4 served by SGLang (PLE mmap, QSA sm_121, MTP 3/1/4)"
+  description: "RadixArk/Qwen3.8-Flash-Next-NVFP4 (MTP) served by SGLang"
   model_dtype: nvfp4
-  hardware: DGX Spark / GB10
-  source: https://github.com/shantanugoel/qwen38-flash-next-sglang-dgx-spark (MIT; patches adapted from hashd1ve/qwen38-flash-next-one-dgx-spark, MIT)
+  # spark-lab apply probe bound: first boot fills the 48 GB PLE table
+  # (~45-60 min quiet); later boots ~10 min.
+  readiness_seconds: 5400
+  # spark-lab gateway metadata (sparkrun ignores metadata extras).
+  litellm:
+    model_name: qwen38-flash-next
+    model_info:
+      supports_vision: true
+      supports_reasoning: true
+      # reasoning_effort is a no-op on this build (measured) -- don't claim it
+      supported_reasoning_efforts: []
+      max_input_tokens: 262144
+      max_output_tokens: 131072
 
+# Values available as {name} placeholders inside `command` below.
 defaults:
   host: 0.0.0.0
   port: 30000
 
 command: |
-  sglang serve \
-    --model-path {model} \
-    --revision 7b719225242aacd3dbd3f9407468c2ee9a9d2594 \
-    --trust-remote-code \
-    --host {host} \
-    --port {port} \
-    --quantization modelopt_fp4 \
-    --fp4-gemm-backend flashinfer_cutlass \
-    --page-size 64 \
-    --mamba-radix-cache-strategy extra_buffer \
-    --mamba-track-interval 64 \
-    --max-mamba-cache-size 20 \
-    --mamba-ssm-dtype float32 \
-    --chunked-prefill-size 4096 \
-    --max-running-requests 4 \
-    --max-total-tokens 524288 \
-    --context-length 262144 \
-    --mem-fraction-static 0.95 \
-    --allow-auto-truncate \
-    --ple-offload-embedding \
-    --reasoning-parser qwen3 \
-    --tool-call-parser qwen3_coder \
-    --preferred-sampling-params '{"temperature":1.0,"top_p":0.95,"top_k":20,"min_p":0.0,"presence_penalty":0.0,"repetition_penalty":1.0}' \
-    --prefill-attention-backend triton \
-    --decode-attention-backend trtllm_mha \
-    --disable-prefill-cuda-graph \
-    --disable-flashinfer-autotune \
-    --enable-metrics \
-    --enable-cache-report \
-    --enable-gdn-replayssm-spec \
-    --speculative-algorithm NEXTN \
-    --speculative-num-steps 3 \
-    --speculative-eagle-topk 1 \
-    --speculative-num-draft-tokens 4 \
-    --speculative-draft-model-quantization unquant
+    sglang serve \
+        --model-path {model} \
+        --revision 7b719225242aacd3dbd3f9407468c2ee9a9d2594 \
+        --trust-remote-code \
+        --host {host} \
+        --port {port} \
+        --quantization modelopt_fp4 \
+        --fp4-gemm-backend flashinfer_cutlass \
+        --page-size 64 \
+        --mamba-radix-cache-strategy extra_buffer \
+        --mamba-track-interval 64 \
+        --max-mamba-cache-size 20 \
+        --mamba-ssm-dtype float32 \
+        --chunked-prefill-size 4096 \
+        --max-running-requests 4 \
+        --max-total-tokens 524288 \
+        --context-length 262144 \
+        --mem-fraction-static 0.95 \
+        --allow-auto-truncate \
+        --ple-offload-embedding \
+        --reasoning-parser qwen3 \
+        --tool-call-parser qwen3_coder \
+        --preferred-sampling-params '{"temperature":1.0,"top_p":0.95,"top_k":20,"min_p":0.0,"presence_penalty":0.0,"repetition_penalty":1.0}' \
+        --prefill-attention-backend triton \
+        --decode-attention-backend trtllm_mha \
+        --disable-prefill-cuda-graph \
+        --disable-flashinfer-autotune \
+        --enable-metrics \
+        --enable-cache-report \
+        --enable-gdn-replayssm-spec \
+        --speculative-algorithm NEXTN \
+        --speculative-num-steps 3 \
+        --speculative-eagle-topk 1 \
+        --speculative-num-draft-tokens 4 \
+        --speculative-draft-model-quantization unquant

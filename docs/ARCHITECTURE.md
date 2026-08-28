@@ -125,6 +125,20 @@ byte-identically. **v2** adds multi-model, an explicit image map, and profiles:
   gateway). Invariants: a control-plane-off host must still run monitoring;
   active models need ≥1 control-plane host to serve them; distinct serving
   names per gateway. See ADR 0008's addenda.
+- **v3 — recipes as source of truth (ADR 0009).** A model block may reference
+  a recipe instead of declaring the launch inline: `models.<m>.recipe: <name>`
+  resolves `<config dir>/recipes/<name>.yaml` (a **plain sparkrun recipe** —
+  only sparkrun-known keys, directly `sparkrun run`-able, no secrets or
+  layout) and folds its launch spec into the block (inline keys win; the
+  inline form stays supported as the documented legacy). Two spark-lab
+  extensions live in the recipe's documented free-form `metadata:` section:
+  `metadata.litellm:` (gateway name + `model_info`) and
+  `metadata.readiness_seconds:` (the probe bound). Placement is structural:
+  the RENDERED recipe gains a `layout:` pin from `hosts:` (each scheduler
+  honors an explicit layout verbatim; `--ensure` matching is intent-based and
+  layout-independent, so the pin cannot defeat it) and the `HF_TOKEN` env
+  value (from `models.<m>.hf_token_env` + `.env`); repo recipes stay clean.
+  `spark-lab status` prints the derived host → model placement table.
 
 `spark-lab migrate` rewrites a v1/v2 file to v3 on disk (idempotent,
 value-preserving, chained through `upgrade_to_v2` + `upgrade_to_v3`); the
