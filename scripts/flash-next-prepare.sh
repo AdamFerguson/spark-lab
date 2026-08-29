@@ -35,7 +35,7 @@ PATCHES="${REPO_ROOT}/recipes/flash-next/patches"
 IMAGE="${IMAGE:-lmsysorg/sglang:qwen38flashnext}"
 MODEL="${MODEL:-RadixArk/Qwen3.8-Flash-Next-NVFP4}"
 REVISION="${REVISION:-7b719225242aacd3dbd3f9407468c2ee9a9d2594}"
-BASE_DIR="${BASE_DIR:-/home/adam/AI/flash-next}"
+BASE_DIR="${BASE_DIR:-$HOME/AI/flash-next}"
 HF_CACHE="${HF_CACHE:-${HF_HOME:-$HOME/.cache/huggingface}}"
 
 echo "== flash-next prepare: ${MODEL} @ ${REVISION}"

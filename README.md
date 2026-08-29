@@ -56,19 +56,19 @@ install:
   install_dir: ~/AI
 hosts:
   - name: luna
-    ssh: luna.tail9d5411.ts.net
+    ssh: luna.tailnet.example
     remote: true
     monitoring: {instance_label: luna}
   - name: sol
-    ssh: sol.tail9d5411.ts.net
+    ssh: sol.tailnet.example
     remote: true
-    monitoring: {instance_label: adam-spark}
+    monitoring: {instance_label: spark}
 models:
   qwen38-27b:
     active: true
     hosts: [luna, sol]          # where it is served -- this IS the scale
     host_overrides:
-      sol: {litellm: {model_name: adam-spark-qwen3-8-27b}}   # per-host tuning
+      sol: {litellm: {model_name: my-spark-qwen3-8-27b}}   # per-host tuning
 ```
 
 - **Remote vs local is automatic.** `remote: true` means "reach it over SSH

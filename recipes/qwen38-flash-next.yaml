@@ -51,10 +51,12 @@ executor_config:
   # Keep the container inside the UMA budget the recipe was tuned with
   memory_limit: 116g
   volumes:
-    - /home/adam/AI/flash-next/ple:/ple
-    - /home/adam/AI/flash-next/sglang-cache:/tmp/.cache/sglang
-    - /home/adam/AI/flash-next/build/qwen4_exp.py:/sgl-workspace/sglang/python/sglang/srt/models/qwen4_exp.py:ro
-    - /home/adam/AI/flash-next/build/qwen_sparse_attn_backend.py:/sgl-workspace/sglang/python/sglang/srt/layers/attention/qwen_sparse_attn_backend.py:ro
+    # Host-side paths from scripts/flash-next-prepare.sh — replace /home/<you>
+    # with your own home (these bind mounts are created on the serving node).
+    - /home/<you>/AI/flash-next/ple:/ple
+    - /home/<you>/AI/flash-next/sglang-cache:/tmp/.cache/sglang
+    - /home/<you>/AI/flash-next/build/qwen4_exp.py:/sgl-workspace/sglang/python/sglang/srt/models/qwen4_exp.py:ro
+    - /home/<you>/AI/flash-next/build/qwen_sparse_attn_backend.py:/sgl-workspace/sglang/python/sglang/srt/layers/attention/qwen_sparse_attn_backend.py:ro
 
 env:
   SGLANG_QWEN4_PLE_MMAP_DIR: /ple

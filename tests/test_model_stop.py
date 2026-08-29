@@ -80,7 +80,7 @@ class TestModelStopRemote(unittest.TestCase):
         state = json.dumps({"files": {"sparkrun/recipes/qwen.yaml": "h2"},
                             "model": {"name": "qwen", "hash": "h2"}}, sort_keys=True) + "\n"
         self.stub = StubConnection(
-            binaries={"sparkrun": "/home/adam/.local/bin/sparkrun"},
+            binaries={"sparkrun": "/home/user/.local/bin/sparkrun"},
             files={STATE_PATH: state.encode()})
         self.rt, _ = make_runtime(stub=self.stub, install_dir="/opt/sparklab")
 

@@ -27,16 +27,17 @@ install:
 
 # -----------------------------------------------------------------------------
 # Managed nodes. `name` = the identifier used with --hosts; `ssh` = connection
-# target (user@host works); `remote: true` = reach over SSH (Fabric) when we
-# are NOT on that node — running spark-lab ON the node converges it locally
-# automatically. `remote: false` = this machine (no ssh target needed).
+# target (Tailscale shortname, user@magic-dns-name, full magic-DNS name, or IP);
+# `remote: true` = reach over SSH (Fabric) when we are NOT on that node —
+# running spark-lab ON the node converges it locally automatically.
+# `remote: false` = this machine (no ssh target needed).
 #
 # Any other key in an entry is a PER-HOST OVERRIDE, deep-merged over the
 # cluster-wide document below (monitoring:, images:, install:, litellm:, ...).
 # -----------------------------------------------------------------------------
 hosts:
   - name: luna
-    ssh: luna.tail9d5411.ts.net
+    ssh: luna                  # Tailscale shortname (user@host also works)
     remote: true
     # Observability-only host: exporter sidecars only -- no LiteLLM gateway,
     # no DB, no Redis (the full host's prometheus scrapes it over the tailnet).
@@ -50,7 +51,7 @@ hosts:
       # stack; 'none' = no monitoring services at all.
       role: exporters
   - name: sol
-    ssh: sol.tail9d5411.ts.net
+    ssh: sol                   # e.g. user@sol.<your-tailnet>.ts.net instead
     remote: true
     monitoring:
       instance_label: sol
@@ -100,8 +101,22 @@ models:
     #   sol:
     #     params: { mamba_ssm_dtype: bfloat16 }
     #     litellm:
-    #       model_name: adam-spark-qwen3-8-27b   # gateway name on this host
+    #       model_name: my-gateway-name                 # gateway name on this host
     #       model_info: { max_input_tokens: 262144 }
+
+  # ------------------------------------------------------------------------
+  # A model that SPANS MULTIPLE nodes (a recipe with min_nodes > 1, e.g.
+  # tensor-parallel across two Sparks). The model's `hosts:` list is its run
+  # pool: the FIRST entry is the head (rank 0) where spark-lab launches the
+  # workload and probes readiness; the remaining hosts join as workers — they
+  # converge their control plane / monitoring but never launch the model. No
+  # other active model may use those hosts while this one is active.
+  #
+  # glm53-flash-exl3:
+  #   active: true
+  #   hosts: [luna, sol]            # run pool; luna = head (rank 0)
+  #   recipe: glm53-flash-exl3      # recipes/glm53-flash-exl3.yaml (min_nodes: 2)
+  #   hf_token_env: HF_TOKEN
 
 # -----------------------------------------------------------------------------
 # Shared stack images (per-host overridable under hosts:). env

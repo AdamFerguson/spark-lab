@@ -47,14 +47,14 @@ install:
 
 hosts:
   - name: luna
-    ssh: luna.tail9d5411.ts.net
+    ssh: luna.tailnet.example
     remote: true            # manage over SSH unless we are on it (see below)
     monitoring: {instance_label: luna}
     images: {litellm: docker.litellm.ai/berriai/litellm:main-stable}
   - name: sol
-    ssh: sol.tail9d5411.ts.net
+    ssh: sol.tailnet.example
     remote: true
-    monitoring: {instance_label: adam-spark}
+    monitoring: {instance_label: spark}
     images: {litellm: ghcr.io/berriai/litellm:v1.99.0-dev.2}
 
 models:
@@ -64,7 +64,7 @@ models:
     ...model fields...
     host_overrides:
       luna: {litellm: {model_name: Qwen3.8-27B-NVFP4, model_info: {...}}}
-      sol:  {litellm: {model_name: adam-spark-qwen3-8-27b, model_info: {...}}}
+      sol:  {litellm: {model_name: my-spark-qwen3-8-27b, model_info: {...}}}
 
 active_models: [qwen38-27b]
 litellm: {...}
@@ -112,7 +112,7 @@ the v1/v2 path byte-identical (goldens unchanged).
 
 For each selected host, the tool matches this machine's identities (hostname,
 `/etc/hostname`, FQDN aliases, primary IP) against the entry's `name` and
-`ssh` host (full + first label, so `luna.tail9d5411.ts.net` matches a box
+`ssh` host (full + first label, so `luna.tailnet.example` matches a box
 named `luna`). Match → **local** runtime, even when `remote: true`.
 `remote: false` is unconditionally local. Otherwise → Fabric `RemoteRuntime`
 (one connection per remote host per run). This is what makes the identical
@@ -122,7 +122,7 @@ config work on the laptop and on every Spark.
 
 `--hosts a,b` (any host-targeted command) selects a subset; unset = all
 hosts. Commands run once per selected host with sectioned output
-(`==> [luna] adam@luna (remote)`), continue past a per-host failure, and
+(`==> [luna] you@luna (remote)`), continue past a per-host failure, and
 return non-zero if any host failed. **State stays per node** (the node-side
 `<repo_dir>/.sparklab-state/state.json`, exactly as before) — there is no
 cluster-level state.

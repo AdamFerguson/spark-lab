@@ -1,124 +1,184 @@
 # spark-lab — Design Contract (SPEC)
 
 > This file is the **single source of truth** for the kit and the blog post.
-> Both implementers build against it. If you must deviate, record the deviation
-> in this file's "Deviations" section. `config.example.yaml` is the authoritative
-> schema for the user-facing config file.
+> If you must deviate, record the deviation in this file's "Deviations"
+> section. `config.example.yaml` is the authoritative schema for the
+> user-facing config file — and it is the **only** example config in the repo
+> (kept current with the v3 schema; no legacy-format examples are maintained).
 
 ## 1. Goals
-- Anyone with a DGX Spark (or a cluster of Sparks managed by `sparkrun`) can
-  self-host an OpenAI-compatible LLM endpoint, monitor it, and optionally expose
-  it — from **one config file + one command**.
+- Anyone with a DGX Spark — or a cluster of Sparks managed by `sparkrun` — can
+  self-host OpenAI-compatible LLM endpoints, monitor them, and optionally
+  expose them, from **one config file for the whole cluster + one command**.
 - **Idempotent + convergent:** re-running `spark-lab apply` after any change to
-  `config.yaml`, `config` templates, or the litellm stack brings the node(s) to
-  match config. No manual drift-chasing.
-- **Portable & clean:** the public repo contains zero personal names, hostnames,
-  IPs, or secrets. Every identifying value is either a config knob or an env var.
+  `config.yaml`, the recipes, or templates brings every selected node to match
+  config. No manual drift-chasing.
+- **Portable & clean:** the public repo contains zero identifying hostnames,
+  IPs, usernames, or secrets. Every identifying value is either a config knob
+  or an env var — and the repo **mechanically enforces** this (see §8).
 
 ## 2. Fixed layout (exact paths)
 ```
 spark-lab/
   README.md
   LICENSE                        # MIT
-  .gitignore                     # ignore: .env, config.yaml, deploy/, .venv/, .sparklab-state/
-  config.example.yaml            # (already present — DO NOT restructure the schema)
+  .gitignore                     # ignore: .env(.*)*, config.yaml(.*)*, config.staging.yaml,
+                                 # *.bak*, deploy/, .sparklab-state/, .venv/, labs/, ...
+  config.example.yaml            # the ONLY example; current v3 schema, anonymized
   .env.example                   # secret knobs; .env is gitignored
   SPEC.md                        # this file
-  bin/spark-lab                  # bash entrypoint -> execs managed venv python
-  lib/
-    __init__.py
-    cli.py                       # arg parsing + command dispatch
-    config.py                    # load+validate config.yaml, resolve env refs
-    render.py                    # Jinja render templates/ -> deploy/
-    converge.py                  # diff deploy/ vs live, run the right commands
-    state.py                     # .sparklab-state/*.sha256 read/write
-  templates/
-    sparkrun_recipe.yaml.j2      # -> <install_dir>/sparkrun/recipes/<recipe_name>.yaml
-    docker-compose.yaml.j2       # -> <install_dir>/litellm/docker-compose.yml
-    litellm_config.yaml.j2       # -> <install_dir>/litellm/config.yaml
-    litellm_model_config.yaml.j2 # -> <install_dir>/litellm/model_config.yaml
-    litellm.env.j2               # -> <install_dir>/litellm/.env
-    prometheus.yml.j2            # -> <install_dir>/litellm/prometheus.yml
-    grafana/provisioning/datasources/prometheus.yml.j2
-    grafana/provisioning/dashboards/dashboards.yml.j2
-    grafana/dashboards/sglang-dashboard.json.j2
-    grafana/dashboards/spark-host-overview.json.j2
-    scripts/nvidia-gpu-textfile.sh.j2
-  docs/
-    SETUP.md  ARCHITECTURE.md  OPERATIONS.md  MODEL_RECIPES.md  NETWORKING.md
-  scripts/
-    capture.sh                   # capture read-only terminal output for the blog
-  .github/workflows/validate.yml # CI: render w/ config.example.yaml, compose config, lint
+  pyproject.toml  uv.lock        # uv-managed env (fabric, jinja2, pyyaml, ...)
+  bin/spark-lab                  # bash entrypoint -> managed venv python
+  recipes/                       # plain sparkrun recipes = launch source of truth
+  sparklab/
+    cli.py                       # argparse entry + dispatch
+    util.py
+    commands/                    # one module per CLI verb
+      init.py apply.py status.py teardown.py upgrade.py validate.py
+      check.py system.py images.py migrate.py adopt.py model.py
+      recipes.py logs.py
+    core/
+      config.py                  # load+validate v3, env-ref + recipe resolution
+      cluster.py                 # host views, control-plane/monitoring roles,
+                                 # prometheus targets, local-vs-remote detection
+      recipes.py                 # recipe loading, layout pins, per-host views
+      render.py                  # Jinja render (templates + view) -> deploy/
+      converge.py                # build_plan: file diffs + ordered actions
+      node.py                    # per-host execution seam (local vs remote)
+      remote.py                  # Fabric/paramiko runtime + remote state
+      runtime.py  schema.py
+      state.py                   # node-side .sparklab-state/state.json
+      discovery/                 # recipe discovery/convert (registry, cookbook, LLM)
+    templates/                   # Jinja: docker-compose.yaml.j2, litellm.env.j2,
+                                 # litellm config/model_config/prometheus/grafana/...
+  .sparkrun/registry.yaml        # in-repo model registry (discovery source)
+  docs/                          # SETUP, ARCHITECTURE, OPERATIONS, MODEL_RECIPES,
+                                 # NETWORKING, CLUSTERING, REMOTE_OPERATOR_MODE,
+                                 # REGISTRY, STAGING_E2E, adr/...
+  scripts/                       # capture.sh, secret-scan.sh, staging.sh,
+                                 # flash-next-prepare.sh
+  .githooks/pre-commit           # secret gate (git config core.hooksPath .githooks)
+  .gitleaks.toml                 # gitleaks config (path allowlist + value rule)
+  .github/workflows/validate.yml # CI: dry-run, render, compose, shellcheck,
+                                 # tests+coverage, yamllint, secret scan
 ```
 
-## 3. Config schema
-Authoritative in `config.example.yaml`. Sections: `install`, `model`, `litellm`,
-`monitoring`, `network`. Key rules:
-- **Secrets are env-var *names*, not values.** e.g. `model.hf_token_env: HF_TOKEN`
-  means "read `$HF_TOKEN` from `.env`". `init` writes `.env` from `.env.example`
-  and generates keys with `openssl rand -hex 32`.
-- `install.hosts` drives single-node vs cluster. One host → local; >1 → cluster.
-- `model.params` maps 1:1 to the inference engine's serve flags (SGLang by
-  default; override with `model.serve_command` for a different engine);
-  `extra_flags` appended verbatim.
-- `litellm.db.*`, `redis`, `monitoring.*`, `network.*` gate which services render
-  into the compose file.
+## 3. Config schema (v3, one file per cluster — ADR-0008)
+Authoritative in `config.example.yaml`. Top-level sections: `version`,
+`install`, `hosts`, `models`, `images`, `litellm`, `monitoring`, `network`.
+
+- **Secrets are env-var *names*, not values.** e.g. `hf_token_env: HF_TOKEN`
+  means "read `$HF_TOKEN` from `.env`" and inject it at render time. `init`
+  writes `.env` from `.env.example` and generates keys with
+  `openssl rand -hex 32`.
+- **`hosts:`** — the managed nodes. Each entry: `name` (the `--hosts`
+  identifier), `ssh` (connection target: Tailscale shortname,
+  `user@magic-dns`, or IP), `remote: true|false`. Any other key is a
+  **per-host override**, deep-merged over the cluster-wide document
+  (`install:`, `litellm:`, `monitoring:`, `images:`, ...). Two roles matter:
+  - `control_plane.enabled` (default `true`) — hosts with the control plane
+    host the LiteLLM gateway + DB/Redis + monitoring; models on other hosts
+    are still served *through* it (implicit central serving: the gateway's
+    `api_base` points at the running host).
+  - `monitoring.role` — `full` (default, whole observability stack),
+    `exporters` (host/GPU sidecars only; the full host's prometheus scrapes
+    it), or `none`.
+- **`models:`** — one entry per model: `active`, `hosts` (placement: absent =
+  all hosts, `[]` = scaled down everywhere; this list **is** the scale),
+  `recipe:` (which `recipes/<name>.yaml` the model is), `hf_token_env`, and
+  optional `host_overrides.<host>` (deep-merged over the model for that
+  host). At most ONE active model may serve a given host (enforced at load).
+  - A recipe with `min_nodes > 1` **spans** its `hosts:` list: the first
+    entry is the head (rank 0, where the workload is launched and probed),
+    the rest join as workers (they converge control plane/monitoring but
+    never launch the model).
+- **Recipes are the launch source of truth (ADR-0009).** `recipes/*.yaml` are
+  plain, directly-runnable sparkrun recipes (`sparkrun run recipes/x.yaml`
+  works standalone). spark-lab renders a node-side copy that adds a
+  `layout:` placement pin (from `hosts:`) + the HF token; gateway name and
+  `model_info` (costs, caps, reasoning flags) come from the recipe's
+  `metadata.litellm` section.
+- **`install:`** — `name`, `install_dir` (where recipes + the litellm stack
+  live on each node; `~/...` expands **on the node**), `repo_dir`
+  (node-side checkout holding state), `repo_url` (what `init --hosts` clones
+  onto a bare node).
+- **`litellm:` / `monitoring:` / `network:` / `images:`** — defaults for the
+  shared stack; env `SPARKLAB_IMAGE_<KEY>` overrides any image.
+- Legacy formats: `spark-lab migrate` rewrites a v1/v2 config to v3; the
+  v2 shape still loads, but v3 is the only format the docs/examples
+  maintain.
 
 ## 4. CLI contract (`bin/spark-lab`)
 Bash wrapper: ensures a managed env via **uv** (`uv sync --no-default-groups`
 from `pyproject.toml` + `uv.lock`; falls back to `python3 -m venv` +
-`pip install -e .` when uv is absent), then `exec .venv/bin/python -m sparklab.cli "$@"`.
-Commands (Typer-style or argparse — implementer's choice, but keep these verbs):
+`pip install -e .` when uv is absent), then `exec .venv/bin/python
+-m sparklab.cli "$@"`.
 
 | Command | Behavior |
 |---|---|
-| `init` | Create `config.yaml` (from example if absent) + `.env` (from example, generate keys). Interactive prompts only for missing secrets; respect `--yes` to use defaults. |
-| `apply [--dry-run] [--apply] [--hosts a,b | --cluster name]` | **Converge.** Render → deploy/; write to target dirs; diff vs state; act (see §5). Destructive actions (sparkrun restart, compose recreate) require `--apply` or an explicit `--yes`; `--dry-run` prints the plan only. |
-| `status` | `sparkrun status` + `docker compose -f <install_dir>/litellm/docker-compose.yml ps` + `tailscale status` + `cloudflared` presence; pretty table. |
-| `teardown [--yes] [--purge]` | `sparkrun stop --all` (scoped to our labels) + `docker compose down`; `--purge` also removes named volumes. |
-| `upgrade` | `sparkrun update`; `docker compose pull`; re-`apply`. |
+| `init [--hosts a,b] [--yes]` | Create `config.yaml` (from example if absent) + `.env` (from example, generate keys). With `--hosts`, also bootstrap those nodes (clone, venv). |
+| `apply [--dry-run] [--hosts a,b] [--restart-model] [--diff]` | **Converge** every selected host to config (see §5). `--dry-run` is read-only and works even with hosts unreachable (degraded state + warning). `--restart-model` lifts the gate on model restarts. `--diff` (with `--dry-run`) shows per-file diffs. |
+| `status [--hosts] [--json]` | Workloads + stack + network, per selected host; prints the host→model placement table. |
+| `model up <m> --hosts a,b` / `model down <m> --yes --hosts a,b` | Scale a model: add/remove hosts from its `hosts:` (rewrites config) + converge. Down keeps the recipe file on disk. |
+| `model stop <m>` | Stop the model workload now (config unchanged; next apply restarts). |
+| `validate` | Config valid + renderable on every selected host. |
+| `check [--images] [--system]` | Pre-execution checks (config; images present; node health). |
+| `doctor` | Deeper diagnostics. |
+| `teardown [--yes] [--purge]` | Stop the model + remove the stack. Named docker volumes are destroyed **only** by `--purge`. |
+| `upgrade` | Update sparkrun + pull images + re-apply. |
+| `migrate` | Rewrite a v1/v2 `config.yaml` to schema v3 (idempotent). |
+| `adopt` | Take over an existing running install (read-only; writes only state). |
+| `recipes list/search/convert` | Discover + convert model recipes (in-repo registry, SGLang cookbook, optional LLM path). |
+| `logs <service> [--hosts]` | Tail logs from a stack service. |
 
-Global flags: `--config PATH` (default `./config.yaml`), `-v` verbose, `--json`
-(machine-readable status). Every command that mutates must be safe under
-`--dry-run`.
+Global flags: `--config PATH` (default `./config.yaml`), `-v`, `--json`.
+Every mutating command is safe under `--dry-run`.
 
-## 5. Converge algorithm (`lib/converge.py`)
-1. `render` templates → `deploy/` (mirror the target tree, using `.j2` inputs +
-   `config.yaml` + resolved `.env`).
-2. Sync `deploy/` → target dirs (`<install_dir>/sparkrun/recipes/…`,
-   `<install_dir>/litellm/…`). `install_dir` may be `~`-prefixed → expanduser.
-3. **State + diff.** For each target file store sha256 in
-   `.sparklab-state/<relative>.sha256`. Classify changed/added/removed vs last apply.
+## 5. Converge algorithm (`core/converge.py::build_plan` + `commands/apply.py`)
+For each selected host (in config order):
+1. **View.** Resolve the host's effective config: cluster-wide document +
+   that host's per-host overrides + model placements (which models run here,
+   what the gateway serves, exporter scrape targets).
+2. **Render.** Templates + resolved secrets → `deploy/` for this host
+   (litellm compose/config/.env/model_config/prometheus/grafana/scripts +
+   the active models' node-side recipes with layout pins).
+3. **State + diff.** Node-side state file `<repo_dir>/.sparklab-state/
+   state.json`; classify every target file added/changed/removed.
 4. **Actions, only for what changed:**
-   - litellm stack files changed → `docker compose up -d` (compose recreates only
-     the changed services; volumes persist).
-   - recipe file changed → `sparkrun stop <recipe>` then `sparkrun run <recipe>
-     --ensure`. Unchanged → `sparkrun run <recipe> --ensure` (no-op if up).
-   - cloudflare enabled and its rendered config changed → `systemctl reload
-     cloudflared`.
+   - control-plane files changed → `docker compose up -d` + remove orphans
+     (volumes persist; the rendered `litellm/.env` is the only 0600 file).
    - tailscale enabled → `systemctl enable --now tailscaled` (idempotent).
-   - multi-node: `sparkrun setup ssh --hosts …`, `sparkrun cluster
-     create/update`, `sparkrun run <recipe> --cluster <name>`.
-5. Write new hashes to state. Print a per-node summary (what changed / no-op).
+   - model workload: single-node → launch on this host; spanning → **head
+     only** (`sparkrun run … --ensure --hosts <placement>` after `sparkrun
+     setup ssh --hosts <placement>`; workers skip). Launch is detached; a
+     bounded readiness probe follows (`metadata.readiness_seconds`, default
+     10 min).
+   - model restart is **gated**: a recipe change restarts only with
+     `--restart-model` (the gate is skippable when the running container's
+     `--ensure` intent is unchanged, e.g. a layout-pin addition).
+5. Record new state; print a per-host summary. A real `apply` to an
+   unreachable host fails clearly (executions raise); a `--dry-run` degrades
+   to an empty remote state with a one-time warning instead of crashing.
 
 ## 6. Target install layout on a node
 ```
 <install_dir>/
-  sparkrun/recipes/<model.recipe_name>.yaml
+  sparkrun/recipes/<model-recipe>.yaml
   litellm/
     docker-compose.yml  config.yaml  model_config.yaml  .env  prometheus.yml
     grafana/provisioning/datasources/prometheus.yml
     grafana/provisioning/dashboards/dashboards.yml
     grafana/dashboards/{sglang-dashboard.json,spark-host-overview.json}
     scripts/nvidia-gpu-textfile.sh
+<repo_dir>/.sparklab-state/state.json
 ```
-`apply` (re)creates `<install_dir>`; it never deletes user data not owned by the
-kit (teardown is the only destructive path, and it needs `--yes`).
+`apply` (re)creates `<install_dir>`; it never deletes user data not owned by
+the kit (teardown is the only destructive path, and it needs `--yes`).
 
 ## 7. Naming / ports reference
 | Thing | Default | Where |
 |---|---|---|
-| SGLang serve port | 30000 | `model.port` |
+| Model serve port | per recipe (commonly 30000) | recipe `port` |
 | LiteLLM gateway | 4000 | `litellm.port` |
 | Postgres | 5432 (internal) | compose `db` |
 | Redis | 6379 | `litellm.redis.port` |
@@ -127,64 +187,83 @@ kit (teardown is the only destructive path, and it needs `--yes`).
 | node_exporter / DCGM / cAdvisor | 9100 / 9835 / 8080 | compose |
 | Prometheus `external_labels` | `hardware: gb10`, `host: <instance_label>` | templated |
 
-## 8. Sanitization rules (repo must contain NONE of these)
-- Personal names, hostnames (`your-spark`/`spark.local` placeholders OK), IPs
-  other than `127.0.0.1`, usernames, domains.
-- Any key/token/password. Secrets = env-var names in config + `.env` (gitignored).
-  `.env.example` uses obvious placeholders (`sk-CHANGE_ME`, `CHANGE_ME`).
-- Grafana dashboard JSONs: no host-specific labels (e.g. `instance="<your-host>"`);
-  use the templated `{{ instance_label }}`.
+## 8. Sanitization rules (repo must contain NONE of these — enforced)
+- Personal names/usernames, real hostnames or Tailscale domains, IPs other
+  than `127.0.0.1`, domains. Examples use `luna`/`sol` node names with
+  `<tailnet>.ts.net`-style placeholders or shortnames.
+- Any key/token/password value. Secrets = env-var **names** in config +
+  `.env` (gitignored). `.env.example` uses obvious placeholders.
+- Grafana dashboard JSONs: no host-specific labels; use the templated
+  `{{ instance_label }}`.
+- **Enforcement (mechanical, not aspirational):**
+  1. `.gitignore` covers the sinks: `.env*`, `config.yaml*`,
+     `config.staging.yaml`, `*.bak*`, `deploy/`, `.sparklab-state/`, `labs/`.
+  2. The pre-commit **path gate** (`scripts/secret-scan.sh`) blocks staging
+     any secret-sink path (`.env*`, `config.yaml`, `*.bak*`, generated
+     trees) no matter what it contains.
+  3. The **gitleaks value rule** (`env-credential-assignment` in
+     `.gitleaks.toml`) flags literal credentials assigned to
+     credential-named variables anywhere in scanned content — the class of
+     miss (hyphenated `sk-*` keys, bare-hex passwords, renamed sinks) that
+     gitleaks' built-in shape rules miss.
+  4. CI runs the same `scripts/secret-scan.sh` as the last gate.
 
 ## 9. Template notes
-- SGLang recipe: generalize your `qwen-3-8-27b-dspark-nvfp4.yaml`. Keep
-  `executor: docker` + the Blackwell workarounds (`privileged: true`,
-  `cap_add: [SYS_PTRACE]`, `security_opt: [seccomp=unconfined]`, `ipc: host`,
-  `shm_size: 32g`) — they're required on GB10. Model/image from `model.*`.
+- Recipes: keep `executor: docker` + the Blackwell/GB10 workarounds
+  (`privileged: true`, `cap_add: [SYS_PTRACE]`,
+  `security_opt: [seccomp=unconfined]`, `ipc: host`, `shm_size: 32g`).
+  JSON serve-args in command templates must be single-quoted (the serve
+  command runs via `bash -c`).
 - litellm compose: services `litellm, db, redis (if enabled), prometheus (if
   monitoring.enabled), grafana, node_exporter, dcgm_exporter, cadvisor,
-  gpu_textfile`. Use the **GB10 node_exporter tweaks** (`--no-collector.hwmon`,
-  `--no-collector.cpufreq`, textfile dir) and the `nvidia-gpu-textfile.sh`
-  sidecar (from `cadaverine/dgx-spark-observability`). Grafana admin password
-  from env; default home dashboard = `sglang-dashboard.json`.
-- prometheus.yml: jobs `prometheus, sglang (host.docker.internal:30000, with
-  `sglang:` → `sglang_` metric_relabel), node, dcgm, cadvisor`. Scrape timeouts
-  generous on GB10.
-- litellm_model_config.yaml: `model_list[0]` = `custom_openai/<model>` with
-  `api_base: http://<instance>:<model.port>/v1`, `api_key: not-needed`,
-  `model_info` from `litellm.model_info`, `litellm_settings` (temperature/top_p/
-  top_k) + reasoning-effort support from config.
+  gpu_textfile` (sidecars follow the monitoring role). GB10 node_exporter
+  tweaks + the `nvidia-gpu-textfile.sh` sidecar. Grafana admin password from
+  env.
+- prometheus.yml: jobs `prometheus, sglang (host.docker.internal:<port>, with
+  metric_relabel)`, node (full role: localhost; exporter role: scraped via
+  the host's `ssh` address), dcgm, cadvisor. Generous scrape timeouts on GB10.
+- litellm model_config: one entry per served model, `api_base` rendered from
+  placement at apply time (gateway-static), `api_key: not-needed`,
+  `model_info`/`litellm_settings` from the recipe's `metadata.litellm` +
+  config defaults.
 
-## 10. Verification checklist (implementer A)
-- [ ] `bin/spark-lab apply --dry-run` (against `config.example.yaml`) renders all
-      templates without error and prints a plan.
-- [ ] Rendered `docker-compose.yml` passes `docker compose config -q`.
-- [ ] Rendered recipe + all YAML pass a YAML parse; `shellcheck` clean on `.sh`.
-- [ ] Grep audit: no personal names, hostnames, real IPs, real keys/tokens/
-      passwords, or personal email anywhere in the repo.
-- [ ] `LICENSE` = MIT; `.gitignore` correct; `README.md` has a 30-sec quickstart.
+## 10. Verification checklist (CI runs all of this)
+- [x] `apply --dry-run` against `config.example.yaml` renders every template
+      and prints a plan (works with the hosts unreachable: degraded state).
+- [x] Rendered `docker-compose.yml` passes `docker compose config -q`.
+- [x] Rendered recipes + all YAML parse; `shellcheck` clean on shell files.
+- [x] Grep-auditable: no usernames, real hostnames/domains, real IPs, real
+      keys — see §8 enforcement.
+- [x] Test suite (unit/integration/regression/parity) + coverage ≥ 85%.
+- [x] Secret scan (gitleaks, pinned version) clean.
 
-## 11. Blog post (implementer B)
-- File: your Astro blog's content collection, e.g. `src/content/blog/<slug>.md`
-  (one Markdown file per post; the filename becomes the URL slug).
-  Frontmatter (per the blog's content schema): `title, description, date (today),
-  tags: [llm, infrastructure, self-hosting, gpu], category: Infrastructure, draft: true`.
-- **Voice (from `DESIGN.md`):** overreacted.io + anthropic.com — warm, editorial,
-  prose-first, quiet chrome, minimal, human. NOT neon/tech-futurist, no hype.
+## 11. Blog post
+- File: the Astro blog's content collection
+  (`src/content/blog/dgx-spark-llm-lab.md`), voice per the blog's
+  `DESIGN.md` (warm, editorial, prose-first, quiet chrome).
 - **Narrative beats:** (1) the itch — running a real model on a quiet desktop
-  box; (2) the stack in plain terms (Spark → SGLang → LiteLLM gateway →
-  Prometheus/Grafana → Tailscale / optional Cloudflare); (3) the payoff: one
-  config file + `spark-lab apply`, and it *converges* when you change things;
-  (4) what you get (a Grafana you can actually read, private access, optional
-  public share); (5) "run it on your own Spark" with a link to the repo.
-- **Images:** (a) a clean inline-SVG **architecture diagram** in the post or
-  `public/`; (b) a few **read-only terminal snippets** captured via
-  `spark-lab/scripts/capture.sh` (or direct ssh `sparkrun status`,
-  `docker compose ps`, `nvidia-smi`) — sanitized; (c) clearly-marked
-  `<!-- SCREENSHOT: … -->` placeholder slots for the owner's own Grafana/UI shots.
-- Link to the `spark-lab` repo for the hands-on path.
+  box; (2) the stack in plain terms (Spark → vLLM/SGLang → LiteLLM gateway →
+  Prometheus/Grafana → Tailscale); (3) the payoff: one config file +
+  `spark-lab apply`, and it *converges* when you change things; (4) what you
+  get (a Grafana you can actually read, private access); (5) "run it on your
+  own Spark" with a link to the repo.
+- Terminal snippets are captured read-only via `scripts/capture.sh` and
+  sanitized before inclusion.
 
-## 12. Deviations
-- Schema has evolved past this spec: v1 `model:` → v2 `models:` (ADR 0004) →
-  v3 cluster `hosts:` + per-model `hosts:`/`host_overrides` (ADR 0008). The
-  committed `config.example.yaml` is now the v3 example; v1/v2 configs keep
-  loading unchanged via the compat loader.
+## 12. Deviations / history
+- Schema evolution: v1 `model:` → v2 `models:` (ADR-0004) → **v3 cluster
+  `hosts:` + per-model `hosts:`/`host_overrides`** (ADR-0008). v3 is the only
+  maintained example; `migrate` + the compat loader still accept v1/v2.
+- **Recipes as source of truth + structural layout pins** (ADR-0009): the
+  config references plain sparkrun recipes; spark-lab adds the placement pin
+  + secret at render time; gateway metadata lives in `metadata.litellm`.
+- **Spanning models** (`min_nodes > 1`): the model's own `hosts:` list is its
+  run pool; head-only launch; per-model pool (no global `install.hosts`
+  migration).
+- **Remote operator mode**: the same config converges locally or over SSH
+  (Fabric); node-side state at `<repo_dir>/.sparklab-state`; per-host
+  control-plane + monitoring roles decouple "where the gateway lives" from
+  "where the model runs".
+- `lib/` → `sparklab/` package (PEP 420 layout, uv-managed); the CLI grew
+  `validate/check/doctor/adopt/migrate/model/recipes/logs` beyond the
+  original five verbs.

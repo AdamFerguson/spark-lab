@@ -33,7 +33,7 @@ mkdir -p "$REPORT"; : > "$REPORT/summary.txt"
 
 # ---- SAFETY GUARD: refuse to run against the live install_dir -------------
 if [ -n "$LIVE_DIR" ]; then
-  STAGE_DIR=$(python3 -c "import yaml; print(yaml.safe_load(open('$CONFIG')).get('install_dir',''))" 2>/dev/null)
+  STAGE_DIR=$(python3 -c "import yaml; print(yaml.safe_load(open('$CONFIG')).get('install', {}).get('install_dir',''))" 2>/dev/null)
   if [ -n "$STAGE_DIR" ] && [ "$STAGE_DIR" = "$LIVE_DIR" ]; then
     echo "REFUSING: staging install_dir == LIVE_INSTALL_DIR ($LIVE_DIR)." >&2
     echo "Point the staging config at a distinct install_dir + host first." >&2

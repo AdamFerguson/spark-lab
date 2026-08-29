@@ -3,6 +3,7 @@
 .env.*
 config.yaml
 config.yaml.*
+config.staging.yaml
 
 # Local backup copies of anything (e.g. config.yaml.bak-v1-20260828) —
 # a *.bak* file is by definition a local sink, never repo content

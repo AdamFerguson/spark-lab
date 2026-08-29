@@ -167,7 +167,7 @@ keeps its state in its own spark-lab checkout
   HF_TOKEN="$(sed -n 's/^HF_TOKEN=//p' ~/spark-lab/.env | tr -d '"')" \
     bash scripts/flash-next-prepare.sh
   ```
-  It creates `/home/adam/AI/flash-next/{build,ple,sglang-cache}` — the build
+  It creates `~/AI/flash-next/{build,ple,sglang-cache}` — the build
   dir holds the patched `qwen4_exp.py` / `qwen_sparse_attn_backend.py` (and
   `in_image_paths.txt`, which the script cross-checks against the recipe's
   mount targets when the image tag ever changes layout). Then `apply` (or

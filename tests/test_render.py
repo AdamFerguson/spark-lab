@@ -154,8 +154,8 @@ class TestRecipeOverrides(unittest.TestCase):
             "    user: \"$SHELL_USER\"\n"
             "    memory_limit: 116g\n"
             "    volumes:\n"
-            "      - /home/adam/AI/flash-next/ple:/ple\n"
-            "      - /home/adam/AI/flash-next/build/qwen4_exp.py:/sgl-workspace/sglang/python/sglang/srt/models/qwen4_exp.py:ro\n")
+            "      - /home/user/AI/flash-next/ple:/ple\n"
+            "      - /home/user/AI/flash-next/build/qwen4_exp.py:/sgl-workspace/sglang/python/sglang/srt/models/qwen4_exp.py:ro\n")
         doc = yaml.safe_load(_recipe_text(rendered))
         ec = doc["executor_config"]
         # override wins; base keys kept; no duplicate keys (YAML parse = proof)

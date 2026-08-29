@@ -24,7 +24,7 @@ branch and `main` remains the operational system.
 
 ## When the staging Spark is available (the PENDING half)
 
-1. `cp config.staging.example.yaml config.staging.yaml`, set a distinct
+1. `cp config.example.yaml config.staging.yaml`, set a distinct
    `install_dir` + host, and fill the staging `.env`.
 2. Run the runbook, capturing results:
    ```bash

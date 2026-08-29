@@ -567,7 +567,7 @@ class TestTargets(unittest.TestCase):
         fake_local = FakeRuntime()
         fake_remote = object.__new__(FakeRuntime)
         fake_remote.is_remote = True
-        fake_remote.label = "adam@beta (stub)"
+        fake_remote.label = "you@beta (stub)"
         with mock.patch.object(cluster, "local_identities", return_value=set()):
             ts = cluster.targets(cfg, ["beta", "alpha"], runtime=fake_local,
                                  remote_factory=lambda spec, view: fake_remote)

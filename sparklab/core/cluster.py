@@ -90,7 +90,7 @@ def is_on_host(spec: HostSpec) -> bool:
 
     ``remote: false`` entries are unconditionally local. Otherwise match this
     machine's identities against the entry's name and ssh host (full + first
-    label: ``luna.tail9d5411.ts.net`` matches a box whose hostname is
+    label: ``luna.tailnet.example`` matches a box whose hostname is
     ``luna``).
     """
     if not spec.remote:

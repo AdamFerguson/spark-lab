@@ -33,7 +33,7 @@ from sparklab.commands import apply as apply_cmd, adopt as adopt_cmd, status as 
     teardown as teardown_cmd, validate as validate_cmd  # noqa: E402
 from tests.helpers import FakeRuntime, REFERENCE_CONFIG, REFERENCE_ENV, SECRET_DUMMY  # noqa: E402
 
-STATE_PATH = "/home/adam/spark-lab/.sparklab-state/state.json"   # stub home + default repo_dir
+STATE_PATH = "/home/user/spark-lab/.sparklab-state/state.json"   # stub home + default repo_dir
 INSTALL = "/opt/sparklab"
 
 
@@ -148,7 +148,7 @@ class StubConnection:
     * ``canned`` lets individual tests force rc/stdout for specific commands.
     """
 
-    def __init__(self, home="/home/adam", binaries=None, canned=None, dirs=None, files=None):
+    def __init__(self, home="/home/user", binaries=None, canned=None, dirs=None, files=None):
         self.home = home
         self.binaries = dict(binaries or {})
         self.canned = list(canned or [])          # [(substring, rc, stdout)]
@@ -219,7 +219,7 @@ class StubConnection:
         return _Result(0, "")                     # docker / sparkrun / systemctl / probe / ...
 
 
-def make_runtime(stub=None, host="luna", user="adam", install_dir="~/AI", repo_dir="~/spark-lab"):
+def make_runtime(stub=None, host="luna", user="user", install_dir="~/AI", repo_dir="~/spark-lab"):
     stub = stub or StubConnection()
     target = remote.RemoteTarget(host=host, user=user, install_dir=install_dir, repo_dir=repo_dir)
     return remote.RemoteRuntime(target, connection=stub), stub
@@ -267,10 +267,10 @@ class TestShellGrammar(unittest.TestCase):
         self.assertIsNone(p.pid)
 
     def test_available_and_locate(self):
-        stub = StubConnection(binaries={"sparkrun": "/home/adam/.local/bin/sparkrun"})
+        stub = StubConnection(binaries={"sparkrun": "/home/user/.local/bin/sparkrun"})
         rt, _ = make_runtime(stub=stub)
         self.assertTrue(rt.available("sparkrun"))
-        self.assertEqual(rt.locate("sparkrun"), "/home/adam/.local/bin/sparkrun")
+        self.assertEqual(rt.locate("sparkrun"), "/home/user/.local/bin/sparkrun")
         self.assertFalse(rt.available("tailscale"))
         self.assertIsNone(rt.locate("tailscale"))
 
@@ -513,7 +513,7 @@ class TestPlanParity(unittest.TestCase):
         descs = {desc for desc, _ in plan.commands}
         compose_cmd = [argv for desc, argv in plan.commands
                        if desc == "Reconcile LiteLLM + monitoring stack (up + remove orphans)"][0]
-        self.assertEqual(compose_cmd[3], "/home/adam/AI/litellm/docker-compose.yml")
+        self.assertEqual(compose_cmd[3], "/home/user/AI/litellm/docker-compose.yml")
         self.assertIn("Start/ensure model workload (detached)", descs)
 
 
@@ -584,7 +584,7 @@ class TestAdoptRemote(unittest.TestCase):
         self.cfg = config_mod.load(str(self.d / "config.yaml"))
         rendered = render.render(self.cfg, self.d / "deploy")
         files = {f"{INSTALL}/{rel}": data for rel, data in rendered.items()}
-        self.stub = StubConnection(dirs={INSTALL, "/home/adam/spark-lab"}, files=files)
+        self.stub = StubConnection(dirs={INSTALL, "/home/user/spark-lab"}, files=files)
         self.rt, _ = make_runtime(stub=self.stub, install_dir=INSTALL)
 
     def tearDown(self):
@@ -623,7 +623,7 @@ class TestTeardownStatusValidateRemote(unittest.TestCase):
 
     def test_teardown_stops_composes_down_and_clears_remote_state(self):
         stub = StubConnection(
-            binaries={"sparkrun": "/home/adam/.local/bin/sparkrun",
+            binaries={"sparkrun": "/home/user/.local/bin/sparkrun",
                       "docker": "/usr/bin/docker"},
             files={STATE_PATH: b'{"files": {"a": "h"}}'})
         rt, _ = make_runtime(stub=stub)
@@ -638,7 +638,7 @@ class TestTeardownStatusValidateRemote(unittest.TestCase):
 
     def test_status_runs_on_the_node(self):
         stub = StubConnection(
-            binaries={"sparkrun": "/home/adam/.local/bin/sparkrun",
+            binaries={"sparkrun": "/home/user/.local/bin/sparkrun",
                       "docker": "/usr/bin/docker",
                       "tailscale": "/usr/bin/tailscale"})
         rt, _ = make_runtime(stub=stub)
@@ -650,7 +650,7 @@ class TestTeardownStatusValidateRemote(unittest.TestCase):
         self.assertIn("tailscale status", joined)
 
     def test_validate_preflight_checks_the_remote_binaries(self):
-        stub = StubConnection(binaries={"sparkrun": "/home/adam/.local/bin/sparkrun",
+        stub = StubConnection(binaries={"sparkrun": "/home/user/.local/bin/sparkrun",
                                         "docker": "/usr/bin/docker",
                                         "tailscale": "/usr/bin/tailscale"})
         rt, _ = make_runtime(stub=stub)
@@ -663,9 +663,9 @@ class TestTeardownStatusValidateRemote(unittest.TestCase):
 
 class TestFindSparkrunRemote(unittest.TestCase):
     def test_locates_on_the_node(self):
-        stub = StubConnection(binaries={"sparkrun": "/home/adam/.local/bin/sparkrun"})
+        stub = StubConnection(binaries={"sparkrun": "/home/user/.local/bin/sparkrun"})
         rt, _ = make_runtime(stub=stub)
-        self.assertEqual(converge.find_sparkrun(rt), "/home/adam/.local/bin/sparkrun")
+        self.assertEqual(converge.find_sparkrun(rt), "/home/user/.local/bin/sparkrun")
 
     def test_falls_back_to_bare_name(self):
         rt, _ = make_runtime()

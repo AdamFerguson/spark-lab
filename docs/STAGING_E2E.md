@@ -26,7 +26,7 @@ regression + merge-gate definition) is already done — see `docs/AUDIT-P6.md`.
 3. A staging `.env` with test values for the `*_env` vars the config names
    (`LITELLM_MASTER_KEY`, `LITELLM_SALT_KEY`, `LITELLM_DB_PASSWORD`,
    `GRAFANA_ADMIN_PASSWORD`, `HF_TOKEN` if gated).
-4. `config.staging.yaml` (copy of `config.staging.example.yaml`, tuned).
+4. `config.staging.yaml` (copy of `config.example.yaml`, tuned for the staging node).
 
 > **Do not** point the staging config at the live host or install_dir. Set
 > `LIVE_INSTALL_DIR=<live install_dir>` so `scripts/staging.sh` refuses to run
@@ -36,7 +36,7 @@ regression + merge-gate definition) is already done — see `docs/AUDIT-P6.md`.
 
 ```bash
 cd /path/to/spark-lab
-cp config.staging.example.yaml config.staging.yaml   # then edit install_dir + .env
+cp config.example.yaml config.staging.yaml   # then edit install_dir + .env for the staging node
 
 # full E2E + rollback drills, captured to staging-report/
 LIVE_INSTALL_DIR=~/AI SPARKLAB=spark-lab \

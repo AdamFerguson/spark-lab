@@ -70,7 +70,7 @@ Live-state notes (2026-08-28):
   (sol's `litellm.db.password_env` override), same for the litellm master/salt
   keys and the grafana admin password (per-host env-var NAMES, one merged
   `.env` on the laptop).
-- `install.name` is a per-host override (luna-lab / adam-spark) because it is
+- `install.name` is a per-host override (luna-lab / spark) because it is
   rendered into the recipe `metadata.description` — a shared name would have
   changed sol's recipe hash and forced a needless restart.
 - luna's `sparkrun status` display shows 2 hosts (10.0.4.27 = sol via LAN) —
@@ -179,7 +179,7 @@ hosts:
     ssh: sol
     remote: true
     monitoring:
-      instance_label: adam-spark
+      instance_label: spark
       dashboards: [sglang-dashboard, spark-host-overview]
     images:
       litellm: ghcr.io/berriai/litellm:v1.99.0-dev.2
@@ -232,7 +232,7 @@ models:
             max_output_tokens: 8192
       sol:
         litellm:
-          model_name: adam-spark-qwen3-8-27b
+          model_name: my-spark-qwen3-8-27b
           model_info:
             supports_vision: true
             max_input_tokens: 262144
@@ -288,9 +288,9 @@ shell only; never print values):
 
 ```bash
 cd ~/Development/AdamFerguson/spark-lab
-ssh adam@luna "grep -E '^(LITELLM_MASTER_KEY|LITELLM_SALT_KEY|LITELLM_DB_PASSWORD|GRAFANA_ADMIN_PASSWORD|HF_TOKEN)=' ~/spark-lab/.env" > /tmp/cluster.env
-ssh adam@sol  "grep -E '^(LITELLM_MASTER_KEY|LITELLM_SALT_KEY)=' ~/spark-lab/.env | sed 's/^LITELLM_MASTER_KEY=/LITELLM_MASTER_KEY_SOL=/; s/^LITELLM_SALT_KEY=/LITELLM_SALT_KEY_SOL=/'" >> /tmp/cluster.env
-HF_TOKEN=$(ssh adam@luna "grep '^HF_TOKEN=' ~/spark-lab/.env"); echo "HF_TOKEN=$HF_TOKEN" >> /tmp/cluster.env
+ssh you@luna "grep -E '^(LITELLM_MASTER_KEY|LITELLM_SALT_KEY|LITELLM_DB_PASSWORD|GRAFANA_ADMIN_PASSWORD|HF_TOKEN)=' ~/spark-lab/.env" > /tmp/cluster.env
+ssh you@sol  "grep -E '^(LITELLM_MASTER_KEY|LITELLM_SALT_KEY)=' ~/spark-lab/.env | sed 's/^LITELLM_MASTER_KEY=/LITELLM_MASTER_KEY_SOL=/; s/^LITELLM_SALT_KEY=/LITELLM_SALT_KEY_SOL=/'" >> /tmp/cluster.env
+HF_TOKEN=$(ssh you@luna "grep '^HF_TOKEN=' ~/spark-lab/.env"); echo "HF_TOKEN=$HF_TOKEN" >> /tmp/cluster.env
 mv /tmp/cluster.env .env && chmod 600 .env
 # sanity: no value lines may be missing/duplicated
 ```
@@ -336,8 +336,8 @@ nohup bin/spark-lab apply --restart-model --hosts luna > /tmp/luna-v3-apply.log 
 Expect: stop old model → write tuned recipe (`qwen-3-8-27b-dspark-nvfp4.yaml`)
 → detached start → bounded probe (up to ~10 min; first run downloads the
 DSpark draft model). Afterwards:
-- `bin/spark-lab status --hosts luna` (or `ssh adam@luna 'sparkrun status'`)
-- gateway check: `curl -s localhost... via tailnet` → `http://luna.tail9d5411.ts.net:4000/health/liveliness`
+- `bin/spark-lab status --hosts luna` (or `ssh you@luna 'sparkrun status'`)
+- gateway check: `curl -s localhost... via tailnet` → `http://luna.tailnet.example:4000/health/liveliness`
 - a completion through the gateway (SOL-OK-42 style probe)
 - check for the pre-existing orphan: luna had TWO model containers before;
   `sparkrun status` on luna should show only one managed job — if an orphan
@@ -349,15 +349,15 @@ DSpark draft model). Afterwards:
 
 ```bash
 for h in luna sol; do
-  ssh adam@$h 'cp ~/spark-lab/config.yaml ~/spark-lab/config.yaml.bak-v2-20260827; cp ~/spark-lab/.env ~/spark-lab/.env.bak-v2-20260827'
+  ssh you@$h 'cp ~/spark-lab/config.yaml ~/spark-lab/config.yaml.bak-v2-20260827; cp ~/spark-lab/.env ~/spark-lab/.env.bak-v2-20260827'
 done
 scp .env ~/spark-lab/  # per node: cluster .env replaces node .env (superset)
 scp config.yaml ...    # same for config
 ```
 Then verify auto-detection on the node:
 ```bash
-ssh adam@luna 'cd ~/spark-lab && bin/spark-lab status --hosts luna'   # must say [luna] local (no SSH to itself)
-ssh adam@luna 'cd ~/spark-lab && bin/spark-lab apply --dry-run --hosts luna'
+ssh you@luna 'cd ~/spark-lab && bin/spark-lab status --hosts luna'   # must say [luna] local (no SSH to itself)
+ssh you@luna 'cd ~/spark-lab && bin/spark-lab apply --dry-run --hosts luna'
 ```
 (Cross-node: `apply` from luna for BOTH hosts needs luna→sol ssh keys;
 self-targeting needs nothing. The optional `init --mesh` follow-up in

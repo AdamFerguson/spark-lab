@@ -65,8 +65,8 @@ install:
   install_dir: ~/AI                 # path ON THE TARGET node (expanduser'd there)
   hosts: [sol.local, luna.local]    # unchanged (sparkrun cluster-mesh semantics)
   remote:                           # NEW — omit/empty = local (today's behavior)
-    host: luna.tail9d5411.ts.net    # SSH target (magic-DNS name or tailnet IP)
-    user: adam                      # optional; default = local user
+    host: luna.tailnet.example    # SSH target (magic-DNS name or tailnet IP)
+    user: you                     # optional; default = local user
     port: 22                        # optional
     identity_file: ~/.ssh/id_ed25519  # optional
     repo_dir: ~/spark-lab           # optional; node's spark-lab checkout (state + upgrade)
@@ -148,12 +148,12 @@ install:
 - [ ] **11. Wire it up on pop-os (the payoff)** —
   - `labs/luna/{config.yaml,.env}`: luna's current config values (incl. the tuned
     params/flags added 2026-08-26: mamba tuning, DSPARK, cache-report flags) +
-    `install.remote.host: luna.tail9d5411.ts.net`; `.env` copied from luna's
+    `install.remote.host: luna.tailnet.example`; `.env` copied from luna's
     `~/spark-lab/.env` (node-side copy, never printed). Luna specifics: model_name
     `Qwen3.8-27B-NVFP4`, instance_label `luna`, images pin
     `docker.litellm.ai/berriai/litellm:main-stable`, model_info 32768/8192.
   - `labs/sol/{config.yaml,.env}`: same for sol (model_name
-    `adam-spark-qwen3-8-27b`, instance_label `adam-spark`, litellm pin
+    `my-spark-qwen3-8-27b`, instance_label `spark`, litellm pin
     `ghcr.io/berriai/litellm:v1.99.0-dev.2`, model_info 262144/131072).
   - Run `spark-lab --config labs/luna/config.yaml adopt` + `apply --dry-run` from
     pop-os → confirm the pending luna recipe change shows with LiteLLM untouched.
