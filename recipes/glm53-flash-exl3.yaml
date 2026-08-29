@@ -69,6 +69,7 @@ min_nodes: 2
 container: ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks:exl3
 executor: docker
 executor_config:
+  entrypoint: ""
   ipc: host
   shm_size: 32g
   privileged: true
@@ -141,7 +142,7 @@ metadata:
       supports_reasoning: true
       supported_reasoning_efforts: [low, medium, high]
       max_input_tokens: 1000000
-      max_output_tokens: 8192
+      max_output_tokens: 131072
 
 # Values available as {name} placeholders inside `command` below.
 # (Key order here is part of the rendered recipe -- keep it stable.)
