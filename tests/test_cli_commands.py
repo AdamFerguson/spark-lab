@@ -25,7 +25,7 @@ from sparklab.commands import (  # noqa: E402
     init, images, logs, migrate, status, teardown, upgrade, validate)
 from tests.helpers import REFERENCE_ENV, SECRET_DUMMY, FakeRuntime, config_text  # noqa: E402
 
-_AVAIL = {"sparkrun", "docker", "systemctl", "tailscale", "cloudflared", sys.executable}
+_AVAIL = {"sh", "sparkrun", "docker", "systemctl", "tailscale", "cloudflared", sys.executable}
 
 
 def _args(cp, runtime, **kw):
@@ -64,9 +64,10 @@ class TestCliCommands(unittest.TestCase):
     def test_teardown_with_yes_stops_and_downs(self):
         rt = FakeRuntime(available=_AVAIL)
         self.assertEqual(teardown.run(_args(self.cp, rt, yes=True, purge=True)), 0)
-        self.assertTrue(any(a == ["sparkrun", "stop",
-                                  str(self.install / "sparkrun" / "recipes" / "qwen.yaml"),
-                                  "--hosts", "127.0.0.1"] for a in rt.commands))
+        self.assertTrue(any("sparkrun stop " +
+                            str(self.install / "sparkrun" / "recipes" / "qwen.yaml") +
+                            " --hosts 127.0.0.1" in " ".join(map(str, a))
+                            for a in rt.commands))
         self.assertTrue(any(a[0] == "docker" and "down" in a and "-v" in a for a in rt.commands))
 
     def test_teardown_refusal_names_the_kept_volumes(self):

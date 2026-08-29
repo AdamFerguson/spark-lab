@@ -178,9 +178,9 @@ class TestModelDown(ScaleBase):
         data = yaml.safe_load((self.d / "config.yaml").read_text())
         self.assertEqual(data["models"]["qwen"]["hosts"], ["alpha"])
         # the stale workload was stopped on beta (gated stop, deliberately allowed)
-        self.assertTrue(any(a[:3] == ["sparkrun", "stop",
-                                      str(self.install / "sparkrun" / "recipes" / "qwen.yaml")]
-                            for a in rt.calls))
+        self.assertTrue(any("sparkrun stop " +
+                            str(self.install / "sparkrun" / "recipes" / "qwen.yaml") in
+                            " ".join(map(str, a)) for a in rt.calls))
 
     def test_down_everywhere_removes_active(self):
         cp = self._setup()

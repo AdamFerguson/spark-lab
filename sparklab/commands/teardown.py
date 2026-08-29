@@ -14,12 +14,13 @@ def _teardown_one(t, purge: bool) -> int:
     compose_file = cfg.node_path("litellm/docker-compose.yml", home)
     # stop by the recipe's file path (sparkrun's bare-name lookup hits its
     # registries, not our install dir) + host targeting (single-node needs --hosts).
+    # Tolerant of "no running workload" (teardown must still remove the stack
+    # when nothing is running -- see converge.tolerant_stop_argv).
     recipe_file = cfg.node_path(f"sparkrun/recipes/{cfg.recipe_name}.yaml", home)
-    stop_argv = [sparkrun, "stop", recipe_file]
-    if cfg.is_cluster:
-        stop_argv += ["--cluster", cfg.cluster_name]
-    else:
-        stop_argv += ["--hosts", ",".join(str(h) for h in cfg.hosts)]
+    stop_argv = converge.tolerant_stop_argv(
+        sparkrun, recipe_file,
+        ["--cluster", cfg.cluster_name] if cfg.is_cluster
+        else ["--hosts", ",".join(str(h) for h in cfg.hosts)])
     print("Stopping model workload...")
     run_command(stop_argv, ok=True, runtime=runtime)
     down_argv = ["docker", "compose", "-f", compose_file, "down"]

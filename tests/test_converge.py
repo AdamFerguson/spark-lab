@@ -9,7 +9,10 @@ These pin down the "stable to update" contract:
 Run with:  python tests/test_converge.py
 """
 
+import os
+import subprocess
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -395,6 +398,41 @@ class TestConverge(unittest.TestCase):
         self.assertEqual(rt.spawned,
                          [["sparkrun", "run", "r.yaml", "--ensure", "--hosts", "x"]])
         self.assertEqual(len(rt.commands), 2)         # both still recorded
+
+
+class TestTolerantStop(unittest.TestCase):
+    """`sparkrun stop` failing with 'no running workload' is already-converged.
+
+    A host whose state still records a model that is not (anymore) running
+    (stopped out-of-band, never started, node reboot) must not abort the
+    converge: the stop wrapper exits 0 for that specific outcome and only.
+    """
+
+    def _run_wrapper(self, fake_body: str) -> subprocess.CompletedProcess:
+        d = Path(tempfile.mkdtemp())
+        fake = d / "sparkrun"
+        fake.write_text("#!/bin/sh\n" + fake_body + "\n")
+        fake.chmod(0o755)
+        env = dict(os.environ, PATH=str(d) + os.pathsep + os.environ.get("PATH", ""))
+        argv = converge.tolerant_stop_argv("sparkrun", "/tmp/x/recipes/r.yaml",
+                                           ["--hosts", "10.0.0.1"])
+        return subprocess.run(argv, env=env, capture_output=True, text=True)
+
+    def test_job_not_found_is_already_converged(self):
+        p = self._run_wrapper(
+            'echo "Error: No running workload matches intent 5b98ae96 on hosts ['
+            '\'10.0.0.1\']" >&2\nexit 1')
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn("already stopped", p.stdout)
+
+    def test_genuine_failure_still_fails(self):
+        p = self._run_wrapper("echo 'Error: docker permission denied' >&2\nexit 1")
+        self.assertEqual(p.returncode, 1)
+
+    def test_successful_stop_passes_through(self):
+        p = self._run_wrapper("echo 'stopped workload'\nexit 0")
+        self.assertEqual(p.returncode, 0)
+        self.assertIn("stopped workload", p.stdout)
 
 
 if __name__ == "__main__":

@@ -159,6 +159,11 @@ For each selected host (in config order):
    - model restart is **gated**: a recipe change restarts only with
      `--restart-model` (the gate is skippable when the running container's
      `--ensure` intent is unchanged, e.g. a layout-pin addition).
+   - model stop is **idempotent**: `sparkrun stop` fails when no workload
+     matches the intent ("No running workload matches ...") -- that is the
+     already-converged outcome, so the stop tolerates exactly that result
+     (a stale state entry for a model that is not running never aborts the
+     converge); every other stop failure still fails it.
 5. Record new state; print a per-host summary. A real `apply` to an
    unreachable host fails clearly (executions raise); a `--dry-run` degrades
    to an empty remote state with a one-time warning instead of crashing.

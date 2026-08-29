@@ -55,10 +55,10 @@ class TestModelStopLocal(unittest.TestCase):
         rt = FakeRuntime()
         rc = model_cmd.stop(make_args(self.d, yes=True, runtime=rt))
         self.assertEqual(rc, 0)
-        self.assertEqual(
-            rt.calls[0],
-            ["sparkrun", "stop", str(self.d / "install" / "sparkrun" / "recipes" / "qwen.yaml"),
-             "--hosts", "127.0.0.1"],
+        self.assertTrue(
+            "sparkrun stop " +
+            str(self.d / "install" / "sparkrun" / "recipes" / "qwen.yaml") +
+            " --hosts 127.0.0.1" in " ".join(map(str, rt.calls[0])),
         )
         st = state_mod.State(self.cfg.state_dir)
         self.assertIsNone(st.model)

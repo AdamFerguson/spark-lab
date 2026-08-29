@@ -193,6 +193,8 @@ class StubConnection:
         toks = shlex.split(inner)
         head = toks[0]
         if head == "command" and len(toks) >= 3:
+            if toks[2] in ("sh", "bash"):          # shells always exist on a node
+                return _Result(0, "/bin/" + toks[2])
             return _Result(0, self.binaries[toks[2]]) if toks[2] in self.binaries \
                 else _Result(1, "")
         if head == "test" and len(toks) >= 3:

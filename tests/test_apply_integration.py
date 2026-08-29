@@ -140,9 +140,10 @@ class TestApplyIntegration(unittest.TestCase):
         rt = FakeRuntime()
         self.assertEqual(apply.run(_args(self.cfg_path, rt, apply=True)), 0)
         # the running recipe was stopped, then started again
-        self.assertTrue(any(argv == ["sparkrun", "stop",
-                                     str(self.install / "sparkrun" / "recipes" / "qwen.yaml"),
-                                     "--hosts", "127.0.0.1"] for argv in rt.commands))
+        self.assertTrue(any("sparkrun stop " +
+                            str(self.install / "sparkrun" / "recipes" / "qwen.yaml") +
+                            " --hosts 127.0.0.1" in " ".join(map(str, argv))
+                            for argv in rt.commands))
         self.assertTrue(any("sparkrun run " in " ".join(map(str, argv))
                             and "--ensure" in " ".join(map(str, argv))
                             for argv in rt.commands))

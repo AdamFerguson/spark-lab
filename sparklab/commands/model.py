@@ -200,15 +200,15 @@ def _stop_one(t) -> int:
     else:  # pragma: no cover - test fakes
         recipe_file = str(Path(str(cfg.install_dir)) / "sparkrun" / "recipes"
                           / f"{cfg.recipe_name}.yaml")
-    stop_argv = [sparkrun, "stop", recipe_file]
-    if cfg.is_cluster:
-        stop_argv += ["--cluster", cfg.cluster_name]
-    else:
-        stop_argv += ["--hosts", ",".join(str(h) for h in cfg.hosts)]
+    stop_argv = converge.tolerant_stop_argv(
+        sparkrun, recipe_file,
+        ["--cluster", cfg.cluster_name] if cfg.is_cluster
+        else ["--hosts", ",".join(str(h) for h in cfg.hosts)])
     print(f"Stopping model workload '{cfg.recipe_name}' (stack stays up)...")
     rc = run_command(stop_argv, ok=True, runtime=runtime)
     if rc != 0:
-        print(f"(sparkrun stop returned {rc} — was the model running?)", file=sys.stderr)
+        print(f"!! sparkrun stop failed (the workload may still be running)",
+              file=sys.stderr)
         return rc
     _, st = t.env()
     st.set_state(st.files, None)   # record the stop; file hashes untouched

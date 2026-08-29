@@ -206,7 +206,7 @@ class FakeRuntime:
 
     def __init__(self, available=None, fail=None):
         self._available = set(available) if available is not None else {
-            "sparkrun", "docker", "systemctl", "tailscale", "cloudflared",
+            "sh", "sparkrun", "docker", "systemctl", "tailscale", "cloudflared",
         }
         self._fail = dict(fail or {})
         self.calls = []

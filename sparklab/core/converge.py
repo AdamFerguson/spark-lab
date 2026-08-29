@@ -76,6 +76,31 @@ def _recipe_rel(recipe: str) -> str:
     return f"sparkrun/recipes/{recipe}.yaml"
 
 
+def tolerant_stop_argv(sparkrun: str, recipe_path: str, host_flag: List[str]) -> List[str]:
+    """argv for `sparkrun stop` that treats *nothing was running* as success.
+
+    `sparkrun stop` exits non-zero when no running workload matches the
+    recipe's intent ("No running workload matches intent ..."). That is the
+    ALREADY-CONVERGED outcome -- nothing left to stop (the model was stopped
+    out-of-band, never actually started, or the node rebooted) -- so the
+    command captures the stop's output, re-echoes it to the terminal, and
+    exits 0 for that specific outcome only. Every other failure (ambiguous
+    workload, docker/ssh errors, ...) still fails the converge.
+    """
+    inner = " ".join(shlex.quote(str(x)) for x in
+                     [sparkrun, "stop", recipe_path] + list(host_flag))
+    script = (
+        f"out=$({inner} 2>&1); rc=$?; "
+        f"printf '%s\\n' \"$out\"; "
+        f"if [ $rc -eq 0 ]; then exit 0; fi; "
+        f"if printf '%s' \"$out\" | grep -q 'No running workload matches intent'; then "
+        f"echo '   (no running workload matched -- already stopped; continuing)'; "
+        f"exit 0; fi; "
+        f"exit 1"
+    )
+    return ["sh", "-c", script]
+
+
 def _model_readiness_probe(cfg, pidfile: Optional[str] = None,
                            logfile: Optional[str] = None) -> List[str]:
     """A bounded shell command that polls the model ``/health`` until ready.
@@ -245,9 +270,13 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
 
     def stop_model(name: str) -> None:
         recipe_path = _install_rel_path(cfg, f"sparkrun/recipes/{name}.yaml", home)
-        argv = [sparkrun, "stop", recipe_path] + _host_flag()
         if allow_restart:
-            plan.commands.append((f"Stop model workload {name}", argv))
+            # Tolerant of "no running workload" (already converged -- see
+            # tolerant_stop_argv): a stale state entry for a model that is not
+            # (anymore) running must not abort the converge.
+            plan.commands.append(
+                (f"Stop model workload {name}",
+                 tolerant_stop_argv(sparkrun, recipe_path, _host_flag())))
         else:
             plan.notes.append(
                 f"Model '{name}' needs to stop/restart, but that was not requested. "
