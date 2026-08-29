@@ -39,6 +39,7 @@ from typing import Dict, List, Optional
 # Fabric is imported at module level, but this module is only imported lazily
 # (see ``sparklab.core.runtime.runtime_for``) when a config has a remote target.
 from fabric import Connection
+from paramiko.ssh_exception import SSHException
 
 from . import state as state_mod
 from .node import file_mode
@@ -129,22 +130,47 @@ class RemoteRuntime:
         self.target = target
         self._conn = connection if connection is not None else build_connection(target)
         self._remote_home: Optional[str] = None
+        # Set (with the reason) once a connect fails. Data-reading operations
+        # (home_path/locate/available + the remote state read) then degrade to
+        # safe values instead of re-attempting a failing connect, so a dry-run
+        # can render without live connectivity. Executions (run/run_sudo/save)
+        # still raise, so an apply that must touch the node fails clearly.
+        self._unreachable: Optional[str] = None
 
     # -- connection helpers --------------------------------------------------
     @property
     def conn(self) -> Connection:
         return self._conn
 
+    def _quiet_run(self, inner: str):
+        """Run a data-reading login-shell command; return the result, or ``None``
+        when the node is unreachable / the SSH layer failed (caching the reason
+        and printing a one-time warning). Read paths use this so a dry-run can
+        render offline; execution paths use :meth:`run` / :meth:`run_sudo`.
+        """
+        if self._unreachable is not None:
+            return None
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                return self._conn.run(_login(inner), warn=True)
+        except (OSError, SSHException) as e:
+            self._unreachable = f"{type(e).__name__}: {e}"
+            print(f"spark-lab: cannot reach {self.label}: {self._unreachable}. "
+                  f"Continuing with degraded (empty) node data for this host.",
+                  file=sys.stderr)
+            return None
+
     def home_path(self) -> str:
         """The remote node's ``$HOME`` (fetched once, cached).
 
         Fetched quietly: the value is data for path expansion, not terminal
-        output (fabric echoes remote stdout to the local terminal).
+        output (fabric echoes remote stdout to the local terminal). When the
+        node is unreachable, degrades to ``~`` so ``~``-form paths still display
+        sensibly in a dry-run.
         """
         if self._remote_home is None:
-            with contextlib.redirect_stdout(io.StringIO()):
-                r = self._conn.run(_login('echo "$HOME"'), warn=True)
-            self._remote_home = r.stdout.strip() or "/"
+            r = self._quiet_run('echo "$HOME"')
+            self._remote_home = (r.stdout.strip() or "/") if r is not None else "~"
         return self._remote_home
 
     def expand(self, path: str) -> str:
@@ -171,15 +197,13 @@ class RemoteRuntime:
 
         Runs quietly (the path is data, not terminal output).
         """
-        with contextlib.redirect_stdout(io.StringIO()):
-            r = self._conn.run(_login("command -v " + shlex.quote(binary)), warn=True)
-        return r.stdout.strip() or None
+        r = self._quiet_run("command -v " + shlex.quote(binary))
+        return (r.stdout.strip() or None) if r is not None else None
 
     def available(self, binary: str) -> bool:
         """Presence check without leaking the path to the terminal."""
-        r = self._conn.run(_login("command -v " + shlex.quote(binary) + " >/dev/null"),
-                           warn=True)
-        return r.return_code == 0
+        r = self._quiet_run("command -v " + shlex.quote(binary) + " >/dev/null")
+        return (r.return_code == 0) if r is not None else False
 
     def run(self, argv: List) -> subprocess.CompletedProcess:
         """Run ``argv`` on the node, streaming its output; return the result."""
@@ -342,9 +366,8 @@ class RemoteState:
         return f"{self.rt.expand(self.rt.target.repo_dir)}/{self.STATE_REL}"
 
     def load(self) -> dict:
-        with contextlib.redirect_stdout(io.StringIO()):
-            r = self.rt.conn.run(_login("cat " + shlex.quote(self.path)), warn=True)
-        if r.return_code != 0 or not r.stdout.strip():
+        r = self.rt._quiet_run("cat " + shlex.quote(self.path))
+        if r is None or r.return_code != 0 or not r.stdout.strip():
             return {"files": {}}
         try:
             data = json.loads(r.stdout)
