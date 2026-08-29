@@ -61,11 +61,25 @@ fi
 # tree and the committed .gitleaks.toml allowlists the gitignored secret sinks.
 if command -v gitleaks >/dev/null 2>&1; then
   echo "secret-scan: using gitleaks $(gitleaks version 2>/dev/null | head -1 || true)"
-  if gitleaks detect --no-git -c .gitleaks.toml; then
+  report="$(mktemp /tmp/sparklab-secret-scan.XXXXXX.json)"
+  if gitleaks detect --no-git -c .gitleaks.toml -f json -r "$report"; then
+    rm -f "$report"
     echo "secret-scan: clean (gitleaks)."
     exit 0
   fi
-  echo "secret-scan: gitleaks reported findings — DO NOT COMMIT." >&2
+  echo "secret-scan: gitleaks reported findings — DO NOT COMMIT:" >&2
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$report" <<'PY'
+import json, sys
+try:
+    for d in json.load(open(sys.argv[1])):
+        print(f"    {d.get('File') or d.get('Target')} (line {d.get('LineNumber')}): "
+              f"rule={d.get('RuleID')} secret={d.get('Secret', '')[:24]}...", file=sys.stderr)
+except Exception:
+    pass
+PY
+  fi
+  rm -f "$report"
   exit 1
 fi
 

@@ -43,6 +43,9 @@
     '(^|/)labs/',
     '(^|/)staging-report/',
     '(_)?pycache',
+    '(^|/)\.git/',
+    '\.coverage$',
+    'coverage\.xml$',
   ]
 
 [[rules]]
