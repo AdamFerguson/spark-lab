@@ -549,8 +549,13 @@ class TestApplyRemoteEndToEnd(unittest.TestCase):
         #    control plane up -> detached model launch -> bounded probe -> tailscale
         joined = "\n".join(self.stub.runs)
         i_up = joined.index("docker compose -f /opt/sparklab/litellm/docker-compose.yml up -d")
+        # the launch is a sh -c wrapper (records its PID for the probe's crash
+        # detection) exec'ing the ensure, detached with the launch log captured
         i_spawn = joined.index(
-            "setsid nohup sparkrun run /opt/sparklab/sparkrun/recipes/qwen.yaml --ensure")
+            "echo $$ > /tmp/sparklab-model-launch.pid; exec sparkrun run "
+            "/opt/sparklab/sparkrun/recipes/qwen.yaml --ensure")
+        self.assertIn(
+            ">/tmp/sparklab-model-launch.log 2>&1 &", joined[i_spawn:i_spawn + 400])
         i_probe = joined.index("for i in $(seq 1 120)")
         i_ts = joined.index("systemctl enable --now tailscaled")
         self.assertTrue(i_up < i_spawn < i_probe < i_ts)

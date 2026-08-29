@@ -73,7 +73,10 @@ Authoritative in `config.example.yaml`. Top-level sections: `version`,
   `openssl rand -hex 32`.
 - **`hosts:`** — the managed nodes. Each entry: `name` (the `--hosts`
   identifier), `ssh` (connection target: Tailscale shortname,
-  `user@magic-dns`, or IP), `remote: true|false`. Any other key is a
+  `user@magic-dns`, or IP), `remote: true|false`, and optional `ip:` — the
+  tailnet IP sparkrun's placement should address the host by (sparkrun
+  resolves layout pins / `--hosts` against cluster host IPs, not hostnames;
+  without `ip:` the name is used). Any other key is a
   **per-host override**, deep-merged over the cluster-wide document
   (`install:`, `litellm:`, `monitoring:`, `images:`, ...). Two roles matter:
   - `control_plane.enabled` (default `true`) — hosts with the control plane

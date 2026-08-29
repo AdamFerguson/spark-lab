@@ -211,6 +211,7 @@ class FakeRuntime:
         self._fail = dict(fail or {})
         self.calls = []
         self.spawned = []   # the subset of commands launched detached (via spawn)
+        self.spawn_logs = []   # the log path each detached launch was given
 
     def available(self, binary: str) -> bool:
         return binary in self._available
@@ -238,15 +239,17 @@ class FakeRuntime:
         """Mirror of ``Runtime.run_sudo``: records ``["sudo", *argv]``."""
         return self.run(["sudo"] + list(argv))
 
-    def spawn(self, argv):
+    def spawn(self, argv, log=None):
         """Record a detached launch (mirrors ``Runtime.spawn``).
 
         Recorded to the same ``calls`` list as ``run`` so command-sequence
         assertions stay uniform; returns a stand-in ``Popen`` (not awaited).
+        ``log`` is the node-side launch-log path (recorded for assertions).
         """
         argv = [str(x) for x in argv]
         self.calls.append(argv)
         self.spawned.append(argv)
+        self.spawn_logs.append(log)
 
         class _P:
             pass

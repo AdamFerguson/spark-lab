@@ -66,9 +66,8 @@ class TestModelUp(ScaleBase):
         self.assertEqual(data["models"]["qwen"]["hosts"], ["alpha", "beta"])
         self.assertTrue(data["models"]["qwen"].get("active"))
         # converged only beta: the detached ensure ran for the recipe
-        self.assertTrue(any(a[:5] == ["sparkrun", "run",
-                                      str(self.install / "sparkrun" / "recipes" / "qwen.yaml"),
-                                      "--ensure", "--hosts"] for a in rt.calls))
+        self.assertTrue(any("sparkrun run " in " ".join(map(str, a)) and "--ensure" in " ".join(map(str, a))
+                            and "--hosts" in " ".join(map(str, a)) for a in rt.calls))
 
     def test_up_without_hosts_adds_all_remaining(self):
         text = LOCAL_V3.replace("hosts: [alpha, beta]", "hosts: [alpha]", 1)

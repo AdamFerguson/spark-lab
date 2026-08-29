@@ -51,7 +51,7 @@ IMAGE_KEYS: Tuple[str, ...] = tuple(IMAGE_DEFAULTS.keys())
 
 # Host-entry keys that describe the connection, not config overrides. The rest
 # of a host entry is a deep-merge override applied to the cluster-wide config.
-HOST_CONN_KEYS = ("name", "ssh", "remote", "user", "port", "identity_file")
+HOST_CONN_KEYS = ("name", "ssh", "remote", "user", "port", "identity_file", "ip")
 
 
 def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
@@ -71,13 +71,15 @@ class HostSpec:
 
     def __init__(self, name: str, ssh: Optional[str] = None, remote: bool = False,
                  user: Optional[str] = None, port: Optional[int] = None,
-                 identity_file: Optional[str] = None, overrides: Optional[Dict[str, Any]] = None):
+                 identity_file: Optional[str] = None, ip: Optional[str] = None,
+                 overrides: Optional[Dict[str, Any]] = None):
         self.name = str(name)
         self.ssh = ssh
         self.remote = bool(remote)
         self.user = user
         self.port = port
         self.identity_file = identity_file
+        self.ip = str(ip) if ip else None
         self.overrides = dict(overrides or {})
 
     @classmethod
@@ -96,6 +98,7 @@ class HostSpec:
             user=(entry or {}).get("user"),
             port=(entry or {}).get("port"),
             identity_file=(entry or {}).get("identity_file"),
+            ip=(entry or {}).get("ip"),
             overrides=overrides,
         )
 
@@ -103,6 +106,17 @@ class HostSpec:
     def ssh_host(self) -> str:
         """The connection host (``user@host`` -> ``host``)."""
         return str(self.ssh or "").split("@", 1)[-1]
+
+    @property
+    def sparkrun_address(self) -> str:
+        """The address sparkrun's placement should name this host.
+
+        sparkrun resolves ``layout.placements`` / ``--hosts`` entries against
+        cluster host **IP addresses** -- it does not resolve hostnames -- so a
+        host with an explicit ``ip:`` (tailnet IP) is addressed by it; hosts
+        without one fall back to their name (which works when the name is
+        itself resolvable where sparkrun runs)."""
+        return self.ip or self.name
 
     def __repr__(self) -> str:   # pragma: no cover - debug aid
         return (f"HostSpec(name={self.name!r}, ssh={self.ssh!r}, remote={self.remote}, "
@@ -666,6 +680,16 @@ class Config:
                               identity_file=self.remote.get("identity_file"),
                               overrides={})]
         return [HostSpec(name=name, remote=False)]
+
+    @property
+    def sparkrun_addresses(self) -> Dict[str, str]:
+        """Host name -> the address sparkrun's placement should use.
+
+        Maps each host to its explicit ``ip:`` (when set) or its name, so the
+        rendered layout pins + the ``--hosts`` flag address the hosts the way
+        sparkrun's scheduler can resolve them (see ``HostSpec.sparkrun_address``).
+        """
+        return {s.name: s.sparkrun_address for s in self.host_specs}
 
     def select_hosts(self, names: Optional[List[str]] = None) -> List[HostSpec]:
         """The hosts a command targets: all of them, or the named subset.

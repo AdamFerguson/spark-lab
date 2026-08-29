@@ -196,14 +196,24 @@ def layout_for_view(cfg) -> List[Tuple[str, List[int]]]:
     the ``--hosts`` flag passes exactly ``models.<m>.hosts`` (see
     ``converge.build_plan``), so the layout hosts match string-equal by
     construction -- no global ``install.hosts`` pool is required.
+
+    Hosts are named the way sparkrun can resolve them: a host's explicit
+    ``ip:`` when set, else its name (see ``Config.sparkrun_addresses``) --
+    sparkrun's scheduler matches ``layout.placements`` / ``--hosts`` entries
+    against cluster host IPs, not hostnames.
     """
+    addr = dict(getattr(cfg, "sparkrun_addresses", {}) or {})
+
+    def _a(name: str) -> str:
+        return addr.get(name, name)
+
     m = cfg.model
     if not m:
         return []
     min_nodes = int(m.get("min_nodes", 1))
     if min_nodes <= 1:
         pool = [str(h) for h in (cfg.hosts or ["127.0.0.1"])]
-        return [(pool[0], [0])]
+        return [(_a(pool[0]), [0])]
     alias = str(cfg.active_alias or "")
     host_names = [str(h) for h in cfg.model_host_list(alias)]
     if len(host_names) < min_nodes:
@@ -213,4 +223,4 @@ def layout_for_view(cfg) -> List[Tuple[str, List[int]]]:
     # The placement IS the run pool for a spanning model, so each name is
     # matched by construction (the host-order/count check above is the
     # real guard; it also fails earlier at load via _validate_recipe_spans).
-    return [(name, [i]) for i, name in enumerate(host_names[:min_nodes])]
+    return [(_a(name), [i]) for i, name in enumerate(host_names[:min_nodes])]

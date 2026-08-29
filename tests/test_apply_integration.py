@@ -83,13 +83,21 @@ class TestApplyIntegration(unittest.TestCase):
         # loads), then the model launched detached, then a bounded readiness probe
         compose = ["docker", "compose", "-f", str(self.install / "litellm" / "docker-compose.yml"),
                    "up", "-d", "--remove-orphans"]
-        model_run = ["sparkrun", "run", str(self.install / "sparkrun" / "recipes" / "qwen.yaml"),
-                     "--ensure", "--hosts", "127.0.0.1"]
+        model_run = ["sh", "-c",
+                     "echo $$ > /tmp/sparklab-model-launch.pid; exec sparkrun run "
+                     + str(self.install / "sparkrun" / "recipes" / "qwen.yaml")
+                     + " --ensure --hosts 127.0.0.1"]
         self.assertEqual(len(rt.commands), 3)
         self.assertEqual(rt.commands[0], compose)
         self.assertEqual(rt.commands[1], model_run)
         self.assertEqual(rt.commands[2][:2], ["sh", "-c"])
         self.assertIn("127.0.0.1:30000/health", rt.commands[2][2])
+        # the probe crash-detects via the launch PID file and tails the launch log
+        self.assertIn("kill -0", rt.commands[2][2])
+        self.assertIn("/tmp/sparklab-model-launch.pid", rt.commands[2][2])
+        self.assertIn("/tmp/sparklab-model-launch.log", rt.commands[2][2])
+        # the detached launch captured its log for the probe to tail
+        self.assertEqual(rt.spawn_logs, ["/tmp/sparklab-model-launch.log"])
 
     def test_reapply_is_idempotent_no_restart(self):
         apply.run(_args(self.cfg_path, FakeRuntime()))
@@ -100,9 +108,10 @@ class TestApplyIntegration(unittest.TestCase):
         # bounded readiness probe runs. (The engine always ensures the model is up,
         # by design.) The control plane is skipped (unchanged).
         self.assertEqual(len(rt2.commands), 2)
-        self.assertEqual(rt2.commands[0], ["sparkrun", "run",
-                                        str(self.install / "sparkrun" / "recipes" / "qwen.yaml"),
-                                        "--ensure", "--hosts", "127.0.0.1"])
+        self.assertEqual(rt2.commands[0], ["sh", "-c",
+                                        "echo $$ > /tmp/sparklab-model-launch.pid; exec sparkrun run "
+                                        + str(self.install / "sparkrun" / "recipes" / "qwen.yaml")
+                                        + " --ensure --hosts 127.0.0.1"])
         self.assertEqual(rt2.commands[1][:2], ["sh", "-c"])
         self.assertIn("127.0.0.1:30000/health", rt2.commands[1][2])
         self.assertFalse(any("stop" in argv for argv in rt2.commands))
@@ -134,9 +143,9 @@ class TestApplyIntegration(unittest.TestCase):
         self.assertTrue(any(argv == ["sparkrun", "stop",
                                      str(self.install / "sparkrun" / "recipes" / "qwen.yaml"),
                                      "--hosts", "127.0.0.1"] for argv in rt.commands))
-        self.assertTrue(any(argv == ["sparkrun", "run",
-                                     str(self.install / "sparkrun" / "recipes" / "qwen.yaml"),
-                                     "--ensure", "--hosts", "127.0.0.1"] for argv in rt.commands))
+        self.assertTrue(any("sparkrun run " in " ".join(map(str, argv))
+                            and "--ensure" in " ".join(map(str, argv))
+                            for argv in rt.commands))
         # state now records the NEW recipe hash
         self.assertNotEqual(self._state()["model"]["hash"], before)
 

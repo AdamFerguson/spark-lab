@@ -17,6 +17,7 @@ until `apply --apply` actually restarts the model — it does not silently drift
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -61,6 +62,10 @@ class Plan:
         # here: `sparkrun run` foreground-tails the model log and would otherwise
         # block the converge forever. A later bounded readiness probe confirms it.
         self.background: set = set()
+        # node-side bookkeeping for the detached model launch: the PID file the
+        # launch wrapper writes (so the probe can tell "still starting" from
+        # "crashed") and the launch log (tailed when the probe fails).
+        self.model_launch: Optional[Dict[str, str]] = None
 
     @property
     def any_change(self) -> bool:
@@ -71,7 +76,8 @@ def _recipe_rel(recipe: str) -> str:
     return f"sparkrun/recipes/{recipe}.yaml"
 
 
-def _model_readiness_probe(cfg) -> List[str]:
+def _model_readiness_probe(cfg, pidfile: Optional[str] = None,
+                           logfile: Optional[str] = None) -> List[str]:
     """A bounded shell command that polls the model ``/health`` until ready.
 
     Replaces the model's foreground log-tail as the "is it up?" signal: a bounded
@@ -81,6 +87,14 @@ def _model_readiness_probe(cfg) -> List[str]:
     Qwen3.8-Flash-Next) raise it. Probes the first host; refining the
     per-model primary endpoint for multi-node clusters is a follow-up
     (see docs/CLUSTERING.md).
+
+    Crash detection: when the launch PID file is known, each cycle also checks
+    whether the detached launch process is still alive. A start that crashed
+    (the container exits, ``/health`` never comes up) then fails fast -- with
+    the launch log tailed -- instead of polling a dead port for the whole
+    bound. Two consecutive dead observations are required so a no-op
+    ``--ensure`` (model already up) that exits promptly is not mistaken for a
+    crash when ``/health`` is momentarily slow.
     """
     host = str(cfg.hosts[0]) if cfg.hosts else "127.0.0.1"
     port = int(cfg.model.get("port", 30000))
@@ -89,10 +103,25 @@ def _model_readiness_probe(cfg) -> List[str]:
     polls = max(1, seconds // sleep_s)
     url = f"http://{host}:{port}/health"
     loop = (
+        "deads=0; "
         f"for i in $(seq 1 {polls}); do "
         f"curl -fsS -m 5 {url} >/dev/null 2>&1 && exit 0; "
+    )
+    if pidfile:
+        loop += (
+            f"if [ -f {shlex.quote(pidfile)} ] && "
+            f"! kill -0 \"$(cat {shlex.quote(pidfile)} 2>/dev/null)\" 2>/dev/null; then "
+            "deads=$((deads + 1)); "
+            'if [ "$deads" -ge 2 ]; then '
+            'echo "model launch process exited before the model was ready" >&2; '
+            + (f"tail -n 40 {shlex.quote(logfile)} >&2; " if logfile else "")
+            + "exit 1; fi; fi; "
+        )
+    loop += (
         f"sleep {sleep_s}; done; "
-        f"echo 'model not ready after {polls * sleep_s}s ({url})' >&2; exit 1"
+        f"echo 'model not ready after {polls * sleep_s}s ({url})' >&2; "
+        + (f"tail -n 40 {shlex.quote(logfile)} >&2; " if logfile else "")
+        + "exit 1"
     )
     return ["sh", "-c", loop]
 
@@ -151,7 +180,12 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
     # there is nothing to converge or restart here).
     min_nodes = int(cfg.model.get("min_nodes", 1)) if cfg.model else 1
     spanning = has_model and min_nodes > 1
-    placement = ([str(h) for h in cfg.model_host_list(cfg.active_alias)]
+    # Placement is addressed the way sparkrun can resolve it (each host's
+    # explicit ``ip:`` when set, else its name) -- its layout pins + ``--hosts``
+    # match cluster host IPs, not hostnames.
+    _addr = dict(getattr(cfg, "sparkrun_addresses", {}) or {})
+    placement = ([_addr.get(str(h), str(h))
+                  for h in cfg.model_host_list(cfg.active_alias)]
                  if spanning else [])
 
     if launch_model:
@@ -198,7 +232,7 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
     # registries, not our install dir. The path is always present + unambiguous.
     recipe_file = _install_rel_path(cfg, f"sparkrun/recipes/{cfg.recipe_name}.yaml", home)
     cluster = cfg.is_cluster
-    hosts = ",".join(str(h) for h in cfg.hosts)
+    hosts = ",".join(_addr.get(str(h), str(h)) for h in cfg.hosts)
     placement_flag = ",".join(placement)
 
     def _host_flag() -> List[str]:
@@ -290,11 +324,23 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
     # log-tail, so a failed start is surfaced rather than silently hung.
     if has_model and launch_model:
         model_desc = "Start/ensure model workload (detached)"
+        # The launch wrapper records its own PID so the readiness probe can
+        # distinguish "still starting" from "crashed": a dead launch process
+        # fails the probe fast (with the launch log tailed) instead of polling
+        # a dead port for the whole readiness bound. ``exec`` keeps the PID of
+        # the `sh` wrapper when sparkrun replaces it.
+        launch_argv = [sparkrun, "run", recipe_file, "--ensure"] + _host_flag()
+        pidfile = "/tmp/sparklab-model-launch.pid"
+        logfile = "/tmp/sparklab-model-launch.log"
+        plan.model_launch = {"pidfile": pidfile, "logfile": logfile}
         plan.commands.append(
-            (model_desc, [sparkrun, "run", recipe_file, "--ensure"] + _host_flag()))
+            (model_desc, ["sh", "-c",
+                          f"echo $$ > {shlex.quote(pidfile)}; exec "
+                          + shlex.join(launch_argv)]))
         plan.background.add(model_desc)
         plan.commands.append(
-            ("Wait for model to be ready (bounded)", _model_readiness_probe(cfg)))
+            ("Wait for model to be ready (bounded)",
+             _model_readiness_probe(cfg, pidfile=pidfile, logfile=logfile)))
     elif has_model:
         plan.notes.append(
             f"Worker host for spanning model '{cfg.active_alias}': the workload "
@@ -375,9 +421,11 @@ def execute(plan: Plan, dry_run: bool, verbose: bool = True, runtime=None) -> in
             continue
         if desc in getattr(plan, "background", set()):
             # Launch detached: don't block the converge on this process (the model
-            # log-tail would run until the model exits). A bounded readiness probe
-            # later confirms it actually came up.
-            runtime.spawn(argv)
+            # log-tail would run until the model exits). The launch log is captured
+            # so the readiness probe can tail it on failure. A bounded readiness
+            # probe later confirms it actually came up.
+            launch = getattr(plan, "model_launch", None)
+            runtime.spawn(argv, log=(launch or {}).get("logfile"))
             continue
         result = runtime.run(argv)
         if result.returncode != 0:

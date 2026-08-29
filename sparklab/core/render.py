@@ -7,6 +7,7 @@ JSONs, which contain ``{{``-style sequences that would otherwise break templatin
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -213,6 +214,32 @@ def build_context(cfg: config_mod.Config) -> dict:
     }
 
 
+def yaml_scalar(v):
+    """Render ``v`` as a YAML line scalar that round-trips to the SAME value.
+
+    String values that YAML would otherwise parse as something else (the
+    JSON-string ``speculative_config`` would become a flow mapping, turning
+    a string into a dict on the node -- which then reaches the shell as a
+    mangled ``str(dict)``) are emitted JSON-quoted. JSON quoting is valid
+    YAML quoting. Non-strings are dumped by PyYAML (a bare ``2`` stays a
+    bare int; ``True`` would have rendered as the string "None"/"True").
+    """
+    if isinstance(v, str):
+        if "\n" in v:
+            return json.dumps(v)
+        try:
+            probe = yaml_mod.safe_load(v)
+        except yaml_mod.YAMLError:
+            return json.dumps(v)
+        if probe != v or not isinstance(probe, str):
+            return json.dumps(v)
+        return v
+    dumped = yaml_mod.safe_dump(v, default_flow_style=True, width=4096).rstrip("\n")
+    if dumped.endswith("..."):   # PyYAML's document-end marker on scalar dumps
+        dumped = dumped[:-3].rstrip()
+    return dumped
+
+
 def render(cfg: config_mod.Config, deploy_dir: Path) -> Dict[str, bytes]:
     """Render all templates to ``deploy_dir`` and return {target_rel: bytes}."""
     deploy_dir = Path(deploy_dir)
@@ -229,6 +256,7 @@ def render(cfg: config_mod.Config, deploy_dir: Path) -> Dict[str, bytes]:
         lstrip_blocks=True,
     )
     jenv.filters["yaml_block"] = yaml_block
+    jenv.filters["yaml_scalar"] = yaml_scalar
     ctx = build_context(cfg)
     rendered: Dict[str, bytes] = {}
 

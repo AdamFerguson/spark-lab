@@ -61,7 +61,7 @@ defaults:
   host: {{ model_host }}
   port: {{ model_port }}
 {% for k, v in params.items() %}
-  {{ k }}: {{ v }}
+  {{ k }}: {{ v | yaml_scalar }}
 {% endfor %}
 
 command: |

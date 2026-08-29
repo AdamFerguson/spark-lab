@@ -31,6 +31,9 @@ install:
 # `remote: true` = reach over SSH (Fabric) when we are NOT on that node —
 # running spark-lab ON the node converges it locally automatically.
 # `remote: false` = this machine (no ssh target needed).
+# `ip:` (optional) = the address sparkrun's placement should use for this
+# host (its tailnet IP): sparkrun matches layout pins / --hosts against
+# cluster host IPs, not hostnames. Without it, the host name is used.
 #
 # Any other key in an entry is a PER-HOST OVERRIDE, deep-merged over the
 # cluster-wide document below (monitoring:, images:, install:, litellm:, ...).

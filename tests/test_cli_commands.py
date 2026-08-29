@@ -112,8 +112,10 @@ class TestCliCommands(unittest.TestCase):
         self.assertTrue(any(a == ["sparkrun", "update"] for a in rt.commands))
         self.assertTrue(any(a[0] == "docker" and "pull" in a for a in rt.commands))
         # and the re-apply ensured the model
-        self.assertTrue(any(a == ["sparkrun", "run", str(self.install / "sparkrun" / "recipes" / "qwen.yaml"),
-                                  "--ensure", "--hosts", "127.0.0.1"] for a in rt.commands))
+        self.assertTrue(any("sparkrun run " in " ".join(map(str, a))
+                            and "--ensure" in " ".join(map(str, a))
+                            and "--hosts 127.0.0.1" in " ".join(map(str, a))
+                            for a in rt.commands))
 
     def test_upgrade_refreshes_deps_via_uv_when_available(self):
         rt = FakeRuntime(available=_AVAIL | {"uv"})

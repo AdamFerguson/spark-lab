@@ -58,7 +58,7 @@ class Runtime:
         passed through the command line)."""
         return subprocess.run(["sudo"] + list(argv))
 
-    def spawn(self, argv) -> subprocess.Popen:
+    def spawn(self, argv, log: Optional[str] = None) -> subprocess.Popen:
         """Launch ``argv`` fully **detached** and return the ``Popen`` without
         waiting for it to exit.
 
@@ -68,12 +68,17 @@ class Runtime:
         away so it doesn't hold the caller's terminal; the model's own logs stay
         available via ``docker logs`` / ``spark-lab logs``, and a separate bounded
         probe confirms it actually came up.
+
+        ``log`` (a node-local path) captures the launch's own stdout/stderr
+        instead of discarding it, so a failed launch can be tailed by the
+        readiness probe / operator.
         """
+        out = open(log, "ab") if log else subprocess.DEVNULL
         return subprocess.Popen(
             list(argv),
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=out,
+            stderr=out,
             start_new_session=True,
         )
 

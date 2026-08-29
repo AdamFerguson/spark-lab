@@ -269,6 +269,57 @@ class TestLayoutPins(unittest.TestCase):
         self.assertIn("- host: alpha", text)
         self.assertIn("- host: beta", text)
 
+    def test_layout_uses_host_ip_when_set(self):
+        # sparkrun resolves layout pins / --hosts against cluster host IPs, not
+        # hostnames: a host entry with an explicit `ip:` is pinned by that IP.
+        make_dir(self.d,
+                 config_text=CONFIG_YAML.replace(
+                     "  - name: alpha\n    remote: false",
+                     "  - name: alpha\n    remote: false\n    ip: 10.0.9.1").replace(
+                     "  - name: beta\n    ssh: beta.tailx.ts.net\n    remote: true",
+                     "  - name: beta\n    ssh: beta.tailx.ts.net\n    remote: true\n"
+                     "    ip: 10.0.9.2").replace(
+                     "hosts: [alpha]", "hosts: [alpha, beta]"),
+                 recipes={"test-model": RECIPE_YAML.replace(
+                     "min_nodes: 1", "min_nodes: 2")})
+        view = load(self.d).view_for("alpha")
+        self.assertEqual(recipe_mod.layout_for_view(view),
+                         [("10.0.9.1", [0]), ("10.0.9.2", [1])])
+        rendered = render.render(view, self.d / "deploy")
+        text = next(v for k, v in rendered.items()
+                    if k.startswith("sparkrun/recipes/")).decode()
+        self.assertIn("- host: 10.0.9.1", text)
+        self.assertIn("- host: 10.0.9.2", text)
+        # placement stays NAME-based where it is compared against the config
+        self.assertEqual(view.model_host_list("my-model"), ["alpha", "beta"])
+
+    def test_json_string_default_renders_as_yaml_string(self):
+        # A string default that YAML would otherwise parse as a mapping (the
+        # JSON speculative_config) must round-trip as a STRING, or sparkrun
+        # hands the runtime a str(dict) instead of the JSON.
+        import json as _json
+        import yaml as _yaml
+        rec = {
+            "name": "test-model", "model": "test-llm/alpha",
+            "model_revision": "abc123", "runtime": "sglang", "min_nodes": 1,
+            "container": "lmsysorg/sglang:test", "executor": "docker",
+            "defaults": {"host": "0.0.0.0", "port": 8888,
+                         "speculative_config":
+                         '{"method":"dflash","model":"incoai/x",'
+                         '"num_speculative_tokens":7}'},
+        }
+        text = _yaml.safe_dump(rec, sort_keys=False).rstrip() + \
+            "\ncommand: |\n  vllm serve {model} '\\n    --speculative-config '\n"
+        make_dir(self.d, recipes={"test-model": text})
+        rendered = render.render(load(self.d).view_for("alpha"),
+                                 self.d / "deploy")
+        out = next(v for k, v in rendered.items()
+                   if k.startswith("sparkrun/recipes/")).decode()
+        doc = _yaml.safe_load(out)
+        self.assertIsInstance(doc["defaults"]["speculative_config"], str)
+        self.assertEqual(_json.loads(doc["defaults"]["speculative_config"])["model"],
+                         "incoai/x")
+
     def test_span_fewer_hosts_than_min_nodes_fails_at_load(self):
         make_dir(self.d, config_text=CONFIG_YAML,
                  recipes={"test-model": RECIPE_YAML.replace(

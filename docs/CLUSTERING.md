@@ -138,6 +138,11 @@ Confirm the exact "remove cluster" sparkrun command on hardware (may be
 
 ## Open questions to confirm on hardware
 
+- [x] **Placement addresses are IPs, not hostnames (confirmed 2026-08-29):**
+      sparkrun resolves `layout.placements` / `--hosts` entries against cluster
+      host IP addresses — a hostname there is not recognized. Host entries in
+      `config.yaml` may set `ip:` (their tailnet IP); the rendered layout pins
+      and the `--hosts` flag use that IP (falling back to the name when unset).
 - [ ] **Exact sparkrun multi-node CLI:** `setup ssh --hosts`, `cluster create
       <name> --hosts`, `run --cluster`, and the stop/remove equivalents. The
       `spark-lab` converge engine uses these; validate the flags against the

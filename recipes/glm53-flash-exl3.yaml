@@ -25,7 +25,10 @@
 #   of their other active models (one active model per host): scale the 27B
 #   (sol) and nemotron (luna) down first. spark-lab builds the SSH mesh
 #   (luna -> sol), reconciles both control planes, then `sparkrun run --ensure
-#   --hosts luna,sol` on luna and polls luna:8888/health for up to 1 h.
+#   --hosts <ip-luna>,<ip-sol>` (IPs: set `ip:` per host in config.yaml —
+#   sparkrun resolves placement against IPs, not hostnames) on luna and polls
+#   the health endpoint for up to 1 h -- failing fast (with the launch log
+#   tailed) if the launch process crashes instead of polling a dead port.
 #
 # What sparkrun does for you that start.sh did by hand:
 #   * schedules exactly 2 hosts (min_nodes: 2, tensor_parallel: 2 -> 2 ranks)

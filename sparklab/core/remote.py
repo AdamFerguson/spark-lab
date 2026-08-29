@@ -255,14 +255,19 @@ class RemoteRuntime:
         return subprocess.CompletedProcess(
             list(argv), rc, b"".join(out).decode("utf-8", "replace"), "")
 
-    def spawn(self, argv: List) -> _Detached:
-        """Launch ``argv`` fully detached on the node (new session, stdio off).
+    def spawn(self, argv: List, log: Optional[str] = None) -> _Detached:
+        """Launch ``argv`` fully detached on the node (new session).
 
         The SSH channel closes immediately; the process keeps running on the
         node. Used for the model launch (which otherwise foreground-tails the
         model log and would hold the converge open until the model exits).
+
+        With ``log`` (a node-side path) the launch's stdout/stderr is captured
+        there instead of discarded, so the readiness probe can tail it when a
+        start fails; without it, stdio goes to /dev/null as before.
         """
-        inner = "setsid nohup " + _shell_argv(argv) + " </dev/null >/dev/null 2>&1 &"
+        sink = ">" + shlex.quote(log) if log else ">/dev/null"
+        inner = f"setsid nohup " + _shell_argv(argv) + f" </dev/null {sink} 2>&1 &"
         r = self._conn.run(_login(inner), warn=True)
         return _Detached(list(argv), r.return_code)
 
