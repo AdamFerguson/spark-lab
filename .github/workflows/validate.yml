@@ -57,7 +57,7 @@ jobs:
 
       - name: yamllint (example config + templates)
         run: |
-          .venv/bin/yamllint -d '{extends: default, rules: {line-length: {max: 120}, truthy: disable, comments: disable, comments-indentation: disable}}' config.example.yaml config.example.v2.yaml sparklab/templates
+          .venv/bin/yamllint -d '{extends: default, rules: {line-length: {max: 120}, truthy: disable, comments: disable, comments-indentation: disable}}' config.example.yaml sparklab/templates
 
       - name: Install gitleaks (pinned)
         run: |
