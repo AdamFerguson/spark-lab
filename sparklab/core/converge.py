@@ -111,7 +111,7 @@ def _install_rel_path(cfg, rel: str, home: Optional[str]) -> str:
 
 
 def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restart: bool,
-               runtime=None) -> Plan:
+               runtime=None, launch_model: bool = True) -> Plan:
     plan = Plan()
     recipe_rel = _recipe_rel(cfg.recipe_name)
     has_model = recipe_rel in rendered
@@ -145,29 +145,48 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
     )
 
     # --- model convergence --------------------------------------------------
-    # Converged = the model is confirmed running the current recipe with the
-    # current content. Anything else (new recipe, changed recipe, or removed)
-    # needs a restart to converge.
-    plan.model_converged = bool(
-        has_model and state_model
-        and state_model.get("name") == cfg.recipe_name
-        and state_model.get("hash") == current_hash
-    )
-    needs_restart = has_model and not plan.model_converged
+    # A spanning model (min_nodes > 1) is a single workload that spans multiple
+    # hosts; only its HEAD host (rank 0) owns the model's lifecycle. Worker
+    # hosts skip the model bookkeeping entirely (they never launched it, so
+    # there is nothing to converge or restart here).
+    min_nodes = int(cfg.model.get("min_nodes", 1)) if cfg.model else 1
+    spanning = has_model and min_nodes > 1
+    placement = ([str(h) for h in cfg.model_host_list(cfg.active_alias)]
+                 if spanning else [])
 
-    # Model workloads that were previously managed/running but are no longer the
-    # current recipe (switched away from, or removed): stop them to converge.
-    prev_recipes = {Path(r).stem for r in state_files if r.startswith("sparkrun/recipes/")}
-    if state_model and state_model.get("name"):
-        prev_recipes.add(state_model["name"])
-    stale_recipes = sorted(prev_recipes - {cfg.recipe_name})
+    if launch_model:
+        # Converged = the model is confirmed running the current recipe with the
+        # current content. Anything else (new recipe, changed recipe, or removed)
+        # needs a restart to converge.
+        plan.model_converged = bool(
+            has_model and state_model
+            and state_model.get("name") == cfg.recipe_name
+            and state_model.get("hash") == current_hash
+        )
+        needs_restart = has_model and not plan.model_converged
 
-    # The current recipe needs a stop-then-start only if it was the running one
-    # but its content changed (a brand-new recipe has nothing running under it).
-    restart_current = bool(
-        state_model and state_model.get("name") == cfg.recipe_name
-        and state_model.get("hash") != current_hash
-    )
+        # Model workloads that were previously managed/running but are no longer
+        # the current recipe (switched away from, or removed): stop them to
+        # converge.
+        prev_recipes = {Path(r).stem for r in state_files if r.startswith("sparkrun/recipes/")}
+        if state_model and state_model.get("name"):
+            prev_recipes.add(state_model["name"])
+        stale_recipes = sorted(prev_recipes - {cfg.recipe_name})
+
+        # The current recipe needs a stop-then-start only if it was the running
+        # one but its content changed (a brand-new recipe has nothing running
+        # under it).
+        restart_current = bool(
+            state_model and state_model.get("name") == cfg.recipe_name
+            and state_model.get("hash") != current_hash
+        )
+    else:
+        # Worker host: the head owns the model; treat it as converged here so no
+        # stop/restart is planned and no "needs restart" note is left pending.
+        plan.model_converged = True
+        needs_restart = False
+        stale_recipes = []
+        restart_current = False
 
     sparkrun = find_sparkrun(runtime)
     # Node-side paths: local mode resolves on this machine (byte-identical to the
@@ -180,10 +199,14 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
     recipe_file = _install_rel_path(cfg, f"sparkrun/recipes/{cfg.recipe_name}.yaml", home)
     cluster = cfg.is_cluster
     hosts = ",".join(str(h) for h in cfg.hosts)
+    placement_flag = ",".join(placement)
 
     def _host_flag() -> List[str]:
         # sparkrun needs host targeting even for a single node (--hosts);
-        # a named cluster supplies its own hosts (--cluster).
+        # a named cluster supplies its own hosts (--cluster). A spanning model
+        # targets exactly its own placement (its run pool IS models.<m>.hosts).
+        if spanning:
+            return ["--hosts", placement_flag]
         return ["--cluster", cfg.cluster_name] if cluster else ["--hosts", hosts]
 
     def stop_model(name: str) -> None:
@@ -197,7 +220,13 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
                 f"Re-run with `spark-lab apply --apply`."
             )
 
-    if cluster:
+    if spanning and launch_model:
+        # Build the passwordless SSH mesh from the head to its peers so the
+        # spanning run can schedule the worker nodes. (No saved cluster: the run
+        # targets the placement directly via --hosts.)
+        plan.commands.append(("Set up passwordless SSH mesh across hosts",
+                              [sparkrun, "setup", "ssh", "--hosts", placement_flag]))
+    elif cluster:
         plan.commands.append(("Set up passwordless SSH mesh across hosts",
                               [sparkrun, "setup", "ssh", "--hosts", hosts]))
         plan.commands.append(("Create the saved cluster",
@@ -259,13 +288,18 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
     # (so the control plane above would never start on a fresh apply). A bounded
     # readiness probe (next) confirms the model actually came up instead of the
     # log-tail, so a failed start is surfaced rather than silently hung.
-    if has_model:
+    if has_model and launch_model:
         model_desc = "Start/ensure model workload (detached)"
         plan.commands.append(
             (model_desc, [sparkrun, "run", recipe_file, "--ensure"] + _host_flag()))
         plan.background.add(model_desc)
         plan.commands.append(
             ("Wait for model to be ready (bounded)", _model_readiness_probe(cfg)))
+    elif has_model:
+        plan.notes.append(
+            f"Worker host for spanning model '{cfg.active_alias}': the workload "
+            f"is launched by the head host (rank 0, {placement[0] if placement else '?'}); "
+            f"nothing to launch here.")
 
     # --- network ------------------------------------------------------------
     if cfg.tailscale().get("enabled", True):

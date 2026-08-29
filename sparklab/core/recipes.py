@@ -192,29 +192,25 @@ def layout_for_view(cfg) -> List[Tuple[str, List[int]]]:
     -- the same address the ``--hosts`` flag passes), rank 0. A spanning
     model (``min_nodes: > 1``) pins each of its placement hosts, in config
     order, one rank each; rank 0 lands on the first host (sparkrun's
-    head-node contract). Placement hosts must appear verbatim in the run pool
-    (``install.hosts``) -- layout hosts are matched string-equal by
-    sparkrun's schedulers.
+    head-node contract). A spanning model's run pool *is* its own placement:
+    the ``--hosts`` flag passes exactly ``models.<m>.hosts`` (see
+    ``converge.build_plan``), so the layout hosts match string-equal by
+    construction -- no global ``install.hosts`` pool is required.
     """
     m = cfg.model
     if not m:
         return []
-    pool = [str(h) for h in (cfg.hosts or ["127.0.0.1"])]
     min_nodes = int(m.get("min_nodes", 1))
     if min_nodes <= 1:
+        pool = [str(h) for h in (cfg.hosts or ["127.0.0.1"])]
         return [(pool[0], [0])]
     alias = str(cfg.active_alias or "")
-    host_names = cfg.model_host_list(alias)
+    host_names = [str(h) for h in cfg.model_host_list(alias)]
     if len(host_names) < min_nodes:
         raise RecipeError(
             f"model '{alias}' spans {min_nodes} hosts but is placed on "
             f"{len(host_names)} ({host_names}) -- extend its hosts: list.")
-    placements: List[Tuple[str, List[int]]] = []
-    for i, name in enumerate(host_names[:min_nodes]):
-        if name not in pool:
-            raise RecipeError(
-                f"model '{alias}': placement host '{name}' is not in the run "
-                f"pool install.hosts={pool} -- sparkrun matches layout hosts "
-                "string-equal; add the host address to install.hosts.")
-        placements.append((name, [i]))
-    return placements
+    # The placement IS the run pool for a spanning model, so each name is
+    # matched by construction (the host-order/count check above is the
+    # real guard; it also fails earlier at load via _validate_recipe_spans).
+    return [(name, [i]) for i, name in enumerate(host_names[:min_nodes])]

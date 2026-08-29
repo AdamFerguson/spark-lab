@@ -32,6 +32,31 @@ def _print_diffs(cfg, rendered, file_changes, fs, limit=200):
         print("\n".join(lines[:limit]))
 
 
+def _model_launch_role(cfg, host_name: str):
+    """Whether ``host_name`` launches the active model's workload.
+
+    Single-node models: the serving host launches it. A spanning model
+    (``min_nodes > 1``) is one workload shared by its hosts; only the head
+    (rank 0 = first in the model's ``hosts:`` list) launches it -- the peers
+    are workers that converge their control-plane files but do not run
+    ``sparkrun run``. Returns ``(launch_model, note)``.
+    """
+    if not cfg.model:
+        return True, None
+    try:
+        min_nodes = int(cfg.model.get("min_nodes", 1))
+    except (TypeError, ValueError):
+        min_nodes = 1
+    if min_nodes <= 1:
+        return True, None
+    placement = cfg.model_host_list(cfg.active_alias)
+    if not placement or host_name != placement[0]:
+        return False, (f"worker for spanning model '{cfg.active_alias}' "
+                       f"(head: {placement[0] if placement else '?'}); the model "
+                       f"is launched by the head host")
+    return True, None
+
+
 def _converge_one(t, dry: bool, allow_restart: bool, diff: bool) -> int:
     """The converge for one host (the historical single-target apply body)."""
     cfg, runtime = t.cfg, t.runtime
@@ -42,12 +67,11 @@ def _converge_one(t, dry: bool, allow_restart: bool, diff: bool) -> int:
         print(f"[ERROR] no image for active model '{cfg.active_alias}' "
               f"(set models.<alias>.image or SPARKLAB_IMAGE_MODEL).", file=sys.stderr)
         return 1
-    if cfg.model and int(cfg.model.get("min_nodes", 1)) > 1:
-        print(f"[ERROR] multi-node (TP) model placement is not supported yet "
-              f"(ADR 0007 follow-up); this host would serve "
-              f"'{cfg.active_alias}' with min_nodes={cfg.model.get('min_nodes')}.",
-              file=sys.stderr)
-        return 1
+    # A spanning model (min_nodes > 1) is launched once, from its head host.
+    # Worker hosts converge control-plane/monitoring files but skip the launch.
+    launch_model, span_note = _model_launch_role(cfg, t.name)
+    if span_note:
+        print(f"   note: {span_note}")
 
     print(f"   install dir: {cfg.install_dir_raw if t.is_remote else cfg.install_dir}"
           f"{' (on the node)' if t.is_remote else ''}")
@@ -57,7 +81,7 @@ def _converge_one(t, dry: bool, allow_restart: bool, diff: bool) -> int:
     rendered = render.render(cfg, out_dir)
     fs, st = t.env()
     plan = converge.build_plan(cfg, rendered, st.files, st.model, allow_restart,
-                               runtime=runtime)
+                               runtime=runtime, launch_model=launch_model)
 
     print("\nFile changes vs last apply:")
     if plan.file_changes:

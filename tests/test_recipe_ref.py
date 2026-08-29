@@ -250,19 +250,24 @@ class TestLayoutPins(unittest.TestCase):
         self.assertEqual(recipe_mod.layout_for_view(view),
                          [("10.0.0.1", [0]), ("10.0.0.2", [1])])
 
-    def test_spanning_host_not_in_pool_errors(self):
-        # enough placement hosts, but none of them is in the run pool: the
-        # error surfaces at render time (layout construction), not load.
+    def test_spanning_placement_is_run_pool_no_install_hosts(self):
+        # A spanning model's run pool IS its own placement (models.<m>.hosts), so
+        # it pins each placement host in config order without a global
+        # install.hosts pool. (The old design required the placement hosts to be
+        # a subset of install.hosts; that coupling is gone.)
         make_dir(self.d,
                  config_text=CONFIG_YAML.replace(
-                     "install_dir: ~/AI", "install_dir: ~/AI\n  hosts: [10.0.0.1, 10.0.0.2]").replace(
                      "hosts: [alpha]", "hosts: [alpha, beta]"),
                  recipes={"test-model": RECIPE_YAML.replace(
                      "min_nodes: 1", "min_nodes: 2")})
-        cfg = load(self.d)
-        with self.assertRaises(RecipeError) as cm:
-            render.render(cfg.view_for("alpha"), self.d / "deploy")
-        self.assertIn("not in the run pool", str(cm.exception))
+        view = load(self.d).view_for("alpha")
+        self.assertEqual(recipe_mod.layout_for_view(view),
+                         [("alpha", [0]), ("beta", [1])])
+        rendered = render.render(view, self.d / "deploy")
+        text = next(v for k, v in rendered.items()
+                    if k.startswith("sparkrun/recipes/")).decode()
+        self.assertIn("- host: alpha", text)
+        self.assertIn("- host: beta", text)
 
     def test_span_fewer_hosts_than_min_nodes_fails_at_load(self):
         make_dir(self.d, config_text=CONFIG_YAML,

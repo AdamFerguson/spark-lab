@@ -30,6 +30,8 @@ def make_cfg(recipe="mymodel", cluster=False):
     c.cluster_name = "spark"
     c.hosts = ["10.0.0.1", "10.0.0.2"] if cluster else []
     c.model = {"port": 30000}      # active model definition (probe reads .port)
+    c.active_alias = recipe
+    c.model_host_list = lambda alias: []   # spanning placement (empty = single-node)
     c.tailscale = lambda: {"enabled": False}
     c.cloudflare = lambda: {"enabled": False}
     c.prometheus = lambda: {"port": 9090}
@@ -78,6 +80,49 @@ class TestConverge(unittest.TestCase):
 
     def tearDown(self):
         self._p.stop()
+
+    # 0b. Spanning models (min_nodes > 1): head-only launch ------------------
+    def test_spanning_head_launches_with_placement_hosts(self):
+        cfg = make_cfg()
+        cfg.model = {"port": 8888, "min_nodes": 2}
+        cfg.active_alias = "mymodel"
+        cfg.model_host_list = lambda alias: ["host-a", "host-b"]
+        rendered = {**recipe_bytes(), **LIT}
+        plan = converge.build_plan(cfg, rendered, {}, None, allow_restart=True,
+                                  launch_model=True)
+        descs = [d for d, _ in plan.commands]
+        # head builds the SSH mesh across the placement
+        self.assertTrue(any("SSH mesh" in d for d in descs))
+        mesh = [a for d, a in plan.commands if "SSH mesh" in d][0]
+        self.assertIn("host-a,host-b", " ".join(map(str, mesh)))
+        # run targets the placement via --hosts (not a saved --cluster)
+        run_argv = [a for d, a in plan.commands if d.startswith("Start/ensure model")][0]
+        run_str = " ".join(map(str, run_argv))
+        self.assertIn("--hosts", run_str)
+        self.assertIn("host-a,host-b", run_str)
+        self.assertNotIn("--cluster", run_str)
+        # bounded readiness probe targets the head's local model port
+        probe = [a for d, a in plan.commands if d.startswith("Wait for model")][0]
+        self.assertIn("8888", " ".join(map(str, probe)))
+
+    def test_spanning_worker_skips_launch(self):
+        cfg = make_cfg()
+        cfg.model = {"port": 8888, "min_nodes": 2}
+        cfg.active_alias = "mymodel"
+        cfg.model_host_list = lambda alias: ["host-a", "host-b"]
+        rendered = {**recipe_bytes(), **LIT}
+        plan = converge.build_plan(cfg, rendered, {}, None, allow_restart=True,
+                                  launch_model=False)
+        descs = [d for d, _ in plan.commands]
+        # worker launches nothing: no run, no mesh, no probe
+        self.assertFalse(any(d.startswith("Start/ensure model") for d in descs))
+        self.assertFalse(any("SSH mesh" in d for d in descs))
+        self.assertFalse(any(d.startswith("Wait for model") for d in descs))
+        # treated as converged (no pending restart left behind)
+        self.assertTrue(plan.model_converged)
+        self.assertFalse(plan.model_restart_pending)
+        # and a note explains the worker role
+        self.assertTrue(any("Worker host" in n for n in plan.notes))
 
     # 1. No-op ---------------------------------------------------------------
     def test_noop_is_idempotent(self):
