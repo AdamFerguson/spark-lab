@@ -1,17 +1,52 @@
-# gitleaks config for spark-lab (used only if gitleaks is installed;
+# gitleaks config for spark-lab (used when gitleaks is installed;
 # scripts/secret-scan.sh falls back to built-in grep patterns otherwise).
 #
-# The allowlist below keeps gitleaks from flagging the gitignored secret sinks
-# where real values legitimately live, plus the generated deploy/ output.
-
-title = "spark-lab secret scan"
+# Defence in depth:
+#   1. The pre-commit PATH GATE in scripts/secret-scan.sh blocks committing
+#      any secret-sink path (.env*, config.yaml, *.bak*, deploy/...) no matter
+#      what. It cannot be bypassed by an unusual secret value.
+#   2. This config adds a VALUE rule (env-credential-assignment) that catches
+#      literal credentials assigned to credential-named variables wherever
+#      they appear in tracked/staged content. Gitleaks' built-in rules are
+#      shape-based (known token formats) and miss e.g. hyphenated sk- keys,
+#      bare-hex passwords, and renamed sinks. That class of miss is what let
+#      .env.bak-v1-20260828 (real LITELLM/DB/Grafana credentials) commit on
+#      2026-08-27: the values were hyphenated sk-* keys, bare-hex passwords,
+#      and two empty values -- none matched a built-in rule.
+#
+# The allowlist keeps the scan quiet about the gitignored local sinks +
+# generated output, where real values live on disk by design (the path gate
+# keeps them out of the repo). The rule's value class matches values that
+# contain a digit or are 23+ chars: real credentials (sk-* with hyphens,
+# bare-hex DB passwords, long tokens) while staying quiet on documented
+# placeholders (not-needed, sk-ci-dummy), env-var names used as values
+# (LITELLM_MASTER_KEY_SOL), cost fields (0.00000045: no dot in the class),
+# Python annotations (Optional[str]), and test fixtures (test-master-key).
+# ${X} / {{ x }} references and empty values never match ('$' and '{' are not
+# in the value class).
+#
+# NOTE: the gitleaks build in use honours allowlist paths + stopwords but not
+# allowlist regexes, so all suppression here is structural (path allowlist +
+# value-class shape), not regex-allowlist based.
 
 [allowlist]
-  description = "gitignored secret sinks and generated output"
+  description = "gitignored local sinks, backup copies, generated output"
   paths = [
     '(^|/)\.env$',
+    '(^|/)\.env\..*',
+    '(^|/)[^/]*\.bak',
     '(^|/)config\.ya?ml$',
+    '(^|/)config\.ya?ml\..*',
     '(^|/)deploy/',
     '(^|/)\.sparklab-state/',
     '(^|/)\.venv/',
+    '(^|/)labs/',
+    '(^|/)staging-report/',
+    '(_)?pycache',
   ]
+
+[[rules]]
+  id = "env-credential-assignment"
+  description = "Literal credential assigned to a credential-named variable"
+  regex = '''(?i)\b[a-z0-9_]*(?:master_key|salt_key|password|passwd|pwd|token|secret|api_key|apikey|access_key)\b\s*[:=]\s*['"]?([a-z0-9+_-]{7,}\d|\d[a-z0-9+_-]{7,}|[a-z0-9+_-]{23,})'''
+  secretGroup = "1"
