@@ -1,0 +1,182 @@
+# GLM-5.3-Flash EXL3 on a 2× DGX Spark (GB10 / SM121) — sparkrun recipe.
+#
+# Conversion of MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks (MIT) — the
+# start.sh / stop.sh / download.sh 2-node launcher. Instead of the kit's
+# manual .env + rsync + dual-container dance, this is a plain, directly-runnable
+# sparkrun recipe:
+#
+#     sparkrun run recipes/glm53-flash-exl3.yaml --hosts <head>,<worker>
+#
+# Or via spark-lab (2-node cluster): add a placement block to config.yaml and
+# apply to both hosts -- spark-lab launches the model ONCE from the head (the
+# first host in `hosts:`, rank 0) and the worker only converges its control
+# plane:
+#
+#   models:
+#     glm53-flash-exl3:
+#       active: true
+#       hosts: [luna, sol]     # luna = head (rank 0); order sets the head
+#       recipe: glm53-flash-exl3
+#       hf_token_env: HF_TOKEN
+#
+#   bin/spark-lab apply --hosts luna,sol
+#
+#   Because the model spans BOTH Sparks, it can only run while both are freed
+#   of their other active models (one active model per host): scale the 27B
+#   (sol) and nemotron (luna) down first. spark-lab builds the SSH mesh
+#   (luna -> sol), reconciles both control planes, then `sparkrun run --ensure
+#   --hosts luna,sol` on luna and polls luna:8888/health for up to 1 h.
+#
+# What sparkrun does for you that start.sh did by hand:
+#   * schedules exactly 2 hosts (min_nodes: 2, tensor_parallel: 2 -> 2 ranks)
+#   * detects InfiniBand on both nodes and pins NCCL to the CX7 fabric
+#     per-node (NCCL_SOCKET_IFNAME / NCCL_IB_HCA / NCCL_IB_GID_INDEX)
+#   * pulls the overlay image on the head, ships it to the worker if needed
+#   * downloads the EXL3 target (~164 GiB) + DFlash2 draft (~2.3 GiB) into
+#     every node's HF cache and mounts it at /cache/huggingface
+#   * appends the per-node --nnodes / --node-rank / --master-addr /
+#     --master-port (rank 0 = first host = head; workers get --headless)
+#
+# The image (ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks:exl3) already
+# carries the NoPE sparse-MLA overlay, the EXL3 fused-MoE kernels, the
+# DFlash2 speculator, the chat template at /opt/glm53/chat_template.jinja,
+# and all the runtime patches — so no host file mounts are required.
+#
+# Gated/size notes:
+#   * Target  Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw  (~164 GiB, 120 shards)
+#   * Draft   incoai/GLM-5.3-Flash-DFlash2           (~2.3 GiB, CC BY-NC-ND 4.0)
+#   First launch downloads the weights to BOTH nodes; later boots reuse the
+#   host HF cache. 1M-context serve is tuned for the 128 GB GB10 UMA pool.
+#
+# Direct (no gateway) smoke test once it is up:
+#   curl -sS http://<head>:8888/v1/chat/completions \
+#     -H 'Content-Type: application/json' \
+#     -d '{"model":"GLM-5.3-Flash-EXL3",
+#          "messages":[{"role":"user","content":"12*17"}],
+#          "max_tokens":512,
+#          "chat_template_kwargs":{"enable_thinking":false}}'
+#
+# Thinking is ON by default; disable it with the top-level
+# "chat_template_kwargs": {"enable_thinking": false}.
+
+name: glm53-flash-exl3
+model: Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw
+# Pinned Hub commit on the durable mirror (byte-identical to the
+# brandonmusic/GLM-5.3-Flash-tr3-4bpw snapshot 5ab363a8 that the kit used).
+model_revision: "25a44fdbf16862a46b7cc9921142c6c81350af2f"
+runtime: vllm-distributed
+min_nodes: 2
+container: ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks:exl3
+executor: docker
+executor_config:
+  ipc: host
+  shm_size: 32g
+  privileged: true
+  cap_add:
+    - SYS_PTRACE
+    - IPC_LOCK
+  ulimit:
+    memlock: "-1"
+    stack: "67108864"
+  devices:
+    - /dev/infiniband
+  security_opt:
+    - seccomp=unconfined
+  # Persist the Triton / TileLang JIT caches across container recreate so a
+  # TP=2 restart does not re-JIT mid-collective (the kit bind-mounted the
+  # same host dirs to /root/.triton + /root/.tilelang). Host dirs are created
+  # on first run.
+  volumes:
+    - ~/AI/glm53/triton:/root/.triton/cache
+    - ~/AI/glm53/tilelang:/root/.tilelang/cache
+
+env:
+  # --- NCCL over the CX7 fabric (global knobs; per-node IF/HCA/GID are
+  #     auto-detected by sparkrun on each host) ---
+  NCCL_IB_DISABLE: "0"
+  NCCL_IB_ROCE_VERSION_NUM: "2"
+  NCCL_IB_GID_INDEX: "3"
+  NCCL_NET: IB
+  NCCL_NET_PLUGIN: none
+  NCCL_NVLS_ENABLE: "0"
+  NCCL_CUMEM_ENABLE: "0"
+  NCCL_IB_MERGE_NICS: "0"
+  NCCL_CROSS_NIC: "0"
+  NCCL_IGNORE_CPU_AFFINITY: "1"
+  NCCL_DEBUG: WARN
+  # --- serve offline from the distributed HF cache (no network at serve) ---
+  HF_HUB_OFFLINE: "1"
+  TRANSFORMERS_OFFLINE: "1"
+  # --- GLM-5.3 Flash kit behavior flags ---
+  GLM53_SUPPRESS_STOPS_IN_REASONING: "1"
+  GLM53_MIXED_PREFILL_CHUNK: skip
+  EXL3_FUSED_MOE: "1"
+  # --- JIT caches / long cold-start timeouts (TP=2 first JIT can exceed the
+  #     stock 300 s EngineCore execute timeout) ---
+  TRITON_CACHE_DIR: /root/.triton/cache
+  TILELANG_CACHE_DIR: /root/.tilelang/cache
+  VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS: "1800"
+  VLLM_ENGINE_READY_TIMEOUT_S: "3600"
+  TORCH_CUDA_ARCH_LIST: 12.1a
+  FLASHINFER_CUDA_ARCH_LIST: 12.1a
+  FLASHINFER_DISABLE_VERSION_CHECK: "1"
+  PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+  VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS: "1"
+  VLLM_NO_USAGE_STATS: "1"
+  DO_NOT_TRACK: "1"
+
+metadata:
+  description: "Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw (EXL3 + DFlash2) served by vLLM TP=2"
+  # (No `model_dtype`: EXL3 is a quantization method, not a dtype — the
+  # authoritative setting is the --quantization exl3 flag below.)
+  # spark-lab apply probe bound: first boot = image pull + 164 GiB weight load
+  # + DFlash2 draft + CUDA-graph capture + shape warmup on a 320B MoE.
+  readiness_seconds: 3600
+  # spark-lab gateway metadata (sparkrun ignores metadata extras). Served on
+  # the cluster gateway under this name.
+  litellm:
+    model_name: GLM-5.3-Flash-EXL3
+    model_info:
+      supports_vision: true
+      supports_reasoning: true
+      supported_reasoning_efforts: [low, medium, high]
+      max_input_tokens: 1000000
+      max_output_tokens: 8192
+
+# Values available as {name} placeholders inside `command` below.
+# (Key order here is part of the rendered recipe -- keep it stable.)
+defaults:
+  host: 0.0.0.0
+  port: 8888
+  # 2 ranks across the 2 hosts. sparkrun's vllm-distributed runtime reads this
+  # to emit --nnodes 2 + the per-node --node-rank / --master-addr /
+  # --master-port (workers additionally get --headless).
+  tensor_parallel: 2
+  # DFlash2 k=7 speculator. `model` is the draft HF id — sparkrun detects it
+  # here and distributes the draft to every node's HF cache, and the same JSON
+  # is what vLLM receives on --speculative-config.
+  speculative_config: '{"method":"dflash","model":"incoai/GLM-5.3-Flash-DFlash2","num_speculative_tokens":7,"kv_cache_dtype":"auto","draft_sample_method":"probabilistic","rejection_sample_method":"standard","draft_tensor_parallel_size":1}'
+
+command: |
+    vllm serve {model} \
+        --served-model-name GLM-5.3-Flash-EXL3 \
+        --host {host} \
+        --port {port} \
+        --tensor-parallel-size 2 \
+        --distributed-executor-backend mp \
+        --quantization exl3 \
+        --max-model-len 1000000 \
+        --gpu-memory-utilization 0.87 \
+        --max-num-seqs 4 \
+        --max-num-batched-tokens 1024 \
+        --kv-cache-dtype fp8 \
+        --tool-call-parser glm47 \
+        --enable-auto-tool-choice \
+        --reasoning-parser glm45 \
+        --enable-prefix-caching \
+        --no-enable-flashinfer-autotune \
+        --chat-template /opt/glm53/chat_template.jinja \
+        --limit-mm-per-prompt '{"image":4,"video":1}' \
+        --skip-mm-profiling \
+        --cudagraph-capture-sizes 1 2 4 8 16 24 32 \
+        --speculative-config '{speculative_config}'

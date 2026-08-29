@@ -2,7 +2,7 @@
 # This is the source of truth for the `sparkrun-registry` discovery source.
 # `file:` points at the runnable sparkrun recipe; the rest is discovery metadata.
 registry: spark-lab
-updated: "2026-08-28"
+updated: "2026-08-29"
 recipes:
   qwen38-27b:
     name: Qwen3.8-27B (NVFP4)
@@ -43,3 +43,16 @@ recipes:
       cookbook dgx-spark cell: mem-fraction 0.78, CUDA-graph decode ceiling
       4, max-running-requests 4.
     file: recipes/nemotron35-lightning.yaml
+  glm53-flash-exl3:
+    name: GLM-5.3-Flash (EXL3 + DFlash2, 2-node)
+    model: Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw
+    image: ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks:exl3
+    tags: [ glm, moe, 320b, exl3, speculative, dflash2, 1m, two-node, tensor-parallel ]
+    hardware: 2x DGX Spark / GB10 (CX7 InfiniBand)
+    description: >
+      ~164 GiB EXL3 MoE served by vLLM tensor-parallel 2 across both Sparks.
+      Conversion of MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks (MIT). Spans two
+      hosts (min_nodes: 2); spark-lab launches it once from the head host
+      (first in the model's hosts: list). First boot downloads ~164 GiB of
+      weights to both nodes.
+    file: recipes/glm53-flash-exl3.yaml
