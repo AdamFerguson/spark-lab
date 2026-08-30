@@ -183,6 +183,8 @@ class Config:
             mdef = mdef or {}
             if "recipe" not in mdef:
                 continue
+            if not mdef.get("active", True):
+                continue  # parked model: no placement plan to validate
             try:
                 min_nodes = int(mdef.get("min_nodes", 1))
             except (TypeError, ValueError):
@@ -334,14 +336,29 @@ class Config:
             lit = deep_merge(self.litellm, mdef.get("litellm") or {})
             port = int(mdef.get("port", 30000))
             explicit = str(lit.get("api_base") or "").strip()
+            # A multi-node cluster model (min_nodes > 1) exposes its OpenAI API
+            # only on the head (run_hosts[0] = rank 0); the other hosts run the
+            # headless worker with no API. So this host serves the API locally
+            # only when it IS the head. A single-node model runs an independent
+            # instance on each of its hosts, so any run host serves it locally.
+            is_cluster = int(mdef.get("min_nodes", 1) or 1) > 1
+            serves_locally = (
+                self._view_host == run_hosts[0] if is_cluster
+                else self._view_host in run_hosts
+            )
             if explicit:
                 api_base = explicit
-            elif self._view_host in run_hosts:
+            elif serves_locally:
                 host = self.litellm.get("model_api_base_host", "host.docker.internal")
                 api_base = f"http://{host}:{port}/v1"
             elif base.is_v3:
                 spec = base.select_hosts([run_hosts[0]])[0]
-                api_base = f"http://{spec.ssh_host or spec.name}:{port}/v1"
+                # Prefer the explicit `ip:` (LAN/tailnet address): the LiteLLM
+                # gateway is a bridge-network container, where an mDNS `.local`
+                # ssh name does NOT resolve but a routable IP does. Fall back to
+                # the ssh host / name only when no ip is configured.
+                remote_addr = spec.ip or spec.ssh_host or spec.name
+                api_base = f"http://{remote_addr}:{port}/v1"
             else:   # v2: historical single-node path -- local engine
                 host = self.litellm.get("model_api_base_host", "host.docker.internal")
                 api_base = f"http://{host}:{port}/v1"

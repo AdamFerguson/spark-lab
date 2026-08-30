@@ -130,6 +130,7 @@ def resolve_model_block(mdef: Dict[str, Any], config_dir: Path) -> Dict[str, Any
         "executor_config": "executor_config",
         "env": "env",
         "command": "serve_command",
+        "pre_exec": "pre_exec",
     }
     for src, dst in field_map.items():
         if src in recipe:

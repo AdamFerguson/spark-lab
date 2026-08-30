@@ -200,6 +200,7 @@ command: |
         --tool-call-parser auto \
         --allow-auto-truncate \
         --enable-metrics \
+        --enable-mfu-metrics \
         --enable-cache-report \
         --ple-offload-embedding \
         --disable-prefill-cuda-graph \

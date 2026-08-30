@@ -171,6 +171,11 @@ def build_context(cfg: config_mod.Config) -> dict:
         and executor_overrides == EXECUTOR_CONFIG_BASE,
         "executor_config_final": executor_final,
         "extra_env": model.get("env") or {},
+        # Pre-serve hook commands (run inside each container before serve). Some
+        # images apply required patches only at container runtime (e.g. the GB10
+        # persistent_topk disable in glm53-flash-exl3); a blanked entrypoint skips
+        # them, so the recipe carries them as pre_exec and they must survive render.
+        "pre_exec": model.get("pre_exec") or [],
         "env_lines": _env_lines(model.get("env") or {}, hf_token),
         "model_metadata": model.get("metadata") or {},
         "model_revision": str(model.get("model_revision") or ""),

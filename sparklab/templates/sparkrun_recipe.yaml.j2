@@ -47,6 +47,14 @@ executor_config:
   security_opt:
     - seccomp=unconfined
 {% endif %}
+{% if pre_exec %}
+# Pre-serve hooks: run inside each container (docker exec) before serve.
+# Carries runtime-only image patches a blanked entrypoint would otherwise skip.
+pre_exec:
+{% for cmd in pre_exec %}
+  - {{ cmd }}
+{% endfor %}
+{% endif %}
 env:
 {% for line in env_lines %}
 {{ line }}

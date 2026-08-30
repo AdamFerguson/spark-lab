@@ -107,19 +107,32 @@ models:
     #       model_name: my-gateway-name                 # gateway name on this host
     #       model_info: { max_input_tokens: 262144 }
 
+  # Nemotron 3.5 Lightning 30B-A3B NVFP4 + DFlash speculative decoding
+  # (from the SGLang cookbook's dgx-spark cell). Runs on luna; sol's gateway
+  # serves it via implicit central serving (its model_list entry points at
+  # http://luna:30000/v1 -- clients keep hitting sol). First boot pulls the
+  # engine image (~40 GB) and the 1.2 GB DFlash draft into luna's HF cache.
+  nemotron35-lightning:
+    active: true
+    hosts: [luna]
+    recipe: nemotron35-lightning
+    hf_token_env: HF_TOKEN
+
   # ------------------------------------------------------------------------
   # A model that SPANS MULTIPLE nodes (a recipe with min_nodes > 1, e.g.
   # tensor-parallel across two Sparks). The model's `hosts:` list is its run
   # pool: the FIRST entry is the head (rank 0) where spark-lab launches the
-  # workload and probes readiness; the remaining hosts join as workers — they
+  # workload and probes readiness; the remaining hosts join as workers -- they
   # converge their control plane / monitoring but never launch the model. No
-  # other active model may use those hosts while this one is active.
-  #
-  # glm53-flash-exl3:
-  #   active: true
-  #   hosts: [luna, sol]            # run pool; luna = head (rank 0)
-  #   recipe: glm53-flash-exl3      # recipes/glm53-flash-exl3.yaml (min_nodes: 2)
-  #   hf_token_env: HF_TOKEN
+  # other active model may use those hosts while this one is active: scale
+  # qwen38-27b (sol) and nemotron35-lightning (luna) down first, then flip it
+  # on with `bin/spark-lab apply --hosts luna,sol --restart-model`. First
+  # launch downloads ~164 GiB of weights to BOTH nodes' HF caches.
+  glm53-flash-exl3:
+    active: false
+    hosts: [luna, sol]
+    recipe: glm53-flash-exl3      # recipes/glm53-flash-exl3.yaml (min_nodes: 2)
+    hf_token_env: HF_TOKEN
 
 # -----------------------------------------------------------------------------
 # Shared stack images (per-host overridable under hosts:). env

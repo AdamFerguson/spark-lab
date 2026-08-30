@@ -53,6 +53,11 @@ metadata:
       supports_reasoning: true
       max_input_tokens: 1048576
       max_output_tokens: 131072
+      # Per-token costs for LiteLLM spend tracking (per-million ÷ 1e6):
+      # $0.10/M in, $0.25/M out, $0.05/M cache read.
+      input_cost_per_token: 0.0000001
+      output_cost_per_token: 0.00000025
+      cache_read_input_token_cost: 0.00000005
 
 # Values available as {name} placeholders inside `command` below.
 # (Key order here is part of the rendered recipe -- keep it stable.)
@@ -75,6 +80,7 @@ command: |
     sglang serve \
         --enable-metrics \
         --enable-mfu-metrics \
+        --enable-cache-report \
         --model-path {model} \
         --mamba-ssm-dtype {mamba_ssm_dtype} \
         --mem-fraction-static {mem_fraction_static} \

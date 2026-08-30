@@ -1,0 +1,190 @@
+# GLM-5.3-Flash NVFP4 on a 2× DGX Spark (GB10 / SM121) — sparkrun recipe.
+#
+# Conversion of sfxnz/GLM-5.3-Flash-NVFP4-vLLM-2x-DGX-Spark (the run.sh /
+# stop.sh launcher) into a directly-runnable sparkrun recipe. NVFP4 weight-only
+# quant on the routed experts (~181 GiB, 320B total / 18B active), served by
+# vLLM TP=2 with the DFlash2 block-diffusion drafter (7 speculative tokens).
+#
+#     sparkrun run recipes/glm53-flash-nvfp4.yaml --hosts <head>,<worker>
+#
+# Or via spark-lab (2-node cluster): add a placement block to config.yaml and
+# apply to both hosts -- spark-lab launches the model ONCE from the head (the
+# first host in `hosts:`, rank 0); the worker only converges its control plane:
+#
+#   models:
+#     glm53-flash-nvfp4:
+#       active: true
+#       hosts: [luna, sol]     # luna = head (rank 0); order sets the head
+#       recipe: glm53-flash-nvfp4
+#       hf_token_env: HF_TOKEN
+#
+#   bin/spark-lab apply --hosts luna,sol
+#
+#   Spans BOTH Sparks, so both must be freed of their other active models first
+#   (one active model per host). spark-lab builds the SSH mesh, reconciles both
+#   control planes, then `sparkrun run --ensure --hosts <ip-luna>,<ip-sol>` on
+#   the head (sparkrun resolves placement against the `ip:` you set per host in
+#   config.yaml) and polls /health for up to 1 h.
+#
+# IMPORTANT — this image is LOCAL-ONLY (no registry). You must build the
+# glm53-sm121-v8 -> v9 -> v10 -> v11 chain BEFORE first launch, per the sfxnz
+# README, on at least the head host:
+#   docker build -f docker/Dockerfile.sm121-v8  -t glm53-sm121-v8  docker
+#   docker build -f docker/Dockerfile.sm121-v9  -t glm53-sm121-v9  docker
+#   docker build -f docker/Dockerfile.sm121-v10 -t glm53-sm121-v10 docker
+#   docker build -f docker/Dockerfile.sm121-v11 -t glm53-sm121-v11 docker
+# sparkrun has no builder step; it will ship the local `glm53-sm121-v11` image
+# to the worker (docker save | ssh docker load) but cannot build it for you.
+# The stock vllm/vllm-openai:glm53-flash-arm64-cu130 tag only echoes the prompt
+# on sm_121 — do not point `container:` at it.
+#
+# Unlike the MiaAI-Lab EXL3 kit, run.sh applies NO runtime python patches --
+# every sm_121 patch (NoPE FA2 backend, FlashInfer, NCCL, PDL-off, indexer
+# init, fp8 tile cap, dflash KV groups) is baked into the image at build time
+# via the Dockerfile chain. So there is nothing for a pre-serve hook to apply
+# here, and `entrypoint: ""` + a direct `vllm serve` is safe.
+#
+# Model / draft (both public on the Hub; first launch downloads to BOTH nodes'
+# HF cache, mounted at /cache/huggingface, later boots reuse it):
+#   * Target  LibertAIDAI/GLM-5.3-Flash-NVFP4   (~181 GiB, NVFP4)
+#   * Draft   incoai/GLM-5.3-Flash-DFlash2      (~2.3 GiB, CC BY-NC-ND 4.0)
+#
+# Context: native max_position_embeddings is 1,048,576 but this recipe serves
+# --max-model-len 327680. The 4.14 GiB fp8_e4m3 KV pin (--kv-cache-memory)
+# yields a ~400k-token hybrid pool; a 1M request needs ~8.2 GiB of this layout
+# and GB10 UMA OOMs above ~5.1 GiB. Packed-NVFP4-MLA-KV 1M is a different
+# backend/image, not a flag flip here.
+#
+# Direct (no gateway) smoke test once it is up (thinking is OFF by default):
+#   curl -sS http://<head>:8000/v1/chat/completions \
+#     -H 'Content-Type: application/json' \
+#     -d '{"model":"GLM-5.3-Flash-NVFP4",
+#          "messages":[{"role":"user","content":"12*17"}],
+#          "max_tokens":512}'
+
+name: glm53-flash-nvfp4
+model: LibertAIDAI/GLM-5.3-Flash-NVFP4
+# No model_revision pin. sfxnz pins target snapshot aa28e1f54130286c95fee10d0705c74ce8743734
+# and draft snapshot 7d74cdd881ed7e32c31175984a67823127b66cfe. If you need
+# byte-identical weights, DON'T set a top-level model_revision (sparkrun leaks
+# it onto the auto-added draft -> 404, and never threads it into the serve
+# command -> offline LocalEntryNotFoundError). Instead pin per-entry:
+#   distribution_config:
+#     models:
+#       entries:
+#         - name: "{model}"
+#           revision: aa28e1f54130286c95fee10d0705c74ce8743734
+#         - name: incoai/GLM-5.3-Flash-DFlash2
+#           revision: 7d74cdd881ed7e32c31175984a67823127b66cfe
+# ...and add `--revision aa28e1f5...` to the serve command below IF you also set
+# HF_HUB_OFFLINE=1 (see env note). By default we track `main` on both.
+runtime: vllm-distributed
+min_nodes: 2
+max_nodes: 2
+container: glm53-sm121-v11
+executor: docker
+executor_config:
+  # Blank the image ENTRYPOINT so sparkrun's vllm-distributed runtime runs its
+  # own `vllm serve ...` (safe here: all patches are baked into the image, and
+  # `vllm` is on PATH in the vllm-openai base).
+  entrypoint: ""
+  ipc: host
+  shm_size: 32g
+  # RoCE/IB verbs need locked memory + the /dev/infiniband char devices. sfxnz
+  # used only --cap-add IPC_LOCK + --ulimit memlock=-1 (no privileged / ptrace /
+  # seccomp-unconfined, unlike the EXL3 kit).
+  cap_add:
+    - IPC_LOCK
+  ulimit:
+    memlock: "-1"
+  devices:
+    - /dev/infiniband
+
+env:
+  # --- NCCL over the RoCE fabric. GLOBAL knobs only; the per-node interface,
+  #     HCA and GID index are auto-detected and injected by sparkrun on each
+  #     host. sfxnz hardcoded IFACE=enp1s0f1np1 / HCA=rocep1s0f1, but on this
+  #     cluster the ACTIVE RoCE link is enp1s0f0np0 / rocep1s0f0 (the f1 links
+  #     are DOWN) -- another reason to let sparkrun detect them rather than pin. ---
+  NCCL_NET: IB
+  NCCL_IB_DISABLE: "0"
+  NCCL_CROSS_NIC: "1"
+  NCCL_NVLS_ENABLE: "0"
+  NCCL_CUMEM_ENABLE: "0"
+  NCCL_DEBUG: WARN
+  # --- HF cache lives at /cache/huggingface (sparkrun distributes the weights
+  #     there and mounts it). NOT setting HF_HUB_OFFLINE: sfxnz's run.sh does
+  #     not, and offline mode is what triggered the pinned-revision
+  #     LocalEntryNotFoundError on the EXL3 kit. If your hosts are air-gapped at
+  #     serve time, add HF_HUB_OFFLINE=1 + TRANSFORMERS_OFFLINE=1 AND make sure
+  #     the target+draft are cached at the revision the command resolves. ---
+  HF_HOME: /cache/huggingface
+  # --- arch / kernels ---
+  TORCH_CUDA_ARCH_LIST: 12.1a
+  FLASHINFER_CUDA_ARCH_LIST: 12.1a
+  FLASHINFER_DISABLE_VERSION_CHECK: "1"
+  PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+  # --- long cold-start: 320B NVFP4 load + CUDA-graph capture on TP=2 ---
+  VLLM_ENGINE_READY_TIMEOUT_S: "3600"
+
+metadata:
+  description: "LibertAIDAI/GLM-5.3-Flash-NVFP4 (NVFP4 + DFlash2) served by vLLM TP=2"
+  model_dtype: nvfp4
+  # First boot = image ship + ~181 GiB weight load + DFlash2 draft + CUDA-graph
+  # capture on a 320B MoE. Give the spark-lab apply probe an hour.
+  readiness_seconds: 3600
+  # spark-lab gateway metadata (sparkrun ignores metadata extras).
+  litellm:
+    model_name: GLM-5.3-Flash-NVFP4
+    model_info:
+      supports_vision: true
+      supports_reasoning: true
+      supported_reasoning_efforts: [low, medium, high]
+      max_input_tokens: 327680
+      max_output_tokens: 131072
+      # Per-token costs for LiteLLM spend tracking (per-million ÷ 1e6):
+      # $0.15/M in, $0.50/M out, $0.03/M cache read.
+      input_cost_per_token: 0.00000015
+      output_cost_per_token: 0.0000005
+      cache_read_input_token_cost: 0.00000003
+
+# Values available as {name} placeholders inside `command` below.
+defaults:
+  host: 0.0.0.0
+  port: 8000
+  # 2 ranks across the 2 hosts. sparkrun's vllm-distributed runtime reads this
+  # to emit --nnodes 2 + the per-node --node-rank / --master-addr /
+  # --master-port (workers additionally get --headless).
+  tensor_parallel: 2
+  # DFlash2 k=7 speculator. `model` is the draft HF id -- sparkrun detects it
+  # here, distributes the draft to every node's HF cache, and vLLM receives the
+  # same JSON on --speculative-config. (sfxnz pointed "model" at a pinned draft
+  # snapshot path; the HF id is the sparkrun-native form and resolves from the
+  # distributed cache.)
+  speculative_config: '{"method":"dflash","model":"incoai/GLM-5.3-Flash-DFlash2","num_speculative_tokens":7}'
+  # CUDA-graph capture sizes: sfxnz computes 1,2,4 plus (num_spec+1)×{1..MAX_NUM_SEQS}.
+  # For num_speculative_tokens=7 (step 8) and max-num-seqs 2 that is 1,2,4,8,16.
+  # If you change num_speculative_tokens or --max-num-seqs, RECOMPUTE these.
+  compilation_config: '{"cudagraph_capture_sizes":[1,2,4,8,16]}'
+
+command: |
+    vllm serve {model} \
+        --served-model-name GLM-5.3-Flash-NVFP4 {model} \
+        --host {host} \
+        --port {port} \
+        --tensor-parallel-size 2 \
+        --distributed-executor-backend mp \
+        --max-model-len 327680 \
+        --kv-cache-dtype fp8_e4m3 \
+        --kv-cache-memory 4445787956 \
+        --gpu-memory-utilization 0.85 \
+        --max-num-seqs 2 \
+        --block-size 2304 \
+        --moe-backend marlin \
+        --compilation-config '{compilation_config}' \
+        --speculative-config '{speculative_config}' \
+        --tool-call-parser glm47 \
+        --enable-auto-tool-choice \
+        --reasoning-parser glm45 \
+        --default-chat-template-kwargs '{"enable_thinking": false}' \
+        --trust-remote-code

@@ -328,6 +328,18 @@ class TestLayoutPins(unittest.TestCase):
             load(self.d)
         self.assertIn("spans 2 hosts", str(cm.exception))
 
+    def test_span_check_skips_inactive_models(self):
+        # A parked (active: false) spanning model has no placement plan:
+        # hosts: [] must load fine (it is enabled by adding hosts later).
+        make_dir(self.d, config_text=CONFIG_YAML.replace(
+                     "    recipe: test-model",
+                     "    active: false\n    hosts: []\n    recipe: test-model"),
+                 recipes={"test-model": RECIPE_YAML.replace(
+                     "min_nodes: 1", "min_nodes: 2")})
+        cfg = load(self.d)  # must not raise
+        # no host serves the parked model
+        self.assertTrue(all(r[1] == "" for r in cfg.placement_table()))
+
     def test_rendered_recipe_carries_layout_pin(self):
         make_dir(self.d)
         rendered = render.render(load(self.d).view_for("alpha"), self.d / "deploy")

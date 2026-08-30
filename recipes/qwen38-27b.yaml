@@ -1,4 +1,7 @@
 # Qwen3.8-27B NVFP4 + DSPark speculative decoding on one DGX Spark (SGLang).
+# This is the NVFP4 + **DSpark** variant (single node). The NVFP4 + **DFlash2**
+# variant (2-node TP=2) is recipes/qwen38-27b-nvfp4-dflash2.yaml -- same base
+# model, gateway identity, and costs; different speculator + image.
 #
 # A plain, directly-runnable sparkrun recipe (no spark-lab-specific keys):
 #   sparkrun run recipes/qwen38-27b.yaml
@@ -27,6 +30,7 @@ executor: docker
 executor_config:
   ipc: host
   shm_size: 32g
+  restart_policy: 'unless-stopped'
   privileged: true
   cap_add:
     - SYS_PTRACE

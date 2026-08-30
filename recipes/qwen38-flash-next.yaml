@@ -113,6 +113,7 @@ command: |
         --disable-prefill-cuda-graph \
         --disable-flashinfer-autotune \
         --enable-metrics \
+        --enable-mfu-metrics \
         --enable-cache-report \
         --enable-gdn-replayssm-spec \
         --speculative-algorithm NEXTN \

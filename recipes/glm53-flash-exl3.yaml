@@ -43,7 +43,13 @@
 # The image (ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks:exl3) already
 # carries the NoPE sparse-MLA overlay, the EXL3 fused-MoE kernels, the
 # DFlash2 speculator, the chat template at /opt/glm53/chat_template.jinja,
-# and all the runtime patches — so no host file mounts are required.
+# and MOST overlay patches (baked in at build) — so no host file mounts are
+# required. IMPORTANT EXCEPTION: patch_glm_video_placeholders.py is applied
+# only at container RUNTIME by the kit's /start.sh, not baked in — and it is
+# what disables GB10 persistent_topk. This recipe blanks the entrypoint and
+# execs `vllm serve` directly (no /start.sh), so that patch is re-applied via
+# the `pre_exec` hook below; without it, rank 0 crashes in the sparse-MLA
+# indexer during CUDA-graph warmup on SM121.
 #
 # Gated/size notes:
 #   * Target  Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw  (~164 GiB, 120 shards)
@@ -66,7 +72,20 @@ name: glm53-flash-exl3
 model: Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw
 # Pinned Hub commit on the durable mirror (byte-identical to the
 # brandonmusic/GLM-5.3-Flash-tr3-4bpw snapshot 5ab363a8 that the kit used).
-model_revision: "25a44fdbf16862a46b7cc9921142c6c81350af2f"
+#model_revision: "25a44fdbf16862a46b7cc9921142c6c81350af2f"
+# The target pin above is a commit on the target's durable mirror. sparkrun
+# otherwise applies model_revision to EVERY distributed model, including the
+# DFlash2 draft it auto-detects from speculative_config -- and 25a44fdb… does
+# not exist on the draft repo, so the draft download 404s and distribution
+# aborts. List both models explicitly: the target leaves revision unset (falls
+# back to the mirror pin), the draft carries its own revision so it does not
+# inherit the target's commit.
+# distribution_config:
+#   models:
+#     entries:
+#       - name: "{model}"
+#       - name: incoai/GLM-5.3-Flash-DFlash2
+#         revision: main
 runtime: vllm-distributed
 min_nodes: 2
 container: ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks:exl3
@@ -74,25 +93,40 @@ executor: docker
 executor_config:
   entrypoint: ""
   ipc: host
+  auto_remove: false
   shm_size: 32g
   privileged: true
   cap_add:
     - SYS_PTRACE
     - IPC_LOCK
+  # sparkrun renders --ulimit from a LIST of `type=soft[:hard]` strings (its
+  # default is ["nofile=65535:65535"]). A MAP here renders as bare
+  # `--ulimit memlock` with the value dropped, which docker rejects — the
+  # container never launches and Step 5/6 then report "No such container".
   ulimit:
-    memlock: "-1"
-    stack: "67108864"
+    - memlock=-1
+    - stack=67108864
   devices:
     - /dev/infiniband
   security_opt:
     - seccomp=unconfined
-  # Persist the Triton / TileLang JIT caches across container recreate so a
-  # TP=2 restart does not re-JIT mid-collective (the kit bind-mounted the
-  # same host dirs to /root/.triton + /root/.tilelang). Host dirs are created
-  # on first run.
-  volumes:
-    - ~/AI/glm53/triton:/root/.triton/cache
-    - ~/AI/glm53/tilelang:/root/.tilelang/cache
+  # (No host `volumes:` for the JIT caches: sparkrun quotes a leading `~`
+  # literally and docker rejects a non-absolute bind source. The Triton /
+  # TileLang cache dirs are instead pointed at sparkrun's already-mounted,
+  # persistent /cache/runtime via TRITON_CACHE_DIR / TILELANG_CACHE_DIR below.)
+
+# Pre-serve hook (sparkrun Step 5, run via `docker exec` on every rank before
+# `vllm serve`). Applies the ONE overlay patch the image does NOT bake in at
+# build: patch_glm_video_placeholders.py, which disables GB10 persistent_topk
+# so the sparse-MLA indexer decode uses top_k_per_row_decode. Without it the
+# indexer's persistent_topk kernel oversubscribes the SM121 shared-memory
+# budget (total_ctas > num_sms*occupancy; fallback needs >=128KB smem, GB10
+# has ~99KB) and rank 0 dies during CUDA-graph warmup. The patch is idempotent
+# and exits 0 (verified). Local-path recipes are auto-trusted by sparkrun; if
+# this recipe is loaded from a registry, mark it trusted or pass --trust so
+# pre_exec runs (it is fail-fast).
+pre_exec:
+  - python3 /opt/glm53/patch_glm_video_placeholders.py
 
 env:
   # --- NCCL over the CX7 fabric (global knobs; per-node IF/HCA/GID are
@@ -117,8 +151,10 @@ env:
   EXL3_FUSED_MOE: "1"
   # --- JIT caches / long cold-start timeouts (TP=2 first JIT can exceed the
   #     stock 300 s EngineCore execute timeout) ---
-  TRITON_CACHE_DIR: /root/.triton/cache
-  TILELANG_CACHE_DIR: /root/.tilelang/cache
+  # Persist JIT caches on sparkrun's mounted /cache/runtime (absolute, survives
+  # container recreate) rather than a broken ~-prefixed host bind mount.
+  TRITON_CACHE_DIR: /cache/runtime/triton
+  TILELANG_CACHE_DIR: /cache/runtime/tilelang
   VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS: "1800"
   VLLM_ENGINE_READY_TIMEOUT_S: "3600"
   TORCH_CUDA_ARCH_LIST: 12.1a
@@ -144,8 +180,17 @@ metadata:
       supports_vision: true
       supports_reasoning: true
       supported_reasoning_efforts: [low, medium, high]
-      max_input_tokens: 1000000
+      # 524288, not the model's native 1M: the full 1M KV (~15 GiB) leaves too
+      # little for activations on the GB10 and the worker OOMs on first forward.
+      # 512k is the largest context verified to serve on this 2x DGX Spark
+      # (2026-08-30). See the --kv-cache-memory note by the command block.
+      max_input_tokens: 524288
       max_output_tokens: 131072
+      # Per-token costs for LiteLLM spend tracking (per-million ÷ 1e6):
+      # $0.15/M in, $0.50/M out, $0.03/M cache read.
+      input_cost_per_token: 0.00000015
+      output_cost_per_token: 0.0000005
+      cache_read_input_token_cost: 0.00000003
 
 # Values available as {name} placeholders inside `command` below.
 # (Key order here is part of the rendered recipe -- keep it stable.)
@@ -161,16 +206,34 @@ defaults:
   # is what vLLM receives on --speculative-config.
   speculative_config: '{"method":"dflash","model":"incoai/GLM-5.3-Flash-DFlash2","num_speculative_tokens":7,"kv_cache_dtype":"auto","draft_sample_method":"probabilistic","rejection_sample_method":"standard","draft_tensor_parallel_size":1}'
 
+# --revision must match model_revision (line ~69). sparkrun downloads the target
+# at the pinned commit, but serve runs offline (HF_HUB_OFFLINE=1) and vLLM
+# otherwise resolves the model at 'main' -- which has no snapshot in the cache,
+# so it dies with LocalEntryNotFoundError before the engine starts. sparkrun does
+# not thread model_revision into the serve command or expose it as a {} default,
+# so the commit is repeated here. Keep the two in sync if you re-pin.
+# --revision 25a44fdbf16862a46b7cc9921142c6c81350af2f \
+#
+# Memory tuning (verified serving on 2x DGX Spark GB10, 2026-08-30, TP=2):
+#   --max-model-len 524288  --gpu-memory-utilization 0.87  --kv-cache-memory 13.5GiB
+# The model's native context is 1M, but the KV cache has a large fixed floor
+# (~6 GiB: sparse-indexer + hybrid/mamba) plus ~13 KiB/token. Full 1M KV (~15 GiB)
+# allocates but leaves too little for activations, so the worker OOMs on the
+# first forward. Pinning --kv-cache-memory caps KV and frees activation headroom;
+# 512k (13.5 GiB KV, ~1.2x concurrency) is the largest context that serves here.
+# 640k allocates KV fine but its init did not complete cleanly. To raise context,
+# lower --max-num-batched-tokens (smaller activation peak) and/or trade concurrency.
 command: |
     vllm serve {model} \
-        --served-model-name GLM-5.3-Flash-EXL3 \
+        --served-model-name GLM-5.3-Flash-EXL3 {model} \
         --host {host} \
         --port {port} \
         --tensor-parallel-size 2 \
         --distributed-executor-backend mp \
         --quantization exl3 \
-        --max-model-len 1000000 \
+        --max-model-len 524288 \
         --gpu-memory-utilization 0.87 \
+        --kv-cache-memory 14495514624 \
         --max-num-seqs 4 \
         --max-num-batched-tokens 1024 \
         --kv-cache-dtype fp8 \
