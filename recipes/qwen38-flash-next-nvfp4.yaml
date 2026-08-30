@@ -1,0 +1,208 @@
+# Qwen3.8-Flash-Next NVFP4 — SM121 "fast QSA" tuning on 2x DGX Spark (TP=2).
+#
+# Sibling of recipes/qwen38-flash-next.yaml (the SINGLE-node PLE-mmap tuning of
+# the same checkpoint). This variant is the MIA-lab 2-node build; upstream
+# recipe title: "Qwen3.8 Flash Next NVFP4 SM121 fast QSA BF16 Mamba97 c1-c2
+# TP2" (source commits in `metadata` below). Differences from the sibling:
+#   * custom runtime image qwen38-flash-next-nvfp4-runtime:sm121-fast-qsa-mrope1
+#     — patches baked in at build, so NO host bind mounts (unlike the sibling,
+#     which bind-mounts flash-next-prepare.sh output into a stock image);
+#   * SM121 FlashInfer TRT-LLM sparse QSA attention path, isolated from
+#     ReplaySSM, with BF16 recurrent state and 97 Mamba cache slots (c2 not
+#     serialized);
+#   * NEXTN (MTP) speculative decode in decode-attention mode; CUDA graphs
+#     decode-only (batch sizes 1 and 2), prefill graphs disabled;
+#   * 600k total tokens / 110k context / 10 running requests;
+#   * spans BOTH Sparks (min_nodes: 2, --tp-size 2 = one rank per node) —
+#     sparkrun appends the per-node --dist-init-addr / --nnodes / --node-rank
+#     (rank 0 = the head = first host in the model's hosts:) and distributes
+#     the pinned checkpoint into every node's HF cache.
+#
+# Deliberate deviations from the source recipe (each required by this stack):
+#   * defaults.host is 0.0.0.0, not 127.0.0.1 — the source kit ran the server
+#     loopback-bound behind a host-side proxy; here sol's LiteLLM gateway and
+#     spark-lab's readiness probe must reach the head directly over the
+#     tailnet.
+#   * defaults.served_model_name is the HF id, not the kit's
+#     qwen3.8-flash-next-nvfp4-fast-qsa-bf16 — spark-lab's gateway sends
+#     custom_openai/<recipe.model> upstream, so the ENGINE identity must
+#     match the HF id. The kit's name lives on as the GATEWAY identity
+#     (metadata.litellm.model_name below).
+#   * executor_config is the known-good 2-node IB block from the dflash2
+#     sibling — the source kit passed the equivalent docker flags from its
+#     serve.sh (the recipe itself carries no executor config).
+#
+# The image must exist on the head node (locally built); sparkrun ships it to
+# the worker if missing. NEXTN is the checkpoint's own MTP head — no separate
+# draft download, only the ~135 GB target distributes.
+#
+# spark-lab activation (both hosts must be freed of their other active models
+# first — one active model per host: scale the 27B down on sol):
+#
+#   models:
+#     qwen38-flash-next-nvfp4:
+#       active: true
+#       hosts: [luna, sol]     # luna = head (rank 0); order sets the head
+#       recipe: qwen38-flash-next-nvfp4
+#
+#   bin/spark-lab apply --hosts luna,sol --restart-model
+#
+# Direct (no gateway) smoke test once it is up:
+#   curl -sS http://<head>:8000/v1/chat/completions \
+#     -H 'Content-Type: application/json' \
+#     -d '{"model":"RadixArk/Qwen3.8-Flash-Next-NVFP4","messages":[{"role":"user","content":"12*17"}]}'
+
+name: qwen38-flash-next-nvfp4
+model: RadixArk/Qwen3.8-Flash-Next-NVFP4
+# Pinned checkpoint revision (defaults.revision below, the recipe's --revision
+# flag, and the distribution entry all match this — keep them in sync).
+model_revision: 7b719225242aacd3dbd3f9407468c2ee9a9d2594
+runtime: sglang
+min_nodes: 2
+max_nodes: 2
+container: qwen38-flash-next-nvfp4-runtime:sm121-fast-qsa-mrope1
+executor: docker
+# The known-good 2-node IB executor block (see qwen38-27b-nvfp4-dflash2.yaml).
+# IPC_LOCK + memlock unlimited are required for NCCL to register pinned memory
+# over the CX7 fabric; /dev/infiniband must be passed through for RoCE.
+executor_config:
+  ipc: host
+  shm_size: 32g
+  restart_policy: 'unless-stopped'
+  privileged: true
+  cap_add:
+    - SYS_PTRACE
+    - IPC_LOCK
+  # LIST of `type=soft[:hard]` strings -- a MAP renders as bare `--ulimit
+  # memlock` (value dropped) and docker rejects the run.
+  ulimit:
+    - memlock=-1
+    - stack=67108864
+  devices:
+    - /dev/infiniband
+  security_opt:
+    - seccomp=unconfined
+
+# Serve offline from sparkrun's distributed HF cache (no network at serve).
+env:
+  PYTHONUNBUFFERED: '1'
+  HF_HUB_OFFLINE: '1'
+  TRANSFORMERS_OFFLINE: '1'
+  # 2-node NCCL over the CX7 fabric. The source recipe pins the interfaces
+  # explicitly: enp1s0f0np0 / rocep1s0f0 IS this cluster's active RoCE link
+  # (f1 is down — see the qwen38-27b-nvfp4-dflash2.yaml note). Sparkrun would
+  # otherwise auto-detect these per node, reaching the same result.
+  NCCL_SOCKET_IFNAME: enp1s0f0np0
+  GLOO_SOCKET_IFNAME: enp1s0f0np0
+  NCCL_IB_HCA: rocep1s0f0
+  NCCL_IB_DISABLE: '0'
+  NCCL_IB_ROCE_VERSION_NUM: '2'
+  NCCL_IB_GID_INDEX: '3'
+  NCCL_NET: IB
+  NCCL_NET_PLUGIN: none
+  NCCL_NVLS_ENABLE: '0'
+  NCCL_CUMEM_ENABLE: '0'
+  NCCL_CROSS_NIC: '0'
+  TORCH_CUDA_ARCH_LIST: 12.1a
+  FLASHINFER_CUDA_ARCH_LIST: 12.1a
+
+metadata:
+  description: >-
+    Original-Qwen-lineage NVFP4 candidate that isolates the SM121 FlashInfer
+    TRT-LLM sparse QSA path from ReplaySSM. It retains the control's BF16
+    recurrent state, explicitly provisions 97 Mamba state slots so c2 is not
+    serialized, and leaves model tensors unchanged.
+  source_model: Qwen/Qwen3.8-Flash-Next
+  model_revision: 7b719225242aacd3dbd3f9407468c2ee9a9d2594
+  model_dtype: nvfp4
+  quantization: nvfp4
+  optimization: sm121-trtllm-qsa-mrope-bound-bf16-mamba97-cg12-mem80
+  mia_source_commit: 02cd6d9050b386644c65ebf2396324da9575e5ee
+  fast_qsa_evidence_commit: 65ea3883b8dd80438b58ace56eb7979c52fa6ea6
+  base_image_digest: 'sha256:14ed582518584c5c830206b5318a2c2769e68229c3422e48a28b952b3a888bd4'
+  # spark-lab apply probe bound: first boot = ~135 GB weight load on both
+  # nodes + JIT + decode CUDA-graph capture (prefill graphs disabled).
+  readiness_seconds: 5400
+  # spark-lab gateway metadata (sparkrun ignores metadata extras). The kit's
+  # served identity lives on as the gateway name; the engine serves under the
+  # HF id (see the defaults note above).
+  litellm:
+    model_name: qwen3.8-flash-next-nvfp4-fast-qsa-bf16
+    model_info:
+      supports_vision: true
+      supports_reasoning: true
+      # reasoning_effort is a no-op on this checkpoint build (measured on the
+      # single-node sibling) -- don't claim it.
+      supported_reasoning_efforts: []
+      # --context-length 110000 is the combined in+out budget per request;
+      # --allow-auto-truncate handles overflow.
+      max_input_tokens: 110000
+      max_output_tokens: 110000
+      # Per-token costs for LiteLLM spend tracking (per-million / 1e6):
+      # $0.15/M in, $0.50/M out, $0.016/M cache read.
+      input_cost_per_token: 0.00000015
+      output_cost_per_token: 0.0000005
+      cache_read_input_token_cost: 0.000000016
+
+# Distribute the revision-pinned target into every node's HF cache (NEXTN is
+# the checkpoint's own MTP head -- no separate draft download).
+distribution_config:
+  models:
+    entries:
+      - name: RadixArk/Qwen3.8-Flash-Next-NVFP4
+        target:
+          - -1
+        revision: 7b719225242aacd3dbd3f9407468c2ee9a9d2594
+
+# Values available as {name} placeholders inside `command` below.
+# (Key order here is part of the rendered recipe -- keep it stable.)
+defaults:
+  host: 0.0.0.0
+  port: 8000
+  tensor_parallel: 2
+  gpu_memory_utilization: 0.8
+  max_model_len: 110000
+  max_num_seqs: 10
+  served_model_name: RadixArk/Qwen3.8-Flash-Next-NVFP4
+  revision: 7b719225242aacd3dbd3f9407468c2ee9a9d2594
+  max_total_tokens: 600000
+  chunked_prefill_size: 4096
+  speculative_num_steps: 3
+  speculative_num_draft_tokens: 4
+
+command: |
+    python3 -m sglang.launch_server \
+        --model-path {model} \
+        --revision {revision} \
+        --served-model-name {served_model_name} \
+        --host {host} \
+        --port {port} \
+        --tp-size {tensor_parallel} \
+        --quantization modelopt_fp4 \
+        --attention-backend flashinfer \
+        --fp4-gemm-backend flashinfer_cutlass \
+        --page-size 64 \
+        --mamba-ssm-dtype bfloat16 \
+        --mamba-radix-cache-strategy extra_buffer \
+        --mamba-track-interval 64 \
+        --max-mamba-cache-size 97 \
+        --mem-fraction-static {gpu_memory_utilization} \
+        --context-length {max_model_len} \
+        --max-total-tokens {max_total_tokens} \
+        --max-running-requests {max_num_seqs} \
+        --chunked-prefill-size {chunked_prefill_size} \
+        --speculative-algorithm NEXTN \
+        --speculative-num-steps {speculative_num_steps} \
+        --speculative-eagle-topk 1 \
+        --speculative-num-draft-tokens {speculative_num_draft_tokens} \
+        --speculative-attention-mode decode \
+        --reasoning-parser auto \
+        --tool-call-parser auto \
+        --allow-auto-truncate \
+        --enable-metrics \
+        --enable-cache-report \
+        --ple-offload-embedding \
+        --disable-prefill-cuda-graph \
+        --cuda-graph-bs-decode 1 2 \
+        --disable-cuda-graph-padding \
+        --trust-remote-code
