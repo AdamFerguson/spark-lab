@@ -36,6 +36,11 @@ IMAGE="${IMAGE:-lmsysorg/sglang:qwen38flashnext}"
 MODEL="${MODEL:-RadixArk/Qwen3.8-Flash-Next-NVFP4}"
 REVISION="${REVISION:-7b719225242aacd3dbd3f9407468c2ee9a9d2594}"
 BASE_DIR="${BASE_DIR:-$HOME/AI/flash-next}"
+# NOTE: recipes/qwen38-flash-next.yaml mounts {install_dir}/flash-next/* --
+# spark-lab expands {install_dir} to the node's install dir (default ~/AI,
+# i.e. this default). If your spark-lab install.install_dir differs, run
+# this script with BASE_DIR=<install_dir>/flash-next so the bind sources
+# exist where the recipe expects them.
 HF_CACHE="${HF_CACHE:-${HF_HOME:-$HOME/.cache/huggingface}}"
 
 echo "== flash-next prepare: ${MODEL} @ ${REVISION}"

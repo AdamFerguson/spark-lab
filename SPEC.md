@@ -144,7 +144,10 @@ For each selected host (in config order):
    what the gateway serves, exporter scrape targets).
 2. **Render.** Templates + resolved secrets → `deploy/` for this host
    (litellm compose/config/.env/model_config/prometheus/grafana/scripts +
-   the active models' node-side recipes with layout pins).
+   the active models' node-side recipes with layout pins). Recipes may carry
+   an `{install_dir}` placeholder in `executor_config` host-side paths (bind
+   mounts); it is expanded to THIS node's concrete install dir when the file
+   is written into it, so repo recipes stay machine-independent.
 3. **State + diff.** Node-side state file `<repo_dir>/.sparklab-state/
    state.json`; classify every target file added/changed/removed.
 4. **Actions, only for what changed:**

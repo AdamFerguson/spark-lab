@@ -22,6 +22,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from sparklab.core import converge, state  # noqa: E402
+from sparklab.core import node as node_mod  # noqa: E402
 from tests.helpers import FakeRuntime  # noqa: E402
 
 
@@ -398,6 +399,48 @@ class TestConverge(unittest.TestCase):
         self.assertEqual(rt.spawned,
                          [["sparkrun", "run", "r.yaml", "--ensure", "--hosts", "x"]])
         self.assertEqual(len(rt.commands), 2)         # both still recorded
+
+
+class TestExpandInstallDir(unittest.TestCase):
+    """`{install_dir}` in node-side recipes expands to the node's real install
+    dir at write time (per host), keeping repo recipes machine-independent."""
+
+    RECIPE = (b'executor_config:\n  volumes:\n'
+              b'  - "{install_dir}/flash-next/ple:/ple"\n'
+              b'command: |\n  sglang serve {model}\n')
+
+    def test_expands_only_in_recipe_files(self):
+        data = b'- "{install_dir}/flash-next/ple:/ple"\n'
+        out = converge.expand_install_dir("sparkrun/recipes/m.yaml", data, "/home/u/AI")
+        self.assertEqual(out, b'- "/home/u/AI/flash-next/ple:/ple"\n')
+        # non-recipe files are untouched (litellm configs may carry braces)
+        self.assertEqual(
+            converge.expand_install_dir("litellm/model_config.yaml", data, "/h"), data)
+        # no placeholder -> byte-identical (golden safety)
+        plain = b"- /cache/huggingface:/cache/huggingface\n"
+        self.assertEqual(
+            converge.expand_install_dir("sparkrun/recipes/m.yaml", plain, "/h"), plain)
+        # no concrete base -> left intact rather than corrupted
+        self.assertEqual(
+            converge.expand_install_dir("sparkrun/recipes/m.yaml", data, None), data)
+
+    def test_write_files_expands_recipe_volumes(self):
+        d = Path(tempfile.mkdtemp())
+        fs = node_mod.LocalInstallFS(d)
+        rendered = {
+            "sparkrun/recipes/m.yaml": self.RECIPE,
+            "litellm/model_config.yaml": b"model_list: []",
+        }
+        converge.write_files(types.SimpleNamespace(install_dir=str(d)),
+                             rendered, dry_run=False, fs=fs)
+        written = (d / "sparkrun" / "recipes" / "m.yaml").read_bytes()
+        self.assertNotIn(b"{install_dir}", written)
+        self.assertIn(str(d).encode() + b"/flash-next/ple:/ple", written)
+        # sparkrun's own {model} placeholder must survive for launch time
+        self.assertIn(b"sglang serve {model}", written)
+        # non-recipe file byte-identical
+        self.assertEqual((d / "litellm" / "model_config.yaml").read_bytes(),
+                         b"model_list: []")
 
 
 class TestTolerantStop(unittest.TestCase):

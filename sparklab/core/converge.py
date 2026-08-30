@@ -389,6 +389,27 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
     return plan
 
 
+INSTALL_DIR_PLACEHOLDER = "{install_dir}"
+
+
+def expand_install_dir(rel: str, data: bytes, base: Optional[str]) -> bytes:
+    """Expand ``{install_dir}`` in a node-side sparkrun recipe.
+
+    Recipes must stay reusable across machines, so host-side bind-mount
+    sources are written as ``{install_dir}/...`` (e.g. the flash-next PLE
+    volumes) instead of hardcoding ``/home/<you>/AI/...``. The concrete
+    per-node install dir is only known at write time -- ``~/AI`` in the
+    config refers to THAT node's filesystem, where the install FS has
+    already expanded it. Applied to sparkrun recipe files only, right
+    before they land in the install dir; a no-op otherwise (byte-identity
+    for placeholder-free recipes is preserved).
+    """
+    if base and rel.startswith("sparkrun/recipes/") \
+            and INSTALL_DIR_PLACEHOLDER.encode() in data:
+        return data.replace(INSTALL_DIR_PLACEHOLDER.encode(), base.encode())
+    return data
+
+
 def write_files(cfg, rendered: dict, dry_run: bool, fs=None) -> List[str]:
     """Copy rendered files into the target node's install dir. Returns written paths.
 
@@ -398,11 +419,12 @@ def write_files(cfg, rendered: dict, dry_run: bool, fs=None) -> List[str]:
     if fs is None:
         from . import node as node_mod
         fs = node_mod.LocalInstallFS(Path(cfg.install_dir))
+    base = str(getattr(fs, "base", "")) or None
     written: List[str] = []
     for rel, data in rendered.items():
         if dry_run:
             continue
-        written.append(fs.write(rel, data))
+        written.append(fs.write(rel, expand_install_dir(rel, data, base)))
     return written
 
 

@@ -77,8 +77,13 @@ byte-identical default render):
   recipe uses this for its ~35-flag command line.
 - `model.executor_config` → keys merged **over** the base block (`ipc`,
   `shm_size`, `privileged`, `cap_add`, `security_opt`); whole-key replacement,
-  e.g. `user: "$SHELL_USER"` (non-root container), `memory_limit: 116g`,
-  `volumes:` (host bind mounts — absolute node paths; `src:dst:ro` supported).
+  e.g. `user: "$SHELL_USER"` (non-root container; `$SHELL_USER` is sparkrun's
+  variable, expanded to the SSH user), `memory_limit: 116g`,
+  `volumes:` (host bind mounts — `src:dst:ro` supported). Sources may use the
+  `{install_dir}` placeholder: spark-lab expands it to the node's real
+  install dir when writing the node-side recipe (direct sparkrun users:
+  replace it with an absolute path). Quote volume strings that start with it
+  — an unquoted YAML scalar beginning with `{` parses as a flow mapping.
 - `model.env` → extra container env vars (added after the base `PYTORCH_*`
   and the injected `HF_TOKEN`).
 - `model.model_revision` → pinned HF checkpoint revision (top-level recipe

@@ -51,12 +51,17 @@ executor_config:
   # Keep the container inside the UMA budget the recipe was tuned with
   memory_limit: 116g
   volumes:
-    # Host-side paths from scripts/flash-next-prepare.sh — replace /home/<you>
-    # with your own home (these bind mounts are created on the serving node).
-    - /home/<you>/AI/flash-next/ple:/ple
-    - /home/<you>/AI/flash-next/sglang-cache:/tmp/.cache/sglang
-    - /home/<you>/AI/flash-next/build/qwen4_exp.py:/sgl-workspace/sglang/python/sglang/srt/models/qwen4_exp.py:ro
-    - /home/<you>/AI/flash-next/build/qwen_sparse_attn_backend.py:/sgl-workspace/sglang/python/sglang/srt/layers/attention/qwen_sparse_attn_backend.py:ro
+    # Host-side paths created by scripts/flash-next-prepare.sh (its default
+    # BASE_DIR is $HOME/AI/flash-next, i.e. install dir ~/AI). {install_dir}
+    # is expanded by spark-lab to the node's real install dir when the
+    # node-side recipe is written; direct sparkrun users: replace it with an
+    # absolute path (or run prepare with BASE_DIR=<your path>). The double
+    # quotes matter: an unquoted scalar starting with '{' parses as a YAML
+    # flow mapping.
+    - "{install_dir}/flash-next/ple:/ple"
+    - "{install_dir}/flash-next/sglang-cache:/tmp/.cache/sglang"
+    - "{install_dir}/flash-next/build/qwen4_exp.py:/sgl-workspace/sglang/python/sglang/srt/models/qwen4_exp.py:ro"
+    - "{install_dir}/flash-next/build/qwen_sparse_attn_backend.py:/sgl-workspace/sglang/python/sglang/srt/layers/attention/qwen_sparse_attn_backend.py:ro"
 
 env:
   SGLANG_QWEN4_PLE_MMAP_DIR: /ple
