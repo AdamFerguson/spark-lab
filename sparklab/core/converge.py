@@ -164,6 +164,15 @@ def _install_rel_path(cfg, rel: str, home: Optional[str]) -> str:
     return str(Path(str(cfg.install_dir)) / rel)
 
 
+def gateway_health_argv(port) -> list:
+    """Bounded liveness poll for the gateway (60s): used by converge after a
+    planned restart and by `spark-lab litellm restart`."""
+    return ["sh", "-c",
+            "for i in $(seq 1 30); do "
+            f"curl -fsS -o /dev/null http://127.0.0.1:{port}/health/liveliness"
+            " && exit 0; sleep 2; done; exit 1"]
+
+
 def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restart: bool,
                runtime=None, launch_model: bool = True) -> Plan:
     plan = Plan()
@@ -350,10 +359,7 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
             gw_port = cfg.litellm.get("port", 4000)
             plan.commands.append((
                 "Verify the gateway came back healthy (bounded)",
-                ["sh", "-c",
-                 "for i in $(seq 1 30); do "
-                 f"curl -fsS -o /dev/null http://127.0.0.1:{gw_port}/health/liveliness"
-                 " && exit 0; sleep 2; done; exit 1"]))
+                gateway_health_argv(gw_port)))
     else:
         plan.notes.append("LiteLLM stack unchanged (skipping `docker compose up`).")
 

@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from sparklab.commands import apply as apply_cmd, litellm as litellm_cmd  # noqa: E402
 from sparklab.commands import expose as expose_cmd, sync as sync_cmd  # noqa: E402
 from tests.helpers import REFERENCE_ENV, SECRET_DUMMY, FakeRuntime, config_text  # noqa: E402
 
@@ -116,6 +117,49 @@ class TestSync(ExposeSyncBase):
         self.assertEqual(entry["litellm_params"]["api_base"], "http://127.0.0.1:8000/v1")
         # node state adopted from on-disk reality
         self.assertTrue((self.d / ".sparklab-state" / "state.json").is_file())
+
+
+class TestLitellmVerb(ExposeSyncBase):
+    def _apply(self, rt):
+        ns = types.SimpleNamespace(config=str(self.cp), hosts=None, dry_run=False,
+                                   restart_model=False, diff=False, no_model=False,
+                                   verbose=False, json=False, runtime=rt)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(apply_cmd.run(ns), 0)
+
+    def test_status_reports_health_and_served(self):
+        self._apply(FakeRuntime(available=_AVAIL))
+        rt = FakeRuntime(available=_AVAIL, captures=CAPTURES)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = litellm_cmd.run(_args(self.cp, rt, litellm_cmd="status"))
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        self.assertIn("in sync", out)
+        self.assertIn("healthy: yes", out)
+        self.assertIn("my-spark-model", out)
+        self.assertFalse(any(c[0] == "docker" and "restart" in c for c in rt.commands))
+
+    def test_restart_writes_stale_files_and_verifies(self):
+        self._apply(FakeRuntime(available=_AVAIL))
+        self.cp.write_text(self.cp.read_text().replace("model_name: my-spark-model",
+                                                       "model_name: renamed-gateway"))
+        rt = FakeRuntime(available=_AVAIL, captures=CAPTURES)
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = litellm_cmd.run(_args(self.cp, rt, litellm_cmd="restart"))
+        self.assertEqual(rc, 0)
+        joined = [" ".join(c) for c in rt.commands]
+        self.assertTrue(any("compose" in c and "restart litellm" in c for c in joined))
+        self.assertTrue(any("/health/liveliness" in c for c in joined))
+        # the stale model_config was written from the config
+        rendered = (self.install / "litellm" / "model_config.yaml").read_text()
+        self.assertIn("renamed-gateway", rendered)
+        # ... and the state now agrees (a second status is in sync)
+        rt2 = FakeRuntime(available=_AVAIL, captures=CAPTURES)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            litellm_cmd.run(_args(self.cp, rt2, litellm_cmd="status"))
+        self.assertIn("in sync", buf.getvalue())
 
 
 if __name__ == "__main__":

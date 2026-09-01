@@ -11,8 +11,8 @@ import argparse
 
 from .core import config as config_mod
 from .core import runtime as runtime_mod
-from .commands import (adopt, apply, check as check_cmd, expose, init, logs, model,
-                       status, sync, teardown)
+from .commands import (adopt, apply, check as check_cmd, expose, init, litellm, logs,
+                       model, status, sync, teardown)
 
 
 def main(argv=None) -> int:
@@ -90,6 +90,18 @@ def main(argv=None) -> int:
                         help="add extra_models entries for unexposed engines + refresh "
                              "node state (model workloads are never touched)")
     p_sync.set_defaults(func=sync.run)
+
+    p_lit = sub.add_parser("litellm",
+                           help="gateway control (stack-wide changes: use apply; "
+                                "logs: spark-lab logs litellm)")
+    lit_sub = p_lit.add_subparsers(dest="litellm_cmd", required=True)
+    p_lit_status = lit_sub.add_parser("status", parents=[common],
+                                      help="gateway staleness + health + served list")
+    p_lit_status.set_defaults(func=litellm.run)
+    p_lit_restart = lit_sub.add_parser("restart", parents=[common],
+                                       help="write stale gateway files, restart, "
+                                            "verify health, show served list")
+    p_lit_restart.set_defaults(func=litellm.run)
 
     p_model = sub.add_parser("model", help="model workload actions (the stack keeps running)")
     model_sub = p_model.add_subparsers(dest="model_cmd", required=True)
