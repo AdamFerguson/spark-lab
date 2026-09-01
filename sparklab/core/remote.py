@@ -210,6 +210,11 @@ class RemoteRuntime:
         r = self._conn.run(_login(_shell_argv(argv)), warn=True)
         return subprocess.CompletedProcess(list(argv), r.return_code, r.stdout, r.stderr)
 
+    def run_capture(self, argv: List) -> subprocess.CompletedProcess:
+        """Run ``argv`` on the node with output CAPTURED (not streamed)."""
+        r = self._conn.run(_login(_shell_argv(argv)), hide=True, warn=True)
+        return subprocess.CompletedProcess(list(argv), r.return_code, r.stdout, r.stderr)
+
     def _sudo_needs_password(self) -> bool:
         """True when the node's sudo has no valid credential cache for us.
 

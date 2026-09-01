@@ -209,11 +209,12 @@ class FakeRuntime:
 
     is_remote = False
 
-    def __init__(self, available=None, fail=None):
+    def __init__(self, available=None, fail=None, captures=None):
         self._available = set(available) if available is not None else {
             "sh", "sparkrun", "docker", "systemctl", "tailscale", "cloudflared",
         }
         self._fail = dict(fail or {})
+        self.captures = dict(captures or {})   # needle -> (returncode, stdout)
         self.calls = []
         self.spawned = []   # the subset of commands launched detached (via spawn)
         self.spawn_logs = []   # the log path each detached launch was given
@@ -239,6 +240,28 @@ class FakeRuntime:
         r.argv = argv
         r.returncode = self._fail.get(argv[0], 0)
         return r
+
+    def run_capture(self, argv):
+        """Captured variant: matches a needle from ``captures`` against the
+        joined argv and returns that canned stdout (first hit wins)."""
+        argv = [str(x) for x in argv]
+        self.calls.append(argv)
+        joined = " ".join(argv)
+        out, rc = "", 0
+        for needle, (rc_, text) in self.captures.items():
+            if needle in joined:
+                out, rc = text, rc_
+                break
+
+        class _C:
+            pass
+
+        c = _C()
+        c.argv = argv
+        c.returncode = rc
+        c.stdout = out
+        c.stderr = ""
+        return c
 
     def run_sudo(self, argv):
         """Mirror of ``Runtime.run_sudo``: records ``["sudo", *argv]``."""

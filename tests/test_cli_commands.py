@@ -7,6 +7,7 @@ the seam is exercised end-to-end for every subcommand, not just ``apply``.
 
 import contextlib
 import io
+import json
 import os
 import re
 import sys
@@ -56,6 +57,20 @@ class TestCliCommands(unittest.TestCase):
         self.assertTrue(any(a[0] == "sparkrun" and a[1] == "status" for a in rt.commands))
         self.assertTrue(any(a[0] == "docker" for a in rt.commands))
         self.assertTrue(any(a[0] == "tailscale" for a in rt.commands))
+
+    def test_status_json_reports_live_inventory(self):
+        rt = FakeRuntime(available=_AVAIL, captures={
+            "docker ps": (0, "ENGINE|vllm-fn|8000|manual-model\n"),
+            "Authorization": (0, "my-spark-model\n"),
+        })
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(status.run(_args(self.cp, rt, json=True)), 0)
+        data = json.loads(buf.getvalue())
+        self.assertEqual(data["hosts"]["mylab"]["engines"][0]["container"], "vllm-fn")
+        self.assertEqual(data["hosts"]["mylab"]["engines"][0]["port"], 8000)
+        self.assertEqual(data["hosts"]["mylab"]["gateway"]["served"], ["my-spark-model"])
+        self.assertEqual(data["placement"][0]["model"], "qwen")
 
     def test_teardown_without_yes_refuses(self):
         rt = FakeRuntime(available=_AVAIL)

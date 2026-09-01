@@ -50,6 +50,11 @@ class Runtime:
         """
         return subprocess.run(list(argv))
 
+    def run_capture(self, argv) -> subprocess.CompletedProcess:
+        """Run ``argv`` with stdout/stderr CAPTURED (inventory-style reads:
+        the caller parses the output, nothing is streamed)."""
+        return subprocess.run(list(argv), capture_output=True, text=True)
+
     def run_sudo(self, argv) -> subprocess.CompletedProcess:
         """Run ``argv`` under ``sudo`` on this machine.
 
