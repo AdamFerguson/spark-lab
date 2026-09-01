@@ -27,12 +27,14 @@ def _render():
 
 
 def _render_with_model_extra(extra: str):
-    """Render REFERENCE_CONFIG with extra 2-space-indented keys in the model
-    block (inserted before ``params:``)."""
+    """Render REFERENCE_CONFIG with extra keys (written at the v1-style 2-space
+    indent) added to the model block, inserted before its ``params:``."""
+    extra4 = "".join("  " + ln if ln.strip() else ln
+                     for ln in extra.splitlines(keepends=True))
     text = REFERENCE_CONFIG.replace(
-        "  min_nodes: 1\n  params:",
-        "  min_nodes: 1\n" + extra + "  params:", 1)
-    assert extra in text, "model-extra not inserted"
+        "    min_nodes: 1\n    params:",
+        "    min_nodes: 1\n" + extra4 + "    params:", 1)
+    assert extra4 in text, "model-extra not inserted"
     d = Path(tempfile.mkdtemp())
     (d / "config.yaml").write_text(text)
     (d / ".env").write_text(REFERENCE_ENV)

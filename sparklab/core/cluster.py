@@ -141,13 +141,15 @@ def targets(cfg, names: Optional[List[str]] = None,
             if local_rt is None:
                 local_rt = runtime if runtime is not None else runtime_mod.default_runtime()
             rt = local_rt
-        elif not cfg.is_v3 and runtime is not None and getattr(runtime, "is_remote", False):
-            # legacy v1/v2 remote config: the CLI already built this config's
-            # remote runtime; reuse it (byte-identical to the old single-runtime
-            # behavior).
-            rt = runtime
         else:
-            rt = (remote_factory or build_remote)(spec, view)
+            # An injected REMOTE runtime (tests; or a caller that already built
+            # one for this run) serves remote hosts directly; otherwise build
+            # one per remote host. A local injected runtime (the default) never
+            # proxies for a remote node.
+            if getattr(runtime, "is_remote", False):
+                rt = runtime
+            else:
+                rt = (remote_factory or build_remote)(spec, view)
         out.append(HostTarget(spec, view, rt))
     return out
 

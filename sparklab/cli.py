@@ -11,7 +11,7 @@ import argparse
 
 from .core import config as config_mod
 from .core import runtime as runtime_mod
-from .commands import (adopt, apply, check as check_cmd, images, init, logs, migrate, model,
+from .commands import (adopt, apply, check as check_cmd, images, init, logs, model,
                        status, system, teardown, upgrade, validate)
 
 
@@ -94,12 +94,6 @@ def main(argv=None) -> int:
     p_doctor.add_argument("--all", action="store_true", help=argparse.SUPPRESS)
     p_doctor.set_defaults(func=system.check)
 
-    p_migrate = sub.add_parser("migrate", parents=[common],
-                               help="rewrite a v1/v2 config.yaml to schema v3 (idempotent)")
-    p_migrate.add_argument("--dry-run", action="store_true",
-                           help="print the v2 form without writing")
-    p_migrate.set_defaults(func=migrate.run)
-
     p_adopt = sub.add_parser("adopt", parents=[common],
                              help="take over an existing running install (read-only; writes only state)")
     p_adopt.add_argument("--dry-run", action="store_true", help="report; write no state")
@@ -149,7 +143,7 @@ def build_runtime(config_path: str):
     """The runtime for this run: local, or remote when the config sets
     ``install.remote.host``.
 
-    Commands that don't target a node (``init``, ``recipes``, ``migrate``) may
+    Commands that don't target a node (``init``) may
     run before/without a config; any load failure falls back to the local
     runtime and the command itself reports the problem.
     """

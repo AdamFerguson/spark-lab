@@ -87,8 +87,8 @@ models:
 - Prerequisite for remote hosts: SSH key access (your key, or `identity_file`;
   `user@host` in `ssh:` works too).
 
-Legacy v1/v2 configs (single node, optional `install.remote`) keep working
-unchanged; `spark-lab migrate` rewrites them to v3.
+Legacy configs (single-node or `install.remote` shapes) are retired: declare
+`version: 3` per `config.example.yaml`.
 
 Design: [ADR-0008](docs/adr/0008-multi-host-cluster-config.md).
 Operations notes: [docs/REMOTE_OPERATOR_MODE.md](docs/REMOTE_OPERATOR_MODE.md).

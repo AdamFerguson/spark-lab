@@ -1,7 +1,7 @@
 """`spark-lab check images` — resolve + report every image the deploy will pull.
 
-Resolves each image through the precedence (env > profile > images map > v1 field
-> default) for the active model + enabled stack. Read-only unless ``--probe`` is
+Resolves each image through the precedence (env > ``images:`` map > default)
+for the active model + enabled stack. Read-only unless ``--probe`` is
 given, which additionally runs ``docker manifest inspect`` for each reference via
 the runtime seam (ADR 0002) to catch unresolvable tags before they bite.
 """
@@ -22,8 +22,7 @@ def _images_one(t, probe: bool) -> int:
     resolved = cfg.resolved_images()
     runtime = t.runtime
 
-    print(f"== spark-lab check images (active: {cfg.active_alias or '(none)'}, "
-          f"profile: {cfg.profile}) ==")
+    print(f"== spark-lab check images (active: {cfg.active_alias or '(none)'}) ==")
     ok = True
     for key in _ORDER:
         if key not in resolved:

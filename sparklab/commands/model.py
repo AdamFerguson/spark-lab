@@ -47,9 +47,6 @@ def _check_conflict(cfg, model: str, host_names):
     models = data.get("models") or {}
     active_others = [a for a, m in models.items()
                      if a != model and (m or {}).get("active")]
-    first = str((data.get("active_models") or [None])[0] or "")
-    if first and first != model and first in models and first not in active_others:
-        active_others.append(first)
     all_names = [s.name for s in cfg.host_specs]
     for other in active_others:
         o_hosts = (models[other] or {}).get("hosts")
@@ -66,11 +63,9 @@ def _check_conflict(cfg, model: str, host_names):
 # --------------------------------------------------------------------------- #
 def up(args) -> int:
     cfg = config.load(args.config)
-    if not cfg.is_v3 or cfg.view_host is not None:
-        print("[ERROR] `model up` needs a v3 cluster config (a `hosts:` list).",
-              file=sys.stderr)
-        print("Migrate with `spark-lab migrate` (or hand-write the `hosts:` list).",
-              file=sys.stderr)
+    if cfg.view_host is not None:
+        print("[ERROR] `model up` runs against the cluster config, not a "
+              "single-host view.", file=sys.stderr)
         return 1
     model = args.model
     models = cfg.data.get("models") or {}
@@ -132,9 +127,9 @@ def down(args) -> int:
         print("the config so a routine `apply` leaves it stopped there. --")
         return 1
     cfg = config.load(args.config)
-    if not cfg.is_v3 or cfg.view_host is not None:
-        print("[ERROR] `model down` needs a v3 cluster config (a `hosts:` list).",
-              file=sys.stderr)
+    if cfg.view_host is not None:
+        print("[ERROR] `model down` runs against the cluster config, not a "
+              "single-host view.", file=sys.stderr)
         return 1
     model = args.model
     models = cfg.data.get("models") or {}

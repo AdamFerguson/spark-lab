@@ -6,8 +6,8 @@
 > is kept and is still the accurate description of how remote hosts are driven.
 > The *config shape* — one config per node with `install.remote` under `labs/<node>/`
 > — is replaced by the v3 cluster config (one `hosts:` list per cluster, with
-> local auto-detection and `--hosts` selection). Migrate with `spark-lab
-> migrate`.
+> local auto-detection and `--hosts` selection). The legacy `install.remote`
+> shape is no longer accepted (`load` requires `version: 3`).
 
 **Status:** APPROVED (2026-08-26) — implementation complete (steps 1–10, 132 tests
 green incl. 25 new remote tests, goldens byte-identical); step 11 (wiring on
@@ -57,7 +57,7 @@ generalized form.
   prompt entirely; a non-interactive terminal (CI, pipes) is refused with a
   clear error rather than hanging.
 
-## Config surface (new block, v1 + v2)
+## Config surface (new block, v1 + v2 — historical; the `install.remote` shape is retired)
 
 ```yaml
 install:

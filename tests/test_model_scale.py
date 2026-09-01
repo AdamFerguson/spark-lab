@@ -137,17 +137,15 @@ class TestModelUp(ScaleBase):
         self.assertEqual(yaml.safe_load((self.d / "config.yaml").read_text())["models"][
             "qwen"]["hosts"], ["alpha", "beta"])   # rewrite kept, user reverts or fixes
 
-    def test_up_requires_v3(self):
+    def test_up_already_everywhere_is_a_noop(self):
         from tests.helpers import config_text
-        (self.d / "v1.yaml").write_text(config_text(str(self.install)))
-        (self.d / "v1env").write_text(REFERENCE_ENV)
-        # .env must sit next to the config: use its own dir
-        sub = self.d / "v1dir"
+        # qwen has no hosts: restriction -> already on every host; routine no-op.
+        sub = self.d / "single"
         sub.mkdir()
         (sub / "config.yaml").write_text(config_text(str(self.install)))
         (sub / ".env").write_text(REFERENCE_ENV)
         self.assertEqual(model_cmd.up(_args(str(sub / "config.yaml"), FakeRuntime(),
-                                            model="qwen")), 1)
+                                            model="qwen")), 0)
 
 
 class TestModelDown(ScaleBase):

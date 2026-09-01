@@ -3,6 +3,13 @@
 model: test-llm/model
 runtime: sglang
 min_nodes: 1
+# Placement pin: rendered by spark-lab from the config's hosts: list (the
+# repo recipe this was rendered from is placement-agnostic). sparkrun honors
+# an explicit layout verbatim, on every scheduler.
+layout:
+  placements:
+    - host: 127.0.0.1
+      ranks: [0]
 container: lmsysorg/sglang:test
 executor: docker
 executor_config:

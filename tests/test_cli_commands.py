@@ -22,7 +22,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from sparklab.commands import (  # noqa: E402
-    init, images, logs, migrate, status, teardown, upgrade, validate)
+    init, images, logs, status, teardown, upgrade, validate)
 from tests.helpers import REFERENCE_ENV, SECRET_DUMMY, FakeRuntime, config_text  # noqa: E402
 
 _AVAIL = {"sh", "sparkrun", "docker", "systemctl", "tailscale", "cloudflared", sys.executable}
@@ -173,18 +173,6 @@ class TestCliCommands(unittest.TestCase):
         bad.write_text("install_dir: %s\nversion: 2\nmodels:\n  m:\n    active: true\n"
                        "    hf_model: x\n" % self.install)
         self.assertEqual(images.run(_args(bad, FakeRuntime(available=_AVAIL), probe=False)), 1)
-
-    def test_migrate_v1_to_v3_is_idempotent(self):
-        v1 = self.d / "v1.yaml"
-        v1.write_text("model:\n  recipe_name: q\n  hf_model: x\n  image: mm:1\n")
-        a = lambda: types.SimpleNamespace(config=str(v1), dry_run=False, runtime=None,
-                                          verbose=False, json=False)
-        self.assertEqual(migrate.run(a()), 0)
-        data = yaml.safe_load(v1.read_text())
-        self.assertEqual(data["version"], 3)
-        self.assertIn("q", data["models"])
-        self.assertEqual(len(data["hosts"]), 1)
-        self.assertEqual(migrate.run(a()), 0)  # already v3 -> no-op
 
 
 if __name__ == "__main__":

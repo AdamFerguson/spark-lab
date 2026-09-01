@@ -1,9 +1,9 @@
 """Shared test helpers: a deterministic reference config + a fake runtime.
 
-The reference config is a *fixed* v1 document (no `version:` key) used by the
-golden/regression tests. Its ``install_dir`` is a hard-coded absolute path
-(``/opt/sparklab``) -- no ``~`` -- so the apply command argv the plan produces
-is identical on every machine (the golden must be portable).
+The reference config is a *fixed* v3 document (schema the engine requires)
+used by the golden/regression tests. Its ``install_dir`` is a hard-coded
+absolute path (``/opt/sparklab``) -- no ``~`` -- so the apply command argv the
+plan produces is identical on every machine (the golden must be portable).
 
 The reference ``.env`` uses obviously-fake values (no ``sk-`` / token-shaped
 strings) so committing rendered output can never trip the secret scanner.
@@ -30,29 +30,34 @@ SECRET_DUMMY = {
     "CF_TUNNEL_TOKEN": "test-cf-token",
 }
 
-# A minimal-but-complete v1 config: every template's context key is present so
+# A minimal-but-complete v3 config: every template's context key is present so
 # rendering is deterministic. install_dir is a fixed absolute path (portable).
 REFERENCE_CONFIG = """\
+version: 3
 install:
   name: mylab
   install_dir: /opt/sparklab
-  hosts:
-    - 127.0.0.1
-model:
-  recipe_name: qwen
-  hf_model: test-llm/model
-  image: lmsysorg/sglang:test
-  hf_token_env: HF_TOKEN
-  host: 0.0.0.0
-  port: 30000
-  min_nodes: 1
-  params:
-    kv_cache_dtype: fp8_e4m3
-    mem_fraction_static: 0.85
-    attention_backend: flashinfer
-  extra_flags:
-    - --enable-metrics
-    - --trust-remote-code
+hosts:
+  - name: mylab
+    remote: false
+    ip: 127.0.0.1
+models:
+  qwen:
+    active: true
+    runtime: sglang
+    hf_model: test-llm/model
+    image: lmsysorg/sglang:test
+    hf_token_env: HF_TOKEN
+    host: 0.0.0.0
+    port: 30000
+    min_nodes: 1
+    params:
+      kv_cache_dtype: fp8_e4m3
+      mem_fraction_static: 0.85
+      attention_backend: flashinfer
+    extra_flags:
+      - --enable-metrics
+      - --trust-remote-code
 litellm:
   model_name: my-spark-model
   port: 4000

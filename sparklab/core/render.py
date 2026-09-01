@@ -136,7 +136,7 @@ def build_context(cfg: config_mod.Config) -> dict:
     # Placement pin is a v3 (cluster) feature: v1/v2 renders stay byte-frozen
     # (their single-node placement needs no pin, and legacy goldens must not
     # move).
-    layout_placements = recipe_mod.layout_for_view(cfg) if cfg.is_v3 else []
+    layout_placements = recipe_mod.layout_for_view(cfg)
     return {
         "cfg": cfg.data,
         "install": cfg.install,

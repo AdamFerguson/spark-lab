@@ -74,9 +74,9 @@ class AdoptTest(unittest.TestCase):
         base = Path(tempfile.mkdtemp())
         install = base / "live"
         cfg_path = self._materialise(base, str(install))
-        # point the config's active recipe at a name that isn't on disk
+        # point the config's active model at an alias with no recipe on disk
         cfg = Path(cfg_path)
-        cfg.write_text(cfg.read_text().replace("recipe_name: qwen", "recipe_name: nonexistent"))
+        cfg.write_text(cfg.read_text().replace("  qwen:", "  nonexistent:"))
         self.assertEqual(self._adopt(cfg_path, base / "state"), 0)
         self.assertNotIn("model", self._state(base / "state"))
 

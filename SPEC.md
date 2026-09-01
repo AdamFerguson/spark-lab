@@ -35,8 +35,7 @@ spark-lab/
     util.py
     commands/                    # one module per CLI verb
       init.py apply.py status.py teardown.py upgrade.py validate.py
-      check.py system.py images.py migrate.py adopt.py model.py
-      recipes.py logs.py
+      check.py system.py images.py adopt.py model.py logs.py
     core/
       config.py                  # load+validate v3, env-ref + recipe resolution
       cluster.py                 # host views, control-plane/monitoring roles,
@@ -259,9 +258,10 @@ the kit (teardown is the only destructive path, and it needs `--yes`).
   sanitized before inclusion.
 
 ## 12. Deviations / history
-- Schema evolution: v1 `model:` → v2 `models:` (ADR-0004) → **v3 cluster
-  `hosts:` + per-model `hosts:`/`host_overrides`** (ADR-0008). v3 is the only
-  maintained example; `migrate` + the compat loader still accept v1/v2.
+- Schema evolution: v1 `model:` → v2 `models:` → **v3 cluster
+  `hosts:` + per-model `hosts:`/`host_overrides`** (ADR-0008). v3 is now the
+  ONLY accepted schema (`load` rejects anything else); the v1/v2 compat
+  loader + `migrate` were retired once every live config was v3.
 - **Recipes as source of truth + structural layout pins** (ADR-0009): the
   config references plain sparkrun recipes; spark-lab adds the placement pin
   + secret at render time; gateway metadata lives in `metadata.litellm`.
@@ -273,5 +273,5 @@ the kit (teardown is the only destructive path, and it needs `--yes`).
   control-plane + monitoring roles decouple "where the gateway lives" from
   "where the model runs".
 - `lib/` → `sparklab/` package (PEP 420 layout, uv-managed); the CLI grew
-  `validate/check/doctor/adopt/migrate/model/recipes/logs` beyond the
-  original five verbs.
+  past the original five verbs and was then cut back to the core verbs +
+  `model`/`logs` (see docs/COMMANDS.md for the full keep/cut inventory).

@@ -140,18 +140,21 @@ class TestResolution(unittest.TestCase):
         self.assertEqual(m["hf_model"], "test-llm/alpha")
         self.assertNotIn("recipe", m)
 
-    def test_v2_ignores_recipe_key(self):
+    def test_inline_model_without_recipe_key(self):
+        # A v3 model block may carry the launch spec inline (no recipe file).
         text = """\
-version: 2
+version: 3
+hosts:
+  - name: alpha
 models:
   m:
     active: true
     hf_model: test-llm/alpha
-    recipe: test-model
 """
         make_dir(self.d, config_text=text)
         m = load(self.d).model
         self.assertEqual(m["hf_model"], "test-llm/alpha")
+        self.assertNotIn("recipe", m)
 
     def test_parked_model_reference_still_resolves(self):
         text = CONFIG_YAML.replace("hosts: [alpha]", "hosts: []")
@@ -348,17 +351,6 @@ class TestLayoutPins(unittest.TestCase):
         self.assertIn("layout:", text)
         self.assertIn("- host: 127.0.0.1", text)
         self.assertIn("ranks: [0]", text)
-        # v1 stays byte-frozen: no layout pin
-        v1 = ("install:\n  name: v1lab\n"
-              "model:\n  recipe_name: m1\n  hf_model: test-llm/alpha\n"
-              "  runtime: sglang\n")
-        d1 = Path(tempfile.mkdtemp())
-        (d1 / "config.yaml").write_text(v1)
-        (d1 / ".env").write_text("HF_TOKEN=t\n")
-        out = render.render(config_mod.load(str(d1 / "config.yaml")), d1 / "deploy")
-        v1text = next(v for k, v in out.items()
-                      if k.startswith("sparkrun/recipes/")).decode()
-        self.assertNotIn("layout:", v1text)
 
 
 class TestEnvRendering(unittest.TestCase):

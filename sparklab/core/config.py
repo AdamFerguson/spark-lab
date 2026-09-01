@@ -1,12 +1,8 @@
 """Load and validate the spark-lab config + resolve secrets from .env.
 
-Supports three schema versions:
+Schema v3 only (older shapes were retired; a config must declare
+``version: 3`` -- see docs/SETUP.md):
 
-* **v1** -- a single top-level ``model:`` block (no ``version:`` key). The
-  legacy shape; still fully supported and renders byte-identically.
-* **v2** -- a ``version: 2`` with a keyed ``models:`` map (multi-model +
-  ``active``), a top-level ``images:`` map, and ``profile:``/``profiles:``
-  overrides. Strictly additive: every v1 field keeps its meaning. (ADR 0004)
 * **v3** -- a ``version: 3`` with a top-level ``hosts:`` list: one config for
   the whole cluster. Each entry names a managed node (``name``), how to reach
   it (``ssh``, ``remote``), and may override any cluster-wide key for that
@@ -155,8 +151,11 @@ class Config:
         # v3: fold referenced recipes (models.<m>.recipe -> recipes/<m>.yaml)
         # into the model blocks before anything selects/validates them.
         self.data = recipe_mod.resolve_all(data or {}, self.repo_root)
-        self._is_v2 = "models" in self.data or self.data.get("version") in (2, 3)
-        self._is_v3 = self.data.get("version") == 3
+        # v3 only: the config (or a view of one) declares 'version: 3'.
+        if _base is None and self.data.get("version") != 3:
+            raise ValueError(
+                "config.yaml must be schema v3 ('version: 3'); see "
+                "docs/SETUP.md for the current shape")
         # Per-host view bookkeeping (v3): ``_host`` names the host this view is
         # for; ``_base`` is the base (cluster-wide) config the view was cut from.
         self._view_host = _host
@@ -164,20 +163,11 @@ class Config:
         self._active_alias, self._active_model = self._select_active()
         self._validate_recipe_spans()
 
-    # -- version + active-model selection ----------------------------------
-    @property
-    def is_v2(self) -> bool:
-        return self._is_v2
-
-    @property
-    def is_v3(self) -> bool:
-        """True for a base v3 cluster config or a per-host view of one."""
-        return self._is_v3 or self._view_host is not None
-
+    # -- active-model selection ---------------------------------------------
     def _validate_recipe_spans(self) -> None:
         """A referenced recipe whose model spans N hosts needs N placement
         hosts (``layout`` must cover all ranks). Cheap load-time check."""
-        if not self._is_v3 or self._view_host is not None:
+        if self._view_host is not None:
             return
         for alias, mdef in (self.data.get("models") or {}).items():
             mdef = mdef or {}
@@ -202,7 +192,7 @@ class Config:
         order. ``(host, model_alias, gateway_name, control_plane_on)``; alias
         and name are '' when no active model serves the host. Read-only -- the
         source of truth remains ``models.<m>.hosts`` (ADR-0009)."""
-        if not self._is_v3 or self._view_host is not None:
+        if self._view_host is not None:
             return []
         models = self.data.get("models") or {}
         rows: List[Tuple[str, str, str, bool]] = []
@@ -275,7 +265,7 @@ class Config:
         (A host that RUNS the model with the control plane off is fine -- any
         control-plane host serves it; see :meth:`serving_conflicts`.)
         """
-        if not self.is_v3 or self._view_base is not None:
+        if self._view_base is not None:
             return []
         problems: List[str] = []
         for spec in self.host_specs:
@@ -290,13 +280,9 @@ class Config:
 
     # -- v3 implicit central serving (ADR-0008 addendum #3) -----------------
     def _active_model_aliases(self) -> List[str]:
-        """The active models' aliases (config order; v2/v3)."""
+        """The active models' aliases (config order)."""
         models = self.data.get("models") or {}
-        active = [a for a, m in models.items() if (m or {}).get("active")]
-        first = str((self.data.get("active_models") or [None])[0] or "")
-        if first and first in models and first not in active:
-            active.append(first)
-        return active
+        return [a for a, m in models.items() if (m or {}).get("active")]
 
     def serving_entries(self) -> List[Dict[str, Any]]:
         """The gateway-facing ``model_list`` entries this host's LiteLLM should
@@ -311,21 +297,7 @@ class Config:
         ``host_overrides`` block) wins over both. Serving identity resolves as
         gateway-litellm base < model ``litellm:`` block < this host's
         ``host_overrides`` ``litellm:`` block.
-
-        Legacy (v1) configs: the single local entry, exactly the historical
-        values (byte-identical renders).
         """
-        if not self._is_v2:
-            model, lit = self.model, self.litellm
-            return [{
-                "alias": self.active_alias,
-                "model_name": lit.get("model_name", "my-spark-model"),
-                "hf_model": model.get("hf_model", ""),
-                "api_base": self.model_api_base,
-                "model_info": lit.get("model_info", {}),
-                "model_settings": {"temperature": 1.0, "top_p": 0.95, "top_k": 20,
-                                   **(lit.get("model_settings") or {})},
-            }]
         base = self._view_base if self._view_base is not None else self
         entries: List[Dict[str, Any]] = []
         for alias in self._active_model_aliases():
@@ -351,17 +323,15 @@ class Config:
             elif serves_locally:
                 host = self.litellm.get("model_api_base_host", "host.docker.internal")
                 api_base = f"http://{host}:{port}/v1"
-            elif base.is_v3:
-                spec = base.select_hosts([run_hosts[0]])[0]
-                # Prefer the explicit `ip:` (LAN/tailnet address): the LiteLLM
+            else:
+                # Not served from this host: point at the head's address.
+                # Prefer the explicit ``ip:`` (LAN/tailnet address): the LiteLLM
                 # gateway is a bridge-network container, where an mDNS `.local`
                 # ssh name does NOT resolve but a routable IP does. Fall back to
                 # the ssh host / name only when no ip is configured.
+                spec = base.select_hosts([run_hosts[0]])[0]
                 remote_addr = spec.ip or spec.ssh_host or spec.name
                 api_base = f"http://{remote_addr}:{port}/v1"
-            else:   # v2: historical single-node path -- local engine
-                host = self.litellm.get("model_api_base_host", "host.docker.internal")
-                api_base = f"http://{host}:{port}/v1"
             entries.append({
                 "alias": alias,
                 "model_name": lit.get("model_name", "my-spark-model"),
@@ -381,7 +351,7 @@ class Config:
         2. two active models resolving to the same serving ``model_name`` on
            one gateway host (LiteLLM refuses duplicate names at boot).
         """
-        if not self.is_v3 or self._view_base is not None:
+        if self._view_base is not None:
             return []
         problems: List[str] = []
         running = [a for a in self._active_model_aliases()
@@ -413,13 +383,8 @@ class Config:
         ``monitoring.role`` is 'exporters', with the address to scrape them at
         (the host's ``ssh`` value -- resolvable on the node via Tailscale/LAN
         DNS) and the instance label to tag their metrics with.
-
-        v3 only; legacy configs return [] (rendered prometheus.yml is
-        byte-identical to the historical output).
         """
         base = self._view_base if self._view_base is not None else self
-        if not base.is_v3:
-            return []
         out: List[Dict[str, Any]] = []
         for spec in base.host_specs:
             if spec.name == self.view_host:
@@ -440,68 +405,38 @@ class Config:
     def _select_active(self) -> Tuple[str, Dict[str, Any]]:
         """Return ``(alias, model_dict)`` for the model that should be live.
 
-        v1: the single ``model:`` block, alias = its ``recipe_name``.
-        v2: ``active_models:`` (list) wins; else the one ``active: true``.
-        v3 host view: first restricted to the models that *serve this host*
-        (``models.<m>.hosts`` -- unset means all hosts); a host with no model
-        serving it converges control-plane-only (no recipe, no model workload).
+        v3 host view: active models restricted to the models that *serve this
+        host* (``models.<m>.hosts`` -- unset means all hosts); a host with no
+        active model serving it converges control-plane-only (no recipe, no
+        model workload). Cluster base: several active models are fine when
+        their host sets are disjoint (each host serves exactly one); the
+        base's ``model`` property is then a representative for bookkeeping.
         """
-        if not self._is_v2:
-            m = self.data.get("model") or {}
-            return str(m.get("recipe_name") or "model"), m
         models = self.data.get("models") or {}
         if self._view_host is not None:
             models = {a: m for a, m in models.items() if self._serves(self._view_host, m)}
             if not models:
                 return "", {}
         elif not models:
-            raise ValueError("v2 config has an empty 'models:' map")
-        active_models = self.data.get("active_models")
-        if active_models:
-            alias = str(active_models[0])
-            if alias in models:
-                if self._is_v3 and self._view_host is None:
-                    # A legacy top-level ``active_models:`` key must not paper
-                    # over a v3 placement conflict: validate one-active-model
-                    # per host before honoring the named model.
-                    if self.active_host_conflicts():
-                        raise ValueError(
-                            "v3 config: two active models would both serve "
-                            "the same host: "
-                            f"{self._conflict_pairs()} -- one host runs one "
-                            "active model (scale one down or give it hosts: [])")
-                return alias, models[alias] or {}
-            if self._view_host is not None:
-                active_models = None   # named active model serves other hosts; fall through
-            else:
-                raise ValueError(f"active_models[0] '{alias}' is not in 'models:'")
+            raise ValueError("config has an empty 'models:' map")
         active = [a for a, m in models.items() if (m or {}).get("active")]
         if len(active) == 1:
             return active[0], models[active[0]] or {}
         if len(active) == 0:
-            if self._view_host is not None:
-                return "", {}   # models serve this host but none is marked active
-            if self._is_v3 and not self.data.get("active_models"):
-                return "", {}   # v3 cluster with every model scaled down: valid
-            raise ValueError("v2 config: no model has 'active: true' (or set active_models:)")
-        if self._is_v3 and self._view_host is None:
-            # Cluster base: several active models are fine when their host sets
-            # are disjoint (each host serves exactly one). Per-host views do
-            # the real picking. The base's own `model` property is then just a
-            # representative (first in order) for cluster-wide bookkeeping.
+            # Every model scaled down (cluster base), or models serve this host
+            # but none is marked active (host view): control-plane-only.
+            return "", {}
+        if self._view_host is None:
             if self.active_host_conflicts():
                 raise ValueError(
-                    "v3 config: two active models would both serve the same host: "
+                    "config: two active models would both serve the same host: "
                     f"{self._conflict_pairs()} -- one host runs one active model "
                     "(scale one down or give it hosts: [])")
             return active[0], models[active[0]] or {}
-        if self._is_v3 and self._view_host is not None:
-            raise ValueError(
-                f"host '{self._view_host}': active models {active} all serve "
-                "it, but a host runs at most one active model -- scale one down "
-                "(model down <name> --yes --hosts ...) or set its hosts: to []")
-        raise ValueError(f"v2 config: multiple active models {active}; set exactly one "
-                         f"(or use active_models:)")
+        raise ValueError(
+            f"host '{self._view_host}': active models {active} all serve "
+            "it, but a host runs at most one active model -- scale one down "
+            "(model down <name> --yes --hosts ...) or set its hosts: to []")
 
     @staticmethod
     def _serves(host: str, mdef: Dict[str, Any]) -> bool:
@@ -526,9 +461,6 @@ class Config:
         """True when two active models would both serve the same host (v3)."""
         models = self.data.get("models") or {}
         active = [a for a, m in models.items() if (m or {}).get("active")]
-        first = str((self.data.get("active_models") or [None])[0] or "")
-        if first and first in models and first not in active:
-            active.append(first)
         for i, a in enumerate(active):
             for b in active[i + 1:]:
                 if set(self.model_host_list(a)) & set(self.model_host_list(b)):
@@ -538,9 +470,6 @@ class Config:
     def _conflict_pairs(self) -> List[str]:
         models = self.data.get("models") or {}
         active = [a for a, m in models.items() if (m or {}).get("active")]
-        first = str((self.data.get("active_models") or [None])[0] or "")
-        if first and first in models and first not in active:
-            active.append(first)
         pairs = []
         for i, a in enumerate(active):
             for b in active[i + 1:]:
@@ -561,8 +490,6 @@ class Config:
 
     @property
     def models(self) -> Dict[str, Any]:
-        if not self._is_v2:
-            return {self._active_alias: (self.data.get("model") or {})}
         return self.data.get("models") or {}
 
     @property
@@ -574,57 +501,17 @@ class Config:
     def images(self) -> Dict[str, Any]:
         return self.data.get("images") or {}
 
-    @property
-    def profile(self) -> str:
-        return str(self.data.get("profile") or "prod")
-
-    @property
-    def profiles(self) -> Dict[str, Any]:
-        return self.data.get("profiles") or {}
-
-    def _v1_image_field(self, key: str) -> Optional[str]:
-        v1 = {
-            "litellm": self.litellm.get("image"),
-            "db": self.db().get("image"),
-            "redis": self.redis().get("image"),
-            "prometheus": self.prometheus().get("image"),
-            "grafana": self.grafana().get("image"),
-        }
-        return v1.get(key)
-
-    def _profile_image(self, key: str) -> Optional[str]:
-        return ((self.profiles.get(self.profile) or {}).get("images") or {}).get(key)
-
     def image(self, key: str, default: Optional[str] = None) -> str:
-        """Resolve a shared-stack image by key.
-
-        Precedence (highest first): env ``SPARKLAB_IMAGE_<KEY>`` > active
-        ``profile:`` override > v2 ``images:`` map > v1 per-service field >
-        historical default. Un-overridden v1 therefore renders byte-identically.
-        """
+        """Resolve a shared-stack image: env ``SPARKLAB_IMAGE_<KEY>`` > the
+        ``images:`` map > default."""
         default = default or IMAGE_DEFAULTS.get(key, "")
         env_val = os.environ.get(f"SPARKLAB_IMAGE_{key.upper()}", "").strip()
-        if env_val:
-            return env_val
-        prof = self._profile_image(key)
-        if prof:
-            return prof
-        if self.images.get(key):
-            return self.images[key]
-        v1 = self._v1_image_field(key)
-        if v1:
-            return v1
-        return default
+        return env_val or self.images.get(key) or default
 
     def image_model(self) -> str:
-        """The active model's image (env ``SPARKLAB_IMAGE_MODEL`` > profile > model.image)."""
+        """The active model's image (env ``SPARKLAB_IMAGE_MODEL`` > model.image)."""
         env_val = os.environ.get("SPARKLAB_IMAGE_MODEL", "").strip()
-        if env_val:
-            return env_val
-        prof = self._profile_image("model")
-        if prof:
-            return prof
-        return self.model.get("image") or ""
+        return env_val or self.model.get("image") or ""
 
     def resolved_images(self) -> Dict[str, str]:
         """Every image the active deploy can pull, resolved (for `check images`).
@@ -646,11 +533,7 @@ class Config:
 
     # -- params -------------------------------------------------------------
     def effective_params(self) -> Dict[str, Any]:
-        """``model.params`` with ``resources.mem_fraction_static`` taking precedence.
-
-        A v1 config carries the memory ceiling inside ``params``; a v2 config may
-        move it to ``resources``. ``resources`` wins when present, else ``params``.
-        """
+        """``model.params`` with ``resources.mem_fraction_static`` taking precedence."""
         params = dict(self.model.get("params") or {})
         mfs = self.active_resources.get("mem_fraction_static")
         if mfs is not None:
@@ -680,23 +563,13 @@ class Config:
     # -- v3 multi-host (ADR 0008) ------------------------------------------
     @property
     def host_specs(self) -> List[HostSpec]:
-        """The managed nodes. v3: the ``hosts:`` list. v1/v2: one implicit host
-        (this node -- local, or the single ``install.remote`` target)."""
+        """The managed nodes (the v3 ``hosts:`` list); views share the base's."""
         if self._view_base is not None:
             return self._view_base.host_specs
-        if self._is_v3:
-            entries = self.data.get("hosts") or []
-            if not entries:
-                raise ValueError("v3 config has an empty 'hosts:' list")
-            return [HostSpec.from_entry(e) for e in entries]
-        # legacy: the implicit single host
-        name = str(self.install.get("name") or "node")
-        if self.is_remote:
-            return [HostSpec(name=name, ssh=str(self.remote.get("host")), remote=True,
-                              user=self.remote.get("user"), port=self.remote.get("port"),
-                              identity_file=self.remote.get("identity_file"),
-                              overrides={})]
-        return [HostSpec(name=name, remote=False)]
+        entries = self.data.get("hosts") or []
+        if not entries:
+            raise ValueError("config has an empty 'hosts:' list")
+        return [HostSpec.from_entry(e) for e in entries]
 
     @property
     def sparkrun_addresses(self) -> Dict[str, str]:
@@ -732,10 +605,9 @@ class Config:
         Deep-merges the host entry's override keys over the base data, then the
         host's per-model ``host_overrides`` over each model's own fields. The
         result is a full :class:`Config`, so render/converge/plan run against
-        it without knowing a cluster exists. Legacy configs: the base itself.
-        Views are cached per base config.
+        it without knowing a cluster exists. Views are cached per base config.
         """
-        if not self.is_v3 or self._view_base is not None:
+        if self._view_base is not None:
             return self
         if self._view_host == host_name:
             return self
@@ -817,16 +689,14 @@ class Config:
     def node_path(self, rel: str, home: Optional[str] = None) -> str:
         """A path under the install dir, *as it exists on the target node*.
 
-        Local: an absolute path on this machine (byte-identical to the
-        historical ``str(Path(cfg.install_dir) / rel)``). Remote: the node-side
-        path with ``~`` expanded against the remote ``home`` when given
-        (``home`` comes from ``runtime.home_path()``).
+        A ``home`` (from ``runtime.home_path()``) is only given when commands
+        run ON THE NODE, so a ``~`` install dir expands against the REMOTE
+        home there (plain ~ / ~/... forms). Without it the path is local:
+        byte-identical to the historical ``str(Path(cfg.install_dir) / rel)``.
         """
-        if self.is_remote:
-            base = self.install_dir_raw
-            if base.startswith("~") and home:
-                # Expand against the REMOTE home (plain ~ / ~/... forms).
-                base = home + base[1:] if base.startswith("~/") else home
+        base = self.install_dir_raw
+        if base.startswith("~") and home:
+            base = home + base[1:] if base.startswith("~/") else home
             return f"{base.rstrip('/')}/{str(rel).lstrip('/')}"
         return str(self.install_dir / rel)
 
@@ -844,9 +714,7 @@ class Config:
 
     @property
     def recipe_name(self) -> str:
-        if self._is_v2:
-            return self._active_alias
-        return self.model.get("recipe_name", "model")
+        return self._active_alias
 
     @property
     def deploy_dir(self) -> Path:

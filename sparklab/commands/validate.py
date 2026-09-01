@@ -43,17 +43,16 @@ def run(args) -> int:
         print(f"[INVALID] config: {e}", file=sys.stderr)
         return 1
 
-    if cfg.is_v3:
-        if cfg.active_host_conflicts():
-            print(f"[INVALID] two active models share a host: {cfg._conflict_pairs()}",
-                  file=sys.stderr)
-            return 1
-        for problem in cfg.control_plane_conflicts():
-            print(f"[INVALID] {problem}", file=sys.stderr)
-            return 1
-        for problem in cfg.serving_conflicts():
-            print(f"[INVALID] {problem}", file=sys.stderr)
-            return 1
+    if cfg.active_host_conflicts():
+        print(f"[INVALID] two active models share a host: {cfg._conflict_pairs()}",
+              file=sys.stderr)
+        return 1
+    for problem in cfg.control_plane_conflicts():
+        print(f"[INVALID] {problem}", file=sys.stderr)
+        return 1
+    for problem in cfg.serving_conflicts():
+        print(f"[INVALID] {problem}", file=sys.stderr)
+        return 1
 
     names = cluster.parse_hosts_arg(getattr(args, "hosts", None))
     try:

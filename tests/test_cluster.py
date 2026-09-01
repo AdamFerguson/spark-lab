@@ -243,43 +243,20 @@ class TestMonitoringRoles(unittest.TestCase):
         self.assertIn("beta", str(cm.exception))
         self.assertIn("llama", str(cm.exception))
 
-    def test_vestigial_active_models_does_not_mask_v3_conflict(self):
-        # Regression: a v2-style top-level active_models: used to short-circuit
-        # the base active-model selection, masking per-host conflicts until a
-        # host view was built (with a misleading 'v2 config' message).
-        text = V3_CLUSTER_CONFIG.replace(
-            "litellm:\n  model_name:",
-            "  llama:\n    active: true\n    hosts: [beta]\n"
-            "    hf_model: test-llm/llama\n    image: lmsysorg/sglang:llama\n"
-            "active_models:\n"
-            "  - qwen\n"
-            "litellm:\n  model_name:", 1)
-        sub = self.d / "sub5"
-        sub.mkdir()
-        (sub / "config.yaml").write_text(text)
-        (sub / ".env").write_text(REFERENCE_ENV)
-        with self.assertRaises(ValueError) as cm:
-            config_mod.load(str(sub / "config.yaml"))
-        self.assertIn("beta", str(cm.exception))
-        self.assertIn("v3 config", str(cm.exception))
-
-    def test_vestigial_active_models_still_honored_when_valid(self):
-        # Disjoint placement + legacy active_models: still loads; the named
-        # model is the base representative, per-host views pick their own.
+    def test_multi_active_disjoint_hosts_views_pick_theirs(self):
+        # qwen -> alpha only, llama -> beta only: loads; each view selects its
+        # own active model.
         text = V3_CLUSTER_CONFIG.replace(
             "hosts: [alpha, beta]", "hosts: [alpha]", 1).replace(
             "litellm:\n  model_name:",
             "  llama:\n    active: true\n    hosts: [beta]\n"
             "    hf_model: test-llm/llama\n    image: lmsysorg/sglang:llama\n"
-            "active_models:\n"
-            "  - qwen\n"
             "litellm:\n  model_name:", 1)
         sub = self.d / "sub6"
         sub.mkdir()
         (sub / "config.yaml").write_text(text)
         (sub / ".env").write_text(REFERENCE_ENV)
         cfg = config_mod.load(str(sub / "config.yaml"))
-        self.assertEqual(cfg.active_alias, "qwen")
         self.assertEqual(cfg.view_for("alpha").active_alias, "qwen")
         self.assertEqual(cfg.view_for("beta").active_alias, "llama")
 
@@ -585,8 +562,8 @@ class TestTargets(unittest.TestCase):
         self.assertIs(ts[0].runtime, fake_local)
         self.assertFalse(ts[0].is_remote)
 
-    def test_legacy_v1_config_yields_single_local_target(self):
-        from tests.helpers import REFERENCE_CONFIG, config_text
+    def test_single_local_host_target(self):
+        from tests.helpers import config_text
         (self.d / "config.yaml").write_text(config_text(str(self.d / "install")))
         (self.d / ".env").write_text(REFERENCE_ENV)
         cfg = config_mod.load(str(self.d / "config.yaml"))
@@ -595,7 +572,7 @@ class TestTargets(unittest.TestCase):
         self.assertEqual(len(ts), 1)
         self.assertIs(ts[0].runtime, rt)
         self.assertFalse(ts[0].is_remote)
-        self.assertIs(ts[0].cfg, cfg)   # legacy view is the config itself
+        self.assertEqual(ts[0].cfg.view_host, "mylab")   # a view of the cluster
 
     def test_parse_hosts_arg(self):
         self.assertIsNone(cluster.parse_hosts_arg(None))

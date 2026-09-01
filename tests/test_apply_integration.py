@@ -58,8 +58,7 @@ class TestApplyIntegration(unittest.TestCase):
         new = self.install / "sparkrun" / "recipes" / "qwen2.yaml"
         self.assertTrue(old.is_file())
         self.cfg_path.write_text(
-            config_text(str(self.install)).replace("recipe_name: qwen",
-                                                   "recipe_name: qwen2"))
+            config_text(str(self.install)).replace("  qwen:", "  qwen2:"))
         self.assertEqual(apply.run(_args(self.cfg_path, rt, apply=True)), 0)
         self.assertTrue(old.exists(), "stale recipe file is kept on disk (unmanaged)")
         self.assertTrue(new.is_file())

@@ -28,7 +28,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from sparklab.core import config as config_mod, converge, node, remote, render, state as state_mod  # noqa: E402
-from sparklab.core import runtime as runtime_mod  # noqa: E402
+from sparklab.core import cluster as cluster_mod, runtime as runtime_mod  # noqa: E402
 from sparklab.commands import apply as apply_cmd, adopt as adopt_cmd, status as status_cmd, \
     teardown as teardown_cmd, validate as validate_cmd  # noqa: E402
 from tests.helpers import FakeRuntime, REFERENCE_CONFIG, REFERENCE_ENV, SECRET_DUMMY  # noqa: E402
@@ -228,10 +228,11 @@ def make_runtime(stub=None, host="luna", user="user", install_dir="~/AI", repo_d
 
 
 def remote_config_text() -> str:
-    """The reference config + an install.remote block (absolute install_dir)."""
+    """The reference config with its single host driven over SSH (v3 shape,
+    absolute install_dir)."""
     return REFERENCE_CONFIG.replace(
-        "install_dir: /opt/sparklab",
-        "install_dir: /opt/sparklab\n  remote:\n    host: luna\n",
+        "  - name: mylab\n    remote: false\n    ip: 127.0.0.1\n",
+        "  - name: luna\n    ssh: luna\n    remote: true\n",
         1,
     )
 
@@ -452,7 +453,7 @@ class TestRuntimeFor(unittest.TestCase):
         self.assertIsInstance(rt, runtime_mod.Runtime)
         self.assertFalse(rt.is_remote)
 
-    def test_remote_config_gets_remote_runtime_with_lazy_connection(self):
+    def test_v3_remote_host_gets_lazy_fabric_runtime(self):
         d = Path(tempfile.mkdtemp())
         (d / "config.yaml").write_text(remote_config_text())
         (d / ".env").write_text(REFERENCE_ENV)
@@ -460,7 +461,8 @@ class TestRuntimeFor(unittest.TestCase):
         stub = StubConnection()
         with mock.patch.dict(os.environ, SECRET_DUMMY):
             with mock.patch.object(remote, "build_connection", return_value=stub) as bc:
-                rt = runtime_mod.runtime_for(cfg)
+                ts = cluster_mod.targets(cfg, None)
+        rt = ts[0].runtime
         self.assertIsInstance(rt, remote.RemoteRuntime)
         self.assertIs(rt.conn, stub)
         bc.assert_called_once()
@@ -498,7 +500,7 @@ class TestPlanParity(unittest.TestCase):
         plan_local = self._plan(cfg_local, FakeRuntime(), "dep-local")
 
         cfg_remote = self._load(remote_config_text())
-        self.assertTrue(cfg_remote.is_remote)
+        self.assertTrue(cfg_remote.host_specs[0].remote)
         rt, stub = make_runtime()
         plan_remote = self._plan(cfg_remote, rt, "dep-remote")
 
@@ -540,7 +542,7 @@ class TestApplyRemoteEndToEnd(unittest.TestCase):
 
         # 1. every rendered file was pushed to the node install dir
         cfg = config_mod.load(self.args.config)
-        rendered = render.render(cfg, self.d / "probe-deploy")
+        rendered = render.render(cfg.view_for("luna"), self.d / "probe-deploy")
         pushed = {r for _, r in self.stub.puts}
         for rel in rendered:
             self.assertIn(f"{INSTALL}/{rel}", pushed)
