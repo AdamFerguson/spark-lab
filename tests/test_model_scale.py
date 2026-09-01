@@ -1,4 +1,4 @@
-"""`model up` / `model down` scale tests + `init --hosts` bootstrap (ADR 0008).
+"""`model up` / `model down` scale tests (ADR 0008).
 
 All hermetic: a v3 config with two LOCAL hosts (remote: false) + a recording
 FakeRuntime; the config file round-trip is asserted on disk. The install dir is
@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from sparklab.commands import init as init_cmd, model as model_cmd  # noqa: E402
+from sparklab.commands import model as model_cmd  # noqa: E402
 from sparklab.core import state as state_mod  # noqa: E402
 from tests.helpers import FakeRuntime, REFERENCE_ENV, SECRET_DUMMY, V3_CLUSTER_CONFIG  # noqa: E402
 
@@ -192,52 +192,6 @@ class TestModelDown(ScaleBase):
         cp = self._setup()
         rc = model_cmd.down(_args(cp, FakeRuntime(), model="qwen", hosts="gamma", yes=True))
         self.assertEqual(rc, 1)
-
-
-class TestInitBootstrap(ScaleBase):
-    _ALL_TOOLS = {"sparkrun", "docker", "systemctl", "tailscale", "cloudflared",
-                  "uv", "python3", "git", "curl", "hf", "gitleaks"}
-
-    def test_report_only_without_yes(self):
-        cp = self._setup()
-        rt = FakeRuntime(available=self._ALL_TOOLS)
-        rc = init_cmd.run(_args(cp, rt, hosts="alpha, beta", yes=False))
-        self.assertEqual(rc, 0)
-        # report mode: only read-only capability probes (docker info) may run
-        self.assertTrue(all(a[:2] == ["docker", "info"] for a in rt.calls))
-
-    def test_yes_bootstrap_refreshes_checkout_and_dirs(self):
-        cp = self._setup()
-        rt = FakeRuntime(available=self._ALL_TOOLS)
-        rc = init_cmd.run(_args(cp, rt, hosts="beta", yes=True))
-        self.assertEqual(rc, 0)
-        joined = [" ".join(map(str, c)) for c in rt.calls]
-        # checkout exists (stub test -d succeeds) and is clean -> refresh issued
-        self.assertTrue(any("git -C" in c and "fetch" in c for c in joined))
-        self.assertTrue(any("git -C" in c and "pull" in c for c in joined))
-        self.assertTrue(any("mkdir -p" in c and str(self.install) in c for c in joined))
-        self.assertTrue(any("tailscaled" in c for c in joined))
-
-    def test_bootstrap_missing_checkout_without_repo_url_warns(self):
-        cp = self._setup()
-
-        class NoCheckout(FakeRuntime):
-            """`test -d <repo>/.git` fails -> the checkout is missing."""
-            def run(self, argv):
-                argv = [str(x) for x in argv]
-                self.calls.append(argv)
-                if argv and argv[0] == "sh" and "test -d" in " ".join(argv[1:]):
-                    class _R:
-                        returncode = 1
-                    return _R()
-                return super().run(argv)
-
-        rt = NoCheckout(available=self._ALL_TOOLS)
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            rc = init_cmd.run(_args(cp, rt, hosts="alpha", yes=True))
-        self.assertEqual(rc, 0)
-        self.assertIn("repo_url", buf.getvalue())   # the actionable warning
 
 
 if __name__ == "__main__":

@@ -5,9 +5,10 @@ Fresh install of spark-lab on a single DGX Spark, end to end. Assumes Ubuntu
 
 ## Prerequisites on the node
 
-> **Quick check:** `./bin/spark-lab check --system` (a.k.a. `doctor`) detects every
-> required + optional tool, explains why each is needed, and with `--install`
-> installs the missing ones. `./bin/spark-lab init` runs this check first.
+> **Quick check:** `./bin/spark-lab check` verifies the config renders and the
+> required binaries (`sparkrun`, `docker`, + `tailscale`/`cloudflared` when
+> enabled) exist **on every selected node**. Install anything missing yourself
+> (below).
 
 - **uv** — the dependency/venv manager; it manages the spark-lab Python env and
   installs sparkrun. Install once:

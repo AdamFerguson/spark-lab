@@ -82,10 +82,9 @@ models:
   and stops the workloads. One active model per host (enforced).
 - **State stays on the managed node** (in its spark-lab checkout), so
   node-local and remote operation share one source of truth.
-- **Host bootstrap**: `spark-lab init --hosts sol --yes` idempotently prepares
-  a node (tools, git checkout from `install.repo_url`, install dir, tailscale).
 - Prerequisite for remote hosts: SSH key access (your key, or `identity_file`;
-  `user@host` in `ssh:` works too).
+  `user@host` in `ssh:` works too). Node preparation (docker/tailscale/sparkrun)
+  is plain ops; `spark-lab check` verifies each host's binaries.
 
 Legacy configs (single-node or `install.remote` shapes) are retired: declare
 `version: 3` per `config.example.yaml`.
@@ -97,21 +96,19 @@ Operations notes: [docs/REMOTE_OPERATOR_MODE.md](docs/REMOTE_OPERATOR_MODE.md).
 
 ```
 spark-lab init [--yes]                     # create config.yaml + .env
-spark-lab init --hosts a,b [--yes] [--all] # bootstrap the selected hosts (idempotent)
 spark-lab status [--hosts a,b]
 spark-lab apply [--hosts a,b] [--dry-run] [--diff] [--restart-model]
 spark-lab model up <m> [--hosts a,b]       # scale a model up
 spark-lab model down <m> --yes [--hosts]   # scale a model down (stops workloads)
 spark-lab model stop --yes                 # stop now; config unchanged; next apply restarts
 spark-lab teardown --yes [--purge]         # model + whole stack
-spark-lab upgrade --yes                    # engine + sparkrun + images, then re-apply
-spark-lab check [--images] [--probe] [--system] [--install] [--all]
+spark-lab check [--hosts a,b]              # pre-flight: config + render + binaries
 spark-lab logs <service> [--hosts <one>] [-f]
-spark-lab migrate [--dry-run]              # v1/v2 -> v3
 spark-lab adopt [--dry-run]                # take over an existing install (state only)
-spark-lab recipes {search,list,show,convert}
-# hidden aliases: validate == check, doctor == check --system
 ```
+
+Refreshing deps/images is plain ops: `uv tool upgrade sparkrun` +
+`docker compose pull` on the node, then `spark-lab apply`.
 
 ## Layout
 
@@ -166,8 +163,6 @@ state**, including the running model:
   `full` (default: prometheus + grafana + exporters), `exporters` (exporter
   sidecars only — a `full` host's prometheus scrapes it remotely, so one
   central Grafana covers the whole cluster), or `none`.
-- `spark-lab upgrade --yes` refreshes the engine deps, `sparkrun`, and the stack
-  images per host, then re-applies with the model restart allowed.
 
 The converge decisions are pinned by `tests/test_converge.py` (add / remove /
 switch / no-op / pending), which runs in CI.

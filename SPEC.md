@@ -100,13 +100,10 @@ Authoritative in `config.example.yaml`. Top-level sections: `version`,
   `metadata.litellm` section.
 - **`install:`** — `name`, `install_dir` (where recipes + the litellm stack
   live on each node; `~/...` expands **on the node**), `repo_dir`
-  (node-side checkout holding state), `repo_url` (what `init --hosts` clones
-  onto a bare node).
+  (node-side checkout holding state).
 - **`litellm:` / `monitoring:` / `network:` / `images:`** — defaults for the
   shared stack; env `SPARKLAB_IMAGE_<KEY>` overrides any image.
-- Legacy formats: `spark-lab migrate` rewrites a v1/v2 config to v3; the
-  v2 shape still loads, but v3 is the only format the docs/examples
-  maintain.
+- Older schema shapes (v1/v2) are retired; `load` rejects them outright.
 
 ## 4. CLI contract (`bin/spark-lab`)
 Bash wrapper: ensures a managed env via **uv** (`uv sync --no-default-groups`
@@ -116,17 +113,13 @@ from `pyproject.toml` + `uv.lock`; falls back to `python3 -m venv` +
 
 | Command | Behavior |
 |---|---|
-| `init [--hosts a,b] [--yes]` | Create `config.yaml` (from example if absent) + `.env` (from example, generate keys). With `--hosts`, also bootstrap those nodes (clone, venv). |
+| `init [--yes]` | Create `config.yaml` (from the example) + `.env` (from example, generated keys). Node prep (docker/tailscale/sparkrun) is plain ops. |
 | `apply [--dry-run] [--hosts a,b] [--restart-model] [--diff]` | **Converge** every selected host to config (see §5). `--dry-run` is read-only and works even with hosts unreachable (degraded state + warning). `--restart-model` lifts the gate on model restarts. `--diff` (with `--dry-run`) shows per-file diffs. |
 | `status [--hosts] [--json]` | Workloads + stack + network, per selected host; prints the host→model placement table. |
 | `model up <m> --hosts a,b` / `model down <m> --yes --hosts a,b` | Scale a model: add/remove hosts from its `hosts:` (rewrites config) + converge. Down keeps the recipe file on disk. |
 | `model stop <m>` | Stop the model workload now (config unchanged; next apply restarts). |
-| `validate` | Config valid + renderable on every selected host. |
-| `check [--images] [--system]` | Pre-execution checks (config; images present; node health). |
-| `doctor` | Deeper diagnostics. |
+| `check` | Config valid + renderable + binaries present on every selected host (read-only). |
 | `teardown [--yes] [--purge]` | Stop the model + remove the stack. Named docker volumes are destroyed **only** by `--purge`. |
-| `upgrade` | Update sparkrun + pull images + re-apply. |
-| `migrate` | Rewrite a v1/v2 `config.yaml` to schema v3 (idempotent). |
 | `adopt` | Take over an existing running install (read-only; writes only state). |
 | `logs <service> [--hosts]` | Tail logs from a stack service. |
 

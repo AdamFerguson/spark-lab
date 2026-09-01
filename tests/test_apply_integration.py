@@ -26,9 +26,9 @@ from sparklab.commands import apply  # noqa: E402
 from tests.helpers import REFERENCE_ENV, SECRET_DUMMY, FakeRuntime, config_text  # noqa: E402
 
 
-def _args(config_path, runtime, dry=False, apply=False, diff=False):
+def _args(config_path, runtime, dry=False, restart_model=False, diff=False):
     return types.SimpleNamespace(
-        config=str(config_path), dry_run=dry, apply=apply, yes=apply, diff=diff,
+        config=str(config_path), dry_run=dry, restart_model=restart_model, diff=diff,
         verbose=False, json=False, runtime=runtime,
     )
 
@@ -59,7 +59,7 @@ class TestApplyIntegration(unittest.TestCase):
         self.assertTrue(old.is_file())
         self.cfg_path.write_text(
             config_text(str(self.install)).replace("  qwen:", "  qwen2:"))
-        self.assertEqual(apply.run(_args(self.cfg_path, rt, apply=True)), 0)
+        self.assertEqual(apply.run(_args(self.cfg_path, rt, restart_model=True)), 0)
         self.assertTrue(old.exists(), "stale recipe file is kept on disk (unmanaged)")
         self.assertTrue(new.is_file())
         self.assertNotIn("sparkrun/recipes/qwen.yaml", self._state()["files"])
@@ -117,7 +117,7 @@ class TestApplyIntegration(unittest.TestCase):
         # recorded state is unchanged
         self.assertEqual(self._state(), before)
 
-    def test_recipe_change_stays_pending_without_apply(self):
+    def test_recipe_change_stays_pending_without_restart_flag(self):
         apply.run(_args(self.cfg_path, FakeRuntime()))
         before = self._state()["model"]["hash"]
         # mutate the recipe in config
@@ -125,19 +125,19 @@ class TestApplyIntegration(unittest.TestCase):
             self.cfg_path.read_text().replace("mem_fraction_static: 0.85",
                                               "mem_fraction_static: 0.90"))
         rt = FakeRuntime()
-        self.assertEqual(apply.run(_args(self.cfg_path, rt, apply=False)), 0)
+        self.assertEqual(apply.run(_args(self.cfg_path, rt)), 0)
         # no stop issued, and state still records the OLD recipe hash (pending)
         self.assertFalse(any("stop" in argv for argv in rt.commands))
         self.assertEqual(self._state()["model"]["hash"], before)
 
-    def test_recipe_change_converges_with_apply(self):
+    def test_recipe_change_converges_with_restart_model(self):
         apply.run(_args(self.cfg_path, FakeRuntime()))
         before = self._state()["model"]["hash"]
         self.cfg_path.write_text(
             self.cfg_path.read_text().replace("mem_fraction_static: 0.85",
                                               "mem_fraction_static: 0.90"))
         rt = FakeRuntime()
-        self.assertEqual(apply.run(_args(self.cfg_path, rt, apply=True)), 0)
+        self.assertEqual(apply.run(_args(self.cfg_path, rt, restart_model=True)), 0)
         # the running recipe was stopped, then started again
         self.assertTrue(any("sparkrun stop " +
                             str(self.install / "sparkrun" / "recipes" / "qwen.yaml") +

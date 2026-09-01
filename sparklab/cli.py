@@ -11,8 +11,8 @@ import argparse
 
 from .core import config as config_mod
 from .core import runtime as runtime_mod
-from .commands import (adopt, apply, check as check_cmd, images, init, logs, model,
-                       status, system, teardown, upgrade, validate)
+from .commands import (adopt, apply, check as check_cmd, init, logs, model, status,
+                       teardown)
 
 
 def main(argv=None) -> int:
@@ -30,11 +30,9 @@ def main(argv=None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_init = sub.add_parser("init", parents=[common],
-                            help="create config.yaml + .env, generate keys; with --hosts: bootstrap those hosts")
+                            help="create config.yaml + .env with generated keys")
     p_init.add_argument("--yes", action="store_true",
-                        help="use defaults, no prompts (and actually install/prepare in host bootstrap)")
-    p_init.add_argument("--all", action="store_true",
-                        help="host bootstrap: also install missing optional tools")
+                        help="non-interactive (skip the review pause)")
     p_init.set_defaults(func=init.run)
 
     p_apply = sub.add_parser("apply", parents=[common],
@@ -46,8 +44,6 @@ def main(argv=None) -> int:
     p_apply.add_argument("--no-model", dest="no_model", action="store_true",
                          help="reconcile control plane + gateway only; never launch/stop a "
                               "sparkrun model (use when the model is run outside spark-lab)")
-    p_apply.add_argument("--apply", dest="apply", action="store_true", help=argparse.SUPPRESS)
-    p_apply.add_argument("--yes", action="store_true", help=argparse.SUPPRESS)
     p_apply.add_argument("--diff", action="store_true",
                          help="with --dry-run, show a diff of each changed file")
     p_apply.set_defaults(func=apply.run)
@@ -63,36 +59,9 @@ def main(argv=None) -> int:
                             help="also remove named volumes (data loss)")
     p_teardown.set_defaults(func=teardown.run)
 
-    p_upgrade = sub.add_parser("upgrade", parents=[common],
-                               help="update sparkrun + images, re-apply")
-    p_upgrade.add_argument("--yes", action="store_true", help="actually upgrade (restarts models)")
-    p_upgrade.set_defaults(func=upgrade.run)
-
-    p_validate = sub.add_parser("validate", parents=[common],
-                                help=argparse.SUPPRESS)   # alias: `check`
-    p_validate.set_defaults(func=validate.run)
-
     p_check = sub.add_parser("check", parents=[common],
-                             help="pre-execution checks (config; + --images / --system)")
-    p_check.add_argument("what", nargs="?", choices=["config", "images", "system"],
-                         help="legacy form; `check` alone = config pre-flight")
-    p_check.add_argument("--images", action="store_true",
-                         help="also resolve the stack images")
-    p_check.add_argument("--probe", action="store_true",
-                         help="with images: probe each (docker manifest inspect)")
-    p_check.add_argument("--system", action="store_true",
-                         help="also run the per-host system precheck")
-    p_check.add_argument("--install", action="store_true",
-                         help="with --system: install the missing required tools")
-    p_check.add_argument("--all", action="store_true",
-                         help="with --install: also install missing optional tools")
+                             help="read-only pre-flight: config + render + binaries per host")
     p_check.set_defaults(func=check_cmd.run)
-
-    p_doctor = sub.add_parser("doctor", parents=[common],
-                              help=argparse.SUPPRESS)   # alias: `check --system`
-    p_doctor.add_argument("--install", action="store_true", help=argparse.SUPPRESS)
-    p_doctor.add_argument("--all", action="store_true", help=argparse.SUPPRESS)
-    p_doctor.set_defaults(func=system.check)
 
     p_adopt = sub.add_parser("adopt", parents=[common],
                              help="take over an existing running install (read-only; writes only state)")

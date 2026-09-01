@@ -152,8 +152,7 @@ def _converge_one(t, dry: bool, allow_restart: bool, diff: bool,
 def run(args) -> int:
     cfg = config.load(args.config)
     dry = getattr(args, "dry_run", False)
-    allow_restart = bool(getattr(args, "restart_model", False)
-                         or getattr(args, "apply", False) or getattr(args, "yes", False))
+    allow_restart = bool(getattr(args, "restart_model", False))
     names = cluster.parse_hosts_arg(getattr(args, "hosts", None))
     ts = cluster.targets(cfg, names, runtime=getattr(args, "runtime", None))
     if not ts:

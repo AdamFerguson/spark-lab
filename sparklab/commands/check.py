@@ -1,38 +1,79 @@
-"""`spark-lab check` — the consolidated pre-flight (config + images + system).
+"""`spark-lab check` — pre-flight, read-only (per selected host).
 
-Usage:
-
-* ``spark-lab check`` (or ``check config``) — the config pre-flight: schema,
-  secrets, host set, per-host render + binaries (read-only).
-* ``spark-lab check --images`` (or ``check images``) — resolve the stack images
-  (``--probe`` additionally runs ``docker manifest inspect`` per host).
-* ``spark-lab check --system`` (or ``check system``) — per-host system
-  precheck; ``--install`` (``--all``) installs missing tools.
-
-Any combination works: ``spark-lab check --images --system --hosts luna,sol``.
-``validate`` and ``doctor`` remain available as hidden aliases
-(``validate`` == ``check``, ``doctor`` == ``check --system``).
+Confirms the config is usable BEFORE touching any node: schema + secrets
+resolve, the host set is sane, every host's view renders, and required
+binaries are present **on each host**. Writes nothing and runs no commands.
+For remote hosts the binary pre-flight checks each *target node*, not this
+machine.
 """
 from __future__ import annotations
 
-from . import images, system, validate
+import sys
+import tempfile
+from pathlib import Path
+
+from ..core import cluster, config, render
+
+
+def _check_host(t, bins: list) -> int:
+    """The per-host half: binaries on that node + render its view."""
+    cfg, runtime = t.cfg, t.runtime
+    missing = []
+    for b in bins:
+        found = runtime.available(b) if runtime is not None else False
+        if not found:
+            missing.append(b)
+        print(f"   bin {b:<12} {'ok' if found else 'MISSING (will be skipped at runtime)'}")
+    try:
+        rendered = render.render(cfg, Path(tempfile.mkdtemp(prefix="sparklab-check-")))
+    except Exception as e:  # noqa: BLE001 - any render failure == invalid config
+        print(f"[RENDER ERROR] {e}", file=sys.stderr)
+        return 1
+    where = (f"{cfg.install_dir_raw} on the node" if t.is_remote else str(cfg.install_dir))
+    print(f"   render: OK ({len(rendered)} file(s) would be written to {where})")
+    if missing:
+        print(f"   WARN: missing binaries: {', '.join(missing)} — they'll be skipped at runtime.")
+    return 0
 
 
 def run(args) -> int:
-    args._label = "check"   # the banner says the command the user actually ran
-    what = getattr(args, "what", None)
-    do_config = what == "config" or (what is None and not (args.images or args.system))
-    do_images = what == "images" or args.images
-    do_system = what == "system" or args.system
+    try:
+        cfg = config.load(args.config)
+    except ValueError as e:
+        print(f"[INVALID] config: {e}", file=sys.stderr)
+        return 1
 
-    rcs = []
-    if do_config:
-        rcs.append(validate.run(args))
-    if do_images:
-        rcs.append(images.run(args))
-    if do_system:
-        rcs.append(system.check(args))
-    if not rcs:
-        do_config_fallback = validate.run(args)
-        return do_config_fallback
-    return 0 if all(rc == 0 for rc in rcs) else 1
+    if cfg.active_host_conflicts():
+        print(f"[INVALID] two active models share a host: {cfg._conflict_pairs()}",
+              file=sys.stderr)
+        return 1
+    for problem in cfg.control_plane_conflicts():
+        print(f"[INVALID] {problem}", file=sys.stderr)
+        return 1
+    for problem in cfg.serving_conflicts():
+        print(f"[INVALID] {problem}", file=sys.stderr)
+        return 1
+
+    names = cluster.parse_hosts_arg(getattr(args, "hosts", None))
+    try:
+        ts = cluster.targets(cfg, names, runtime=getattr(args, "runtime", None))
+    except ValueError as e:
+        print(f"[INVALID] {e}", file=sys.stderr)
+        return 1
+    if not ts:
+        print("[INVALID] no hosts in config (add a `hosts:` list).", file=sys.stderr)
+        return 1
+
+    bins = ["sparkrun", "docker"]
+    if cfg.tailscale().get("enabled", True):
+        bins.append("tailscale")
+    if cfg.cloudflare().get("enabled", False):
+        bins.append("cloudflared")
+
+    print(f"== spark-lab check ({cfg.config_path}) ==")
+    print(f"  hosts: {', '.join(t.name for t in ts)}")
+    rc = cluster.run_on_each(ts, lambda t: _check_host(t, bins))
+    if rc == 0:
+        print("\nConfig is valid and renderable on every selected host. "
+              "`spark-lab apply` is safe to run.")
+    return rc

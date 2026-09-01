@@ -11,7 +11,7 @@ converges instead of leaving orphans running.
 
 Files-on-disk and model-running are tracked separately (see sparklab.core.state). A recipe
 change that has not been restarted therefore stays *pending* and keeps prompting
-until `apply --apply` actually restarts the model — it does not silently drift.
+until `apply --restart-model` actually restarts the model — it does not silently drift.
 """
 
 from __future__ import annotations
@@ -280,7 +280,7 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
         else:
             plan.notes.append(
                 f"Model '{name}' needs to stop/restart, but that was not requested. "
-                f"Re-run with `spark-lab apply --apply`."
+                f"Re-run with `spark-lab apply --restart-model`."
             )
 
     if spanning and launch_model:

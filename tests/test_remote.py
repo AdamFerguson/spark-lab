@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sparklab.core import config as config_mod, converge, node, remote, render, state as state_mod  # noqa: E402
 from sparklab.core import cluster as cluster_mod, runtime as runtime_mod  # noqa: E402
 from sparklab.commands import apply as apply_cmd, adopt as adopt_cmd, status as status_cmd, \
-    teardown as teardown_cmd, validate as validate_cmd  # noqa: E402
+    teardown as teardown_cmd, check as check_cmd  # noqa: E402
 from tests.helpers import FakeRuntime, REFERENCE_CONFIG, REFERENCE_ENV, SECRET_DUMMY  # noqa: E402
 
 STATE_PATH = "/home/user/spark-lab/.sparklab-state/state.json"   # stub home + default repo_dir
@@ -658,14 +658,14 @@ class TestTeardownStatusValidateRemote(unittest.TestCase):
         self.assertIn("docker compose -f /opt/sparklab/litellm/docker-compose.yml ps", joined)
         self.assertIn("tailscale status", joined)
 
-    def test_validate_preflight_checks_the_remote_binaries(self):
+    def test_check_preflight_checks_the_remote_binaries(self):
         stub = StubConnection(binaries={"sparkrun": "/home/user/.local/bin/sparkrun",
                                         "docker": "/usr/bin/docker",
                                         "tailscale": "/usr/bin/tailscale"})
         rt, _ = make_runtime(stub=stub)
         args = SimpleNamespace(config=str(self.d / "config.yaml"), verbose=False,
                                json=False, runtime=rt)
-        self.assertEqual(validate_cmd.run(args), 0)
+        self.assertEqual(check_cmd.run(args), 0)
         # pre-flight queried the node, not the local machine
         self.assertTrue(any("command -v sparkrun" in r for r in stub.runs))
 

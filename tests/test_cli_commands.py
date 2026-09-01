@@ -1,4 +1,5 @@
-"""Command-handler tests: init / status / teardown / upgrade via the runtime seam.
+"""Command-handler tests: init / status / teardown / check / logs via the
+runtime seam.
 
 Covers the operational command paths (the thin wrappers around the runtime) so
 the seam is exercised end-to-end for every subcommand, not just ``apply``.
@@ -22,7 +23,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from sparklab.commands import (  # noqa: E402
-    init, images, logs, status, teardown, upgrade, validate)
+    init, logs, status, teardown, check as check_cmd)
 from tests.helpers import REFERENCE_ENV, SECRET_DUMMY, FakeRuntime, config_text  # noqa: E402
 
 _AVAIL = {"sh", "sparkrun", "docker", "systemctl", "tailscale", "cloudflared", sys.executable}
@@ -99,32 +100,6 @@ class TestCliCommands(unittest.TestCase):
         self.assertEqual(teardown.run(_args(self.cp, rt, yes=True)), 0)
         self.assertFalse((st_dir / "state.json").exists())   # cleared for a fresh re-apply
 
-    def test_upgrade_without_yes_refuses(self):
-        rt = FakeRuntime(available=_AVAIL)
-        self.assertEqual(upgrade.run(_args(self.cp, rt, yes=False)), 1)
-        self.assertEqual(rt.commands, [])
-
-    def test_upgrade_runs_pipeline_then_reapplies(self):
-        rt = FakeRuntime(available=_AVAIL)  # no uv -> pip refresh path
-        self.assertEqual(upgrade.run(_args(self.cp, rt, yes=True)), 0)
-        # upgrade: refresh deps (pip, uv absent) -> sparkrun update -> pull -> re-apply
-        self.assertTrue(any("pip" in " ".join(a) and "install" in " ".join(a)
-                            for a in rt.commands))
-        self.assertTrue(any(a == ["sparkrun", "update"] for a in rt.commands))
-        self.assertTrue(any(a[0] == "docker" and "pull" in a for a in rt.commands))
-        # and the re-apply ensured the model
-        self.assertTrue(any("sparkrun run " in " ".join(map(str, a))
-                            and "--ensure" in " ".join(map(str, a))
-                            and "--hosts 127.0.0.1" in " ".join(map(str, a))
-                            for a in rt.commands))
-
-    def test_upgrade_refreshes_deps_via_uv_when_available(self):
-        rt = FakeRuntime(available=_AVAIL | {"uv"})
-        self.assertEqual(upgrade.run(_args(self.cp, rt, yes=True)), 0)
-        self.assertTrue(any(a[:2] == ["uv", "lock"] for a in rt.commands))
-        self.assertTrue(any(a[:2] == ["uv", "sync"] for a in rt.commands))
-        self.assertFalse(any("pip" in " ".join(a) for a in rt.commands))
-
     def test_init_creates_config_and_generates_env(self):
         empty = Path(tempfile.mkdtemp())
         (empty / "config.example.yaml").write_text("model:\n  recipe_name: fresh\n")
@@ -135,15 +110,15 @@ class TestCliCommands(unittest.TestCase):
         self.assertTrue((empty / "config.yaml").is_file())
         self.assertRegex((empty / ".env").read_text(), r"LITELLM_MASTER_KEY=sk-[0-9a-f]{40}")
 
-    def test_validate_ok_on_good_config(self):
-        self.assertEqual(validate.run(_args(self.cp, FakeRuntime())), 0)
+    def test_check_ok_on_good_config(self):
+        self.assertEqual(check_cmd.run(_args(self.cp, FakeRuntime())), 0)
 
-    def test_validate_fails_on_missing_secret(self):
+    def test_check_fails_on_unsupported_config(self):
         bad = self.d / "bad.yaml"
-        # references a secret that is in neither .env nor the (pinned) env
-        bad.write_text("install_dir: %s\nmodel:\n  recipe_name: qwen\n"
-                       "litellm:\n  master_key_env: NOPE_MISSING_KEY\n" % self.install)
-        self.assertEqual(validate.run(_args(bad, FakeRuntime())), 1)
+        # retired schema -> load fails -> invalid pre-flight
+        bad.write_text("install:\n  install_dir: %s\nmodel:\n  recipe_name: qwen\n"
+                       % self.install)
+        self.assertEqual(check_cmd.run(_args(bad, FakeRuntime())), 1)
 
     def test_logs_refuses_without_compose_file(self):
         a = _args(self.cp, FakeRuntime(available=_AVAIL),
@@ -159,20 +134,6 @@ class TestCliCommands(unittest.TestCase):
         self.assertEqual(logs.run(a), 0)
         self.assertIn(["docker", "compose", "-f", str(compose), "logs",
                        "--tail", "50", "litellm", "--follow"], rt.commands)
-
-    def test_check_images_reports_resolved(self):
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            rc = images.run(_args(self.cp, FakeRuntime(available=_AVAIL), probe=False))
-        self.assertEqual(rc, 0)
-        self.assertIn("check images", buf.getvalue())
-        self.assertIn("litellm", buf.getvalue())
-
-    def test_check_images_missing_model_refuses(self):
-        bad = self.d / "noimg.yaml"
-        bad.write_text("install_dir: %s\nversion: 2\nmodels:\n  m:\n    active: true\n"
-                       "    hf_model: x\n" % self.install)
-        self.assertEqual(images.run(_args(bad, FakeRuntime(available=_AVAIL), probe=False)), 1)
 
 
 if __name__ == "__main__":

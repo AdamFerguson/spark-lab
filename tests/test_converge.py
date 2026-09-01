@@ -143,7 +143,7 @@ class TestConverge(unittest.TestCase):
         self.assertEqual(converge.compute_files_after_apply(rendered), files)
         self.assertEqual(converge.compute_model_after_apply(model, "mymodel", model["hash"], True), model)
 
-    # 2b. Fresh model: starts without --apply, records state ----------------
+    # 2b. Fresh model: starts without restart flags, records state ----------
     def test_fresh_model_starts_and_records_state(self):
         cfg = make_cfg()
         rendered = {**recipe_bytes(), **LIT}
@@ -256,7 +256,7 @@ class TestConverge(unittest.TestCase):
         self.assertTrue(plan.model_restart_pending)
         # no stop command issued when restart not requested
         self.assertFalse(any("Stop model" in d for d, _ in plan.commands))
-        self.assertTrue(any("--apply" in n for n in plan.notes))
+        self.assertTrue(any("--restart-model" in n for n in plan.notes))
         # state keeps the OLD model hash so the next apply still sees the change
         new_model = converge.compute_model_after_apply(model, "mymodel", plan.current_hash, converged_after(plan, False))
         self.assertEqual(new_model, model)

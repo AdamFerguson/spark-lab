@@ -1,8 +1,11 @@
 # spark-lab — complete command & config inventory
 
 Every command, option, and config key as of `fb5e160`, with the redesign
-verdict for each. Verdicts: **KEEP** (unchanged), **MOD** (kept, changed),
-**CUT** (removed), **NEW** (to be added).
+verdict for each. **Status: the cuts are landing on this branch** — retired
+verbs (`recipes*`, `migrate`, `upgrade`, `validate`/`doctor` aliases,
+`check` extra modes, `init` bootstrap, v1/v2 schema) are already gone; the
+`NEW` rows are still pending. Verdicts: **KEEP** (unchanged), **MOD** (kept,
+changed), **CUT** (removed), **NEW** (to be added).
 
 The redesign target, in one line: *encapsulate the current state of the
 sparks (`status`), pull reality back into config (`sync`), edit config and

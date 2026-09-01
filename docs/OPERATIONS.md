@@ -48,17 +48,20 @@ re-run any time (e.g. after a reboot).
 ## Adding a new Spark to the cluster
 
 ```bash
-./bin/spark-lab init --hosts <new-host>            # report: what would be prepared
-./bin/spark-lab init --hosts <new-host> --yes      # tools + git checkout + install dir + tailscale
-# add the node under `hosts:` in config.yaml (repo_url for the clone, if any)
+# prepare the node yourself: docker + tailscale + `uv tool install sparkrun`
+# (+ a spark-lab checkout at install.repo_dir for node-side state), then:
+# add the node under `hosts:` in config.yaml
+./bin/spark-lab check --hosts <new-host>           # binaries + render pre-flight
 ./bin/spark-lab apply --hosts <new-host>           # converge it (first run: big pulls)
 ```
 
 ## Upgrades
 
 ```bash
-./bin/spark-lab upgrade --yes      # per host: spark-lab deps + sparkrun update + pull + re-apply
-sparkrun --version                 # check the orchestrator version (on the node)
+# per host (ssh or via tailscale):
+uv tool upgrade sparkrun                # engine deps + sparkrun CLI
+cd ~/AI && docker compose -f litellm/docker-compose.yml pull
+./bin/spark-lab apply                   # re-converge (+ --restart-model if a recipe changed)
 ```
 
 Pinning versions: edit `model.image`, `litellm`/`monitoring` image tags in
@@ -140,7 +143,7 @@ keeps its state in its own spark-lab checkout
      (its recipe file is left on sol, unmanaged).
   Reversal: `model up <m> --hosts sol` (start the local copy first) then
   `model down <m> --yes --hosts luna`.
-  `check`/`validate` refuse configs where active models would run with no
+  `check` refuses configs where active models would run with no
   control-plane host to serve them, or where two models share a serving name
   on one gateway.
 - **Recipes as source of truth + placement pins (ADR 0009).** v3 model blocks
