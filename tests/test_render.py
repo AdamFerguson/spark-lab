@@ -96,9 +96,12 @@ class TestRender(unittest.TestCase):
     def test_model_config_allows_reasoning_effort(self):
         # Self-hosted engines (sglang/vllm) take reasoning controls as extra
         # params; without this allowlist the gateway 400s on reasoning_effort.
+        # chat_template_kwargs carries the Qwen3-style enable_thinking on/off
+        # switch -- clients send {"enable_thinking": false} per request.
         _cfg, rendered = _render()
         text = rendered["litellm/model_config.yaml"].decode("utf-8")
-        self.assertIn('allowed_openai_params: ["reasoning_effort"]', text)
+        self.assertIn('allowed_openai_params: ["reasoning_effort", "chat_template_kwargs"]',
+                      text)
 
     def test_missing_key_names_fall_back_to_default_env_names(self):
         # An omitted master_key_env/salt_key_env must resolve the standard .env

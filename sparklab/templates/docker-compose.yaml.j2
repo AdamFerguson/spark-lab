@@ -12,6 +12,7 @@ services:
     volumes:
       - ./config.yaml:/app/config.yaml
       - ./model_config.yaml:/app/model_config.yaml
+      - ./extra_models.yaml:/app/extra_models.yaml
     command: [ "--config", "/app/config.yaml" ]
 {% if redis_enabled %}
     # Reach the SGLang server on the host (host.docker.internal = host-gateway).

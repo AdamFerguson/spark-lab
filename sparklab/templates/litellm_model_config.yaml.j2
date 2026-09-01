@@ -11,7 +11,10 @@ model_list:
       api_key: "not-needed"
       # Self-hosted OpenAI-compatible engines (sglang/vllm) accept reasoning
       # controls as extra params; allow them through instead of a 400.
-      allowed_openai_params: ["reasoning_effort"]
+      # chat_template_kwargs carries the hybrid on/off switch for Qwen3-style
+      # thinking models -- a client sends {"enable_thinking": false} to turn
+      # reasoning off per request. Harmless for models that ignore it.
+      allowed_openai_params: ["reasoning_effort", "chat_template_kwargs"]
     model_info:
       id: "{{ s.hf_model }}"
       supports_vision: {{ 'true' if s.model_info.get('supports_vision', true) else 'false' }}

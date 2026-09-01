@@ -63,7 +63,7 @@ hosts:
         - spark-host-overview
     images:
       # e.g. keep a node on a pinned gateway image while the rest tracks main-stable
-      litellm: ghcr.io/berriai/litellm:v1.99.0-dev.2
+      litellm: ghcr.io/berriai/litellm:v1.99.0
 
 # -----------------------------------------------------------------------------
 # Models. `recipe:` = which recipes/<name>.yaml this model is (the launch
