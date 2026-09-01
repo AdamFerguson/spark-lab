@@ -330,14 +330,17 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
         # Same bug class, gateway edition: a changed model list / gateway config
         # is invisible to a RUNNING litellm (it reads model_list at boot and
         # keeps it in its DB), so a model add/remove or an api_base flip would
-        # sit inert until a manual restart. Restart the service when a gateway
-        # file changed or disappeared (best-effort: a fresh stack already
-        # booted from the new files; a briefly-down gateway just misses the
-        # restart), then VERIFY it came back -- a restart that does not heal
-        # fails the converge instead of silently serving the old model list.
+        # sit inert until a manual restart. Any gateway-file change -- ADDED
+        # (first extra_models entry!), changed, or removed -- restarts the
+        # service whenever a previous converge is tracked (state non-empty:
+        # the containers are already booted from older files, incl. after an
+        # adopt). The very first apply needs nothing: compose up boots litellm
+        # from the new files. Restart is best-effort, then VERIFIED: a restart
+        # that does not come back healthy fails the converge loudly instead
+        # of silently serving the old model list.
         gateway_files = [rel for rel in ("litellm/model_config.yaml", "litellm/config.yaml",
                                          "litellm/extra_models.yaml")
-                         if (rel in state_files and rel in changed) or rel in removed]
+                         if (rel in changed or rel in removed) and state_files]
         if gateway_files and getattr(cfg, "control_plane_enabled", lambda: True)():
             restart_desc = "Restart litellm to apply the changed model list (best-effort)"
             plan.commands.append(

@@ -11,8 +11,8 @@ import argparse
 
 from .core import config as config_mod
 from .core import runtime as runtime_mod
-from .commands import (adopt, apply, check as check_cmd, init, logs, model, status,
-                       teardown)
+from .commands import (adopt, apply, check as check_cmd, expose, init, logs, model,
+                       status, sync, teardown)
 
 
 def main(argv=None) -> int:
@@ -67,6 +67,29 @@ def main(argv=None) -> int:
                              help="take over an existing running install (read-only; writes only state)")
     p_adopt.add_argument("--dry-run", action="store_true", help="report; write no state")
     p_adopt.set_defaults(func=adopt.run)
+
+    p_expose = sub.add_parser("expose", parents=[common],
+                              help="put a running engine behind the gateway "
+                                   "(extra_models entry + gateway-only apply)")
+    p_expose.add_argument("host",
+                          help="host NAME from the config's hosts: (or NAME:PORT; "
+                               "default port 8000)")
+    p_expose.add_argument("--port", type=int, help="engine port (default 8000)")
+    p_expose.add_argument("--served-model",
+                          help="which id the engine serves (default: its first)")
+    p_expose.add_argument("--public-name",
+                          help="gateway name to expose it under (default: the served id)")
+    p_expose.add_argument("--dry-run", action="store_true",
+                          help="probe + show the entry; write nothing")
+    p_expose.set_defaults(func=expose.run)
+
+    p_sync = sub.add_parser("sync", parents=[common],
+                            help="pull live reality into view: unexposed engines, "
+                                 "ghosts, drift (--write fixes what it can)")
+    p_sync.add_argument("--write", action="store_true",
+                        help="add extra_models entries for unexposed engines + refresh "
+                             "node state (model workloads are never touched)")
+    p_sync.set_defaults(func=sync.run)
 
     p_model = sub.add_parser("model", help="model workload actions (the stack keeps running)")
     model_sub = p_model.add_subparsers(dest="model_cmd", required=True)
