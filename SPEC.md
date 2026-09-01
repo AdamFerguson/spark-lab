@@ -52,8 +52,8 @@ spark-lab/
   docs/                          # SETUP, ARCHITECTURE, OPERATIONS, MODEL_RECIPES,
                                  # NETWORKING, CLUSTERING, REMOTE_OPERATOR_MODE,
                                  # COMMANDS, adr/...
-  scripts/                       # capture.sh, secret-scan.sh, staging.sh,
-                                 # flash-next-prepare.sh
+  scripts/                       # secret-scan.sh, flash-next-prepare.sh,
+                                 # dgx_spark_diag.sh
   .githooks/pre-commit           # secret gate (git config core.hooksPath .githooks)
   .gitleaks.toml                 # gitleaks config (path allowlist + value rule)
   .github/workflows/validate.yml # CI: dry-run, render, compose, shellcheck,
@@ -247,8 +247,8 @@ the kit (teardown is the only destructive path, and it needs `--yes`).
   `spark-lab apply`, and it *converges* when you change things; (4) what you
   get (a Grafana you can actually read, private access); (5) "run it on your
   own Spark" with a link to the repo.
-- Terminal snippets are captured read-only via `scripts/capture.sh` and
-  sanitized before inclusion.
+- Terminal snippets in the blog were captured read-only before inclusion
+  (the capture helper script was retired with the staging rig).
 
 ## 12. Deviations / history
 - Schema evolution: v1 `model:` → v2 `models:` → **v3 cluster

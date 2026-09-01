@@ -118,8 +118,9 @@ config.example.yaml     # v3 multi-host cluster example (hosts: + model hosts/ho
 bin/spark-lab           # CLI entrypoint
 sparklab/               # Python engine: config, render, converge, state, cluster, remote
 templates/              # Jinja templates + static Grafana dashboards
-docs/                   # SETUP, ARCHITECTURE, OPERATIONS, MODEL_RECIPES, NETWORKING, adr/
-scripts/capture.sh      # capture read-only terminal output (for docs/blog)
+docs/                   # COMMANDS, SETUP, ARCHITECTURE, OPERATIONS,
+                        # MODEL_RECIPES, NETWORKING, CLUSTERING,
+                        # REMOTE_OPERATOR_MODE, adr/
 ```
 
 ## Docs

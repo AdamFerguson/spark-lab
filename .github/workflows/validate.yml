@@ -48,7 +48,7 @@ jobs:
           (cd deploy/litellm && docker compose -f docker-compose.yml config -q && echo "compose ok")
 
       - name: shellcheck
-        run: shellcheck bin/spark-lab scripts/capture.sh scripts/secret-scan.sh scripts/staging.sh .githooks/pre-commit
+        run: shellcheck bin/spark-lab scripts/secret-scan.sh .githooks/pre-commit
 
       - name: "Test suite + coverage (unit / integration / regression / parity on sparklab/)"
         run: |
