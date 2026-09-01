@@ -43,6 +43,9 @@ def main(argv=None) -> int:
                          help="print the plan only; write nothing, run nothing")
     p_apply.add_argument("--restart-model", dest="restart_model", action="store_true",
                          help="allow destructive actions (stop/restart the model on recipe change)")
+    p_apply.add_argument("--no-model", dest="no_model", action="store_true",
+                         help="reconcile control plane + gateway only; never launch/stop a "
+                              "sparkrun model (use when the model is run outside spark-lab)")
     p_apply.add_argument("--apply", dest="apply", action="store_true", help=argparse.SUPPRESS)
     p_apply.add_argument("--yes", action="store_true", help=argparse.SUPPRESS)
     p_apply.add_argument("--diff", action="store_true",

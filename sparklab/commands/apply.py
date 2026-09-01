@@ -57,7 +57,8 @@ def _model_launch_role(cfg, host_name: str):
     return True, None
 
 
-def _converge_one(t, dry: bool, allow_restart: bool, diff: bool) -> int:
+def _converge_one(t, dry: bool, allow_restart: bool, diff: bool,
+                  no_model: bool = False) -> int:
     """The converge for one host (the historical single-target apply body)."""
     cfg, runtime = t.cfg, t.runtime
     # fail-safe (ADR 0004): a model with no image can't be served -- refuse early
@@ -72,6 +73,10 @@ def _converge_one(t, dry: bool, allow_restart: bool, diff: bool) -> int:
     launch_model, span_note = _model_launch_role(cfg, t.name)
     if span_note:
         print(f"   note: {span_note}")
+    if no_model and launch_model:
+        launch_model = False
+        print("   note: --no-model -- reconciling control plane + gateway only "
+              "(no sparkrun model launch/stop)")
 
     print(f"   install dir: {cfg.install_dir_raw if t.is_remote else cfg.install_dir}"
           f"{' (on the node)' if t.is_remote else ''}")
@@ -160,4 +165,5 @@ def run(args) -> int:
     print(f"   hosts  : {', '.join(t.name for t in ts)}")
 
     return cluster.run_on_each(ts, lambda t: _converge_one(t, dry, allow_restart,
-                                                           getattr(args, "diff", False)))
+                                                           getattr(args, "diff", False),
+                                                           getattr(args, "no_model", False)))

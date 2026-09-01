@@ -55,6 +55,12 @@ def target_mapping(cfg: config_mod.Config) -> List[Tuple[str, str]]:
             ("litellm_model_config.yaml.j2", "litellm/model_config.yaml"),
             ("litellm.env.j2", "litellm/.env"),
         ]
+        # Externally-run models (config.yaml `litellm.extra_models`): a second
+        # included model_list the gateway serves but spark-lab never launches.
+        # Only rendered when declared, so the `include:` entry stays conditional.
+        if cfg.litellm.get("extra_models"):
+            entries.append(
+                ("litellm_extra_models.yaml.j2", "litellm/extra_models.yaml"))
     if role == "full":
         # Central observability stack: prometheus config + the grafana
         # provisioning/dashboards that only a 'full' host's grafana consumes.
@@ -151,6 +157,16 @@ def build_context(cfg: config_mod.Config) -> dict:
         # one per active model with a running host; api_base local when the
         # model runs on this host, remote (tailnet/LAN address) otherwise.
         "served_models": cfg.serving_entries(),
+        # Externally-run models spark-lab registers in the gateway but never
+        # launches/stops -- verbatim litellm model_list entries from
+        # config.yaml's `litellm.extra_models`, rendered into
+        # litellm/extra_models.yaml and merged via the gateway `include:`.
+        "has_extra_models": bool(litellm.get("extra_models")),
+        "extra_models_yaml": (
+            yaml_mod.safe_dump({"model_list": litellm.get("extra_models")},
+                               sort_keys=False, default_flow_style=False,
+                               allow_unicode=True).rstrip()
+            if litellm.get("extra_models") else ""),
         "hf_model": model.get("hf_model", ""),
         "model_host": model.get("host", "0.0.0.0"),
         "min_nodes": model.get("min_nodes", 1),
