@@ -48,13 +48,11 @@ spark-lab/
       remote.py                  # Fabric/paramiko runtime + remote state
       runtime.py  schema.py
       state.py                   # node-side .sparklab-state/state.json
-      discovery/                 # recipe discovery/convert (registry, cookbook, LLM)
     templates/                   # Jinja: docker-compose.yaml.j2, litellm.env.j2,
                                  # litellm config/model_config/prometheus/grafana/...
-  .sparkrun/registry.yaml        # in-repo model registry (discovery source)
   docs/                          # SETUP, ARCHITECTURE, OPERATIONS, MODEL_RECIPES,
                                  # NETWORKING, CLUSTERING, REMOTE_OPERATOR_MODE,
-                                 # REGISTRY, STAGING_E2E, adr/...
+                                 # COMMANDS, adr/...
   scripts/                       # capture.sh, secret-scan.sh, staging.sh,
                                  # flash-next-prepare.sh
   .githooks/pre-commit           # secret gate (git config core.hooksPath .githooks)
@@ -131,7 +129,6 @@ from `pyproject.toml` + `uv.lock`; falls back to `python3 -m venv` +
 | `upgrade` | Update sparkrun + pull images + re-apply. |
 | `migrate` | Rewrite a v1/v2 `config.yaml` to schema v3 (idempotent). |
 | `adopt` | Take over an existing running install (read-only; writes only state). |
-| `recipes list/search/convert` | Discover + convert model recipes (in-repo registry, SGLang cookbook, optional LLM path). |
 | `logs <service> [--hosts]` | Tail logs from a stack service. |
 
 Global flags: `--config PATH` (default `./config.yaml`), `-v`, `--json`.

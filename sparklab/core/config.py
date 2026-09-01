@@ -880,9 +880,6 @@ class Config:
     def cloudflare(self) -> Dict[str, Any]:
         return self.network.get("cloudflare", {"enabled": False})
 
-    def discovery(self) -> Dict[str, Any]:
-        return self.data.get("discovery", {}) or {}
-
     @property
     def model_api_base(self) -> str:
         host = self.litellm.get("model_api_base_host", "host.docker.internal")

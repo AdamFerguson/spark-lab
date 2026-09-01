@@ -40,7 +40,7 @@ How the pieces fit together, and why each one exists.
   crucially, a Prometheus `/metrics` endpoint (enabled by `--enable-metrics`)
   that the dashboards read. Any engine that serves an OpenAI-compatible API +
   exposes metrics fits the same shape (see the `runtime:` / `serve_command`
-  config fields + the registry path for non-SGLang recipes).
+  config fields for non-SGLang recipes).
 - **LiteLLM** sits in front as the thing you actually talk to. You don't point
   clients at the raw engine port — you point them at LiteLLM (`:4000`), which
   gives you API keys, per-key spend tracking (stored in Postgres), caching
@@ -160,10 +160,6 @@ Every host-targeted command takes `--hosts a,b` (v3; unset = all hosts).
 | `adopt [--dry-run]` | take over an existing running install: record on-disk state + the running model; read-only vs the install, no restart |
 | `check [--images] [--probe] [--system] [--install] [--all]` | pre-flight: config render + binaries; image resolution; per-host system tools |
 | `migrate [--dry-run]` | rewrite a v1/v2 config to schema v3 (idempotent) |
-| `recipes search <q>` | fan a query out to enabled discovery sources, merge + dedup |
-| `recipes list [src]` | enumerate one source (or all) |
-| `recipes show <ref>` | resolve `<source://ref>`, print metadata + native body |
-| `recipes convert <ref>` | produce a sparkrun *candidate* recipe (validated, never applied) |
 | `logs <service> [--lines N] [-f]` | tail stack service logs (one host; `--hosts` to pick) |
 | `status` | workloads + stack + network status, per selected host |
 | `teardown [--yes] [--purge]` | stop the model + remove the stack, per selected host |
@@ -212,24 +208,3 @@ Two file-layer invariants (both learned live, 2026-08-28):
   boot-time model list, so entry flips (add/remove, local → remote `api_base`)
   would otherwise sit inert until a manual restart. Both are best-effort: a
   fresh stack already booted from the new files.
-
-## Recipe discovery + auto-conversion (Phase 5, ADR 0003)
-
-Discovery is **plugin-based and config-driven**. A `RecipeSource` emits
-source-agnostic `DiscoveredRecipe` records; the framework (registry + contract +
-record type) lives in `sparklab/core/discovery/`, and which sources exist comes
-entirely from the `discovery:` section of `config.yaml`. Two built-in adapters
-ship today:
-
-- **`sparkrun-registry`** — a registry of ready-to-run sparkrun recipes. Default
-  is the in-repo one: `.sparkrun/registry.yaml` (index) + `recipes/*.yaml`.
-- **`sglang-cookbook`** — a curated collection of SGLang model entries (not
-  sparkrun documents). Default sample: `cookbook/sglang.sample.json`.
-
-Adding/redirecting a source is a config change; a brand-new *kind* is a package
-installed under the `sparklab.recipe_sources` entry point + a config entry. Each
-source is read-only, non-disruptive, and errors are isolated per-source. `recipes
-convert` turns a discovered record into a sparkrun **candidate** (deterministic
-normalization, with an opt-in LLM-assisted refinement that falls back to
-deterministic on any failure) -- always validated, written to a file the user
-reviews, and **never auto-applied**. See `docs/REGISTRY.md`.
