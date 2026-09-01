@@ -17,6 +17,8 @@ services:
       - ./extra_models.yaml:/app/extra_models.yaml
 {% endif %}
     command: [ "--config", "/app/config.yaml" ]
+    # Survive reboots + daemon restarts: the gateway trio is the lab's face.
+    restart: always
 {% if redis_enabled %}
     # Reach the SGLang server on the host (host.docker.internal = host-gateway).
     extra_hosts:
@@ -36,6 +38,7 @@ services:
 
   db:
     image: {{ db_image }}
+    restart: always
     environment:
       POSTGRES_USER: {{ db_user }}
       POSTGRES_PASSWORD: "{{ db_password }}"
@@ -59,6 +62,7 @@ services:
 
   redis:
     image: {{ redis_image }}
+    restart: always
     ports:
       - "{{ redis_port }}:6379"
     healthcheck:

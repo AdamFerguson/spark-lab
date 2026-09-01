@@ -2,9 +2,10 @@
 
 Confirms the config is usable BEFORE touching any node: schema + secrets
 resolve, the host set is sane, every host's view renders, and required
-binaries are present **on each host**. Writes nothing and runs no commands.
-For remote hosts the binary pre-flight checks each *target node*, not this
-machine.
+binaries are present **on each host**. Also probes boot survival (restart
+policies + enabled-at-boot services) -- the failure shape behind "litellm
+didn't come back after a reboot". Writes nothing and runs no state-changing
+commands; for remote hosts everything is checked on the *target node*.
 """
 from __future__ import annotations
 
@@ -13,6 +14,24 @@ import tempfile
 from pathlib import Path
 
 from ..core import cluster, config, render
+from ..util import run_command
+
+
+def _boot_probe(units: list) -> str:
+    """Shell one-liner (read-only, ';'-join-safe): containers without a
+    restart policy would stay down after a reboot; services not enabled at
+    boot never come back."""
+    lines = [
+        "bad=$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}} {{.Name}}' "
+        "$(docker ps -q 2>/dev/null) 2>/dev/null | grep '^no ' | cut -d' ' -f2-)",
+        '[ -n "$bad" ] && printf "%s\n" "$bad" '
+        '| sed "s#^#     WARN no restart policy (won\'t survive reboot): #"',
+        '[ -z "$bad" ] && echo "     ok: every running container has a restart policy"',
+    ]
+    for u in units:
+        lines.append(f"systemctl is-enabled {u} >/dev/null 2>&1 "
+                     f"|| echo '     WARN: {u} not enabled at boot'")
+    return "; ".join(lines)
 
 
 def _check_host(t, bins: list) -> int:
@@ -33,6 +52,9 @@ def _check_host(t, bins: list) -> int:
     print(f"   render: OK ({len(rendered)} file(s) would be written to {where})")
     if missing:
         print(f"   WARN: missing binaries: {', '.join(missing)} — they'll be skipped at runtime.")
+    units = ["docker"] + (["tailscaled"] if cfg.tailscale().get("enabled", True) else [])
+    print("   boot survival:")
+    run_command(["sh", "-c", _boot_probe(units)], runtime=runtime, ok=True)
     return 0
 
 

@@ -45,6 +45,17 @@ re-scale-up re-renders it).
 Because `apply` converges on the file hashes, a no-op run is cheap and safe to
 re-run any time (e.g. after a reboot).
 
+## Boot survival
+
+`spark-lab check` probes it per host: containers with restart policy `no`
+(would stay down after a reboot) and services not enabled at boot. The
+rendered compose pins `restart: always` on the gateway trio (litellm/db/redis)
+and every monitoring service, so `apply`ing once makes the stack reboot-proof.
+**Engines you start by hand are yours**: launch them with
+`--restart unless-stopped` (or `docker update --restart unless-stopped <name>`)
+or they will not survive a reboot — `check` warns about any such container
+(e.g. a manual `vllm-fn`).
+
 ## Adding a new Spark to the cluster
 
 ```bash
