@@ -330,18 +330,27 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
         # Same bug class, gateway edition: a changed model list / gateway config
         # is invisible to a RUNNING litellm (it reads model_list at boot and
         # keeps it in its DB), so a model add/remove or an api_base flip would
-        # sit inert until a manual restart. Restart the service when a
-        # previously-tracked gateway file changed (best-effort: a fresh stack
-        # already booted from the new file; a briefly-down gateway just misses
-        # the restart and picks it up on its next start).
-        gateway_files = [rel for rel in ("litellm/model_config.yaml", "litellm/config.yaml")
-                         if rel in state_files and rel in changed]
+        # sit inert until a manual restart. Restart the service when a gateway
+        # file changed or disappeared (best-effort: a fresh stack already
+        # booted from the new files; a briefly-down gateway just misses the
+        # restart), then VERIFY it came back -- a restart that does not heal
+        # fails the converge instead of silently serving the old model list.
+        gateway_files = [rel for rel in ("litellm/model_config.yaml", "litellm/config.yaml",
+                                         "litellm/extra_models.yaml")
+                         if (rel in state_files and rel in changed) or rel in removed]
         if gateway_files and getattr(cfg, "control_plane_enabled", lambda: True)():
             restart_desc = "Restart litellm to apply the changed model list (best-effort)"
             plan.commands.append(
                 (restart_desc, ["docker", "compose", "-f", compose_file,
                                 "restart", "litellm"]))
             plan.best_effort.add(restart_desc)
+            gw_port = cfg.litellm.get("port", 4000)
+            plan.commands.append((
+                "Verify the gateway came back healthy (bounded)",
+                ["sh", "-c",
+                 "for i in $(seq 1 30); do "
+                 f"curl -fsS -o /dev/null http://127.0.0.1:{gw_port}/health/liveliness"
+                 " && exit 0; sleep 2; done; exit 1"]))
     else:
         plan.notes.append("LiteLLM stack unchanged (skipping `docker compose up`).")
 

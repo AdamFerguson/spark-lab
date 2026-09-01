@@ -12,7 +12,10 @@ services:
     volumes:
       - ./config.yaml:/app/config.yaml
       - ./model_config.yaml:/app/model_config.yaml
+{% if has_extra_models %}
+      # Only rendered (and only mounted) when litellm.extra_models is set.
       - ./extra_models.yaml:/app/extra_models.yaml
+{% endif %}
     command: [ "--config", "/app/config.yaml" ]
 {% if redis_enabled %}
     # Reach the SGLang server on the host (host.docker.internal = host-gateway).

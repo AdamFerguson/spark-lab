@@ -39,6 +39,7 @@ def make_cfg(recipe="mymodel", cluster=False):
     c.tailscale = lambda: {"enabled": False}
     c.cloudflare = lambda: {"enabled": False}
     c.prometheus = lambda: {"port": 9090}
+    c.litellm = {"port": 4000}   # gateway health probe reads .port
     c.monitoring_role = lambda: "full"
     c.control_plane_enabled = lambda: True
     return c
@@ -225,6 +226,33 @@ class TestConverge(unittest.TestCase):
                  "hash": state.sha256_bytes(old["sparkrun/recipes/mymodel.yaml"])}
         plan = plan_for(make_cfg(), new, files, model, allow_restart=False)
         self.assertTrue(any(d.startswith("Restart litellm") for d, _ in plan.commands))
+
+    def test_restart_is_followed_by_bounded_health_check(self):
+        plan = self._gateway_plan(b"model_list: [a]\n", b"model_list: [b]\n")
+        descs = [d for d, _ in plan.commands]
+        i = descs.index("Restart litellm to apply the changed model list (best-effort)")
+        self.assertEqual(descs[i + 1], "Verify the gateway came back healthy (bounded)")
+        self.assertNotIn(descs[i + 1], plan.best_effort)   # failure fails the converge
+        argv = dict(plan.commands)[descs[i + 1]]
+        self.assertIn("/health/liveliness", " ".join(argv))
+        self.assertIn("127.0.0.1:4000", " ".join(argv))
+
+    def test_extra_models_change_or_removal_triggers_restart(self):
+        old = {**recipe_bytes(), **LIT, "litellm/model_config.yaml": b"same\n",
+               "litellm/config.yaml": b"gateway: 1\n",
+               "litellm/extra_models.yaml": b"model_list: [x]\n"}
+        files = converge.compute_files_after_apply(old)
+        model = {"name": "mymodel",
+                 "hash": state.sha256_bytes(old["sparkrun/recipes/mymodel.yaml"])}
+        # a changed externally-run-model list restarts the gateway ...
+        new = {**old, "litellm/extra_models.yaml": b"model_list: [x, y]\n"}
+        plan = plan_for(make_cfg(), new, files, model, allow_restart=False)
+        self.assertTrue(any(d.startswith("Restart litellm") for d, _ in plan.commands))
+        # ... and so does the file DISAPPEARING (last extra model removed:
+        # the running gateway would otherwise keep serving it from its DB).
+        new2 = {k: v for k, v in old.items() if k != "litellm/extra_models.yaml"}
+        plan2 = plan_for(make_cfg(), new2, files, model, allow_restart=False)
+        self.assertTrue(any(d.startswith("Restart litellm") for d, _ in plan2.commands))
 
     def test_fresh_gateway_files_do_not_restart(self):
         # first apply: the gateway booted from the new files already

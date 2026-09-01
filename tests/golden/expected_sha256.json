@@ -1,7 +1,7 @@
 {
   "litellm/.env": "753284545b68c66f186c0f81665a7106f8b9d9dec0a7884cf88d3bd3167f2e2c",
   "litellm/config.yaml": "eaef9ea1fe540df44bbcd5cc6f20cfb132f9127105a9ee16746d452f9b7d43ab",
-  "litellm/docker-compose.yml": "5625c389987e644cce90c3b32683a79269c29de24f09279ca76d709257d02b5b",
+  "litellm/docker-compose.yml": "3ed151351415ebb407cdddeb6d7c019fb4cc9d91ec362adb0691fe8d5cf831c6",
   "litellm/grafana/dashboards/sglang-dashboard.json": "e853df492844d0dfabcdae34ae9572b77b8d21176d0fa8d2e732e20501572f15",
   "litellm/grafana/dashboards/spark-host-overview.json": "6ee6b2410321c1d5c54a7e944b4fae29dd1a89ba29215bd8bd0f68b90760bf2a",
   "litellm/grafana/provisioning/dashboards/dashboards.yml": "63ddbd2c45e2e53acc630b9e70279e255d817dbb7420873f045506db3a39b3f9",
