@@ -1,11 +1,11 @@
 # spark-lab — complete command & config inventory
 
 Every command, option, and config key as of `fb5e160`, with the redesign
-verdict for each. **Status: the cuts are landing on this branch** — retired
-verbs (`recipes*`, `migrate`, `upgrade`, `validate`/`doctor` aliases,
-`check` extra modes, `init` bootstrap, v1/v2 schema) are already gone; the
-`NEW` rows are still pending. Verdicts: **KEEP** (unchanged), **MOD** (kept,
-changed), **CUT** (removed), **NEW** (to be added).
+verdict for each. **Status: COMPLETE on this branch** — every CUT landed,
+every NEW verb (`sync`, `expose`, `litellm status|restart`, `status --json`
+inventory) shipped, cloudflare kept per owner decision, `adopt` retained
+(`sync --write` drives the same per-host state refresh through it).
+Verdicts: **KEEP** (unchanged), **MOD** (kept, changed), **CUT** (removed), **NEW** (added).
 
 The redesign target, in one line: *encapsulate the current state of the
 sparks (`status`), pull reality back into config (`sync`), edit config and

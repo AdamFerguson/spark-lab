@@ -96,16 +96,27 @@ Operations notes: [docs/REMOTE_OPERATOR_MODE.md](docs/REMOTE_OPERATOR_MODE.md).
 
 ```
 spark-lab init [--yes]                     # create config.yaml + .env
-spark-lab status [--hosts a,b]
+spark-lab status [--hosts a,b] [--json]    # live view: engines (managed OR manual)
+                                           # + gateway served list + placement
 spark-lab apply [--hosts a,b] [--dry-run] [--diff] [--restart-model]
+spark-lab sync [--write]                   # PULL: unexposed engines / ghosts /
+                                           # drift; --write fixes what it can
+spark-lab expose <host[:port]> [--dry-run] # run it by hand -> one command to
+                                           # serve it through the gateway
+spark-lab litellm status|restart           # gateway: health, staleness, restart
 spark-lab model up <m> [--hosts a,b]       # scale a model up
 spark-lab model down <m> --yes [--hosts]   # scale a model down (stops workloads)
 spark-lab model stop --yes                 # stop now; config unchanged; next apply restarts
 spark-lab teardown --yes [--purge]         # model + whole stack
 spark-lab check [--hosts a,b]              # pre-flight: config + render + binaries
+                                           # + boot-survival probe
 spark-lab logs <service> [--hosts <one>] [-f]
 spark-lab adopt [--dry-run]                # take over an existing install (state only)
 ```
+
+The loop: `status` (what is) -> edit `config.yaml` / `sync --write` / `expose`
+(what should be) -> `apply` (make it so). Gateway-only changes converge with a
+verified restart automatically.
 
 Refreshing deps/images is plain ops: `uv tool upgrade sparkrun` +
 `docker compose pull` on the node, then `spark-lab apply`.

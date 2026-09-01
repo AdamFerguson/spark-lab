@@ -34,10 +34,11 @@ spark-lab/
     cli.py                       # argparse entry + dispatch
     util.py
     commands/                    # one module per CLI verb
-      init.py apply.py status.py teardown.py upgrade.py validate.py
-      check.py system.py images.py adopt.py model.py logs.py
+      init.py apply.py status.py teardown.py check.py adopt.py
+      sync.py expose.py litellm.py model.py logs.py
     core/
       config.py                  # load+validate v3, env-ref + recipe resolution
+      inventory.py               # live engine/gateway probe (status/sync/expose)
       cluster.py                 # host views, control-plane/monitoring roles,
                                  # prometheus targets, local-vs-remote detection
       recipes.py                 # recipe loading, layout pins, per-host views
@@ -115,10 +116,13 @@ from `pyproject.toml` + `uv.lock`; falls back to `python3 -m venv` +
 |---|---|
 | `init [--yes]` | Create `config.yaml` (from the example) + `.env` (from example, generated keys). Node prep (docker/tailscale/sparkrun) is plain ops. |
 | `apply [--dry-run] [--hosts a,b] [--restart-model] [--diff]` | **Converge** every selected host to config (see §5). `--dry-run` is read-only and works even with hosts unreachable (degraded state + warning). `--restart-model` lifts the gate on model restarts. `--diff` (with `--dry-run`) shows per-file diffs. |
-| `status [--hosts] [--json]` | Workloads + stack + network, per selected host; prints the host→model placement table. |
+| `status [--hosts] [--json]` | Live view per host: sparkrun + compose + EVERY engine answering /v1/models (managed or hand-started) + the gateway's actually-served list + placement table. `--json` = one machine-readable object. |
 | `model up <m> --hosts a,b` / `model down <m> --yes --hosts a,b` | Scale a model: add/remove hosts from its `hosts:` (rewrites config) + converge. Down keeps the recipe file on disk. |
 | `model stop <m>` | Stop the model workload now (config unchanged; next apply restarts). |
-| `check` | Config valid + renderable + binaries present on every selected host (read-only). |
+| `check` | Config valid + renderable + binaries present on every selected host + boot-survival probe (restart policies, enabled-at-boot units). Read-only. |
+| `sync [--write]` | PULL live reality: engines running but unexposed, gateway ghosts, missing models, file drift. `--write` adds extra_models entries + refreshes node state; model workloads never touched. |
+| `expose <host[:port]> [--served-model] [--public-name] [--dry-run]` | Probe an engine's /v1/models, append a litellm.extra_models entry to config.yaml, converge gateways only (verified restart). |
+| `litellm status\|restart` | Gateway control: staleness/health/served list; restart = write stale gateway files + compose restart + bounded health poll + state update. |
 | `teardown [--yes] [--purge]` | Stop the model + remove the stack. Named docker volumes are destroyed **only** by `--purge`. |
 | `adopt` | Take over an existing running install (read-only; writes only state). |
 | `logs <service> [--hosts]` | Tail logs from a stack service. |
