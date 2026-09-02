@@ -14,12 +14,9 @@
   [
     "Start/ensure model workload (detached)",
     [
-      "sparkrun",
-      "run",
-      "/opt/sparklab/sparkrun/recipes/qwen.yaml",
-      "--ensure",
-      "--hosts",
-      "127.0.0.1"
+      "sh",
+      "-c",
+      "echo $$ > /tmp/sparklab-model-launch.pid; exec sparkrun run /opt/sparklab/sparkrun/recipes/qwen.yaml --ensure --hosts 127.0.0.1"
     ]
   ],
   [
@@ -27,7 +24,7 @@
     [
       "sh",
       "-c",
-      "for i in $(seq 1 120); do curl -fsS -m 5 http://127.0.0.1:30000/health >/dev/null 2>&1 && exit 0; sleep 5; done; echo 'model not ready after 600s (http://127.0.0.1:30000/health)' >&2; exit 1"
+      "deads=0; for i in $(seq 1 120); do curl -fsS -m 5 http://127.0.0.1:30000/health >/dev/null 2>&1 && exit 0; if [ -f /tmp/sparklab-model-launch.pid ] && ! kill -0 \"$(cat /tmp/sparklab-model-launch.pid 2>/dev/null)\" 2>/dev/null; then deads=$((deads + 1)); if [ \"$deads\" -ge 2 ]; then echo \"model launch process exited before the model was ready\" >&2; tail -n 40 /tmp/sparklab-model-launch.log >&2; exit 1; fi; fi; sleep 5; done; echo 'model not ready after 600s (http://127.0.0.1:30000/health)' >&2; tail -n 40 /tmp/sparklab-model-launch.log >&2; exit 1"
     ]
   ],
   [

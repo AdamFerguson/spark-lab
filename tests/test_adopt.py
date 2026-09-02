@@ -1,4 +1,5 @@
 """`spark-lab adopt` -- take over an existing running install without disturbing it."""
+
 from __future__ import annotations
 
 import sys
@@ -31,8 +32,7 @@ class AdoptTest(unittest.TestCase):
 
     def _adopt(self, cfg_path, state_dir, dry=False):
         argv = ["adopt"] + (["--dry-run"] if dry else []) + ["--config", cfg_path]
-        with mock.patch.object(config.Config, "state_dir",
-                               new_callable=mock.PropertyMock, return_value=state_dir):
+        with mock.patch.object(config.Config, "state_dir", new_callable=mock.PropertyMock, return_value=state_dir):
             return cli.main(argv)
 
     def _state(self, state_dir) -> dict:
@@ -58,8 +58,7 @@ class AdoptTest(unittest.TestCase):
         self.assertEqual(self._adopt(cfg_path, base / "state"), 0)
         st = self._state(base / "state")
         # adopted the ON-DISK (drifted) hash, not the rendered one
-        self.assertEqual(st["files"]["litellm/docker-compose.yml"],
-                         state.sha256_bytes(target.read_bytes()))
+        self.assertEqual(st["files"]["litellm/docker-compose.yml"], state.sha256_bytes(target.read_bytes()))
 
     def test_adopt_missing_file_not_recorded(self):
         base = Path(tempfile.mkdtemp())
@@ -74,9 +73,9 @@ class AdoptTest(unittest.TestCase):
         base = Path(tempfile.mkdtemp())
         install = base / "live"
         cfg_path = self._materialise(base, str(install))
-        # point the config's active recipe at a name that isn't on disk
+        # point the config's active model at an alias with no recipe on disk
         cfg = Path(cfg_path)
-        cfg.write_text(cfg.read_text().replace("recipe_name: qwen", "recipe_name: nonexistent"))
+        cfg.write_text(cfg.read_text().replace("  qwen:", "  nonexistent:"))
         self.assertEqual(self._adopt(cfg_path, base / "state"), 0)
         self.assertNotIn("model", self._state(base / "state"))
 

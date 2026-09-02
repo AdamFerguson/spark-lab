@@ -21,8 +21,10 @@ def _cfg(text):
 
 class TestConfig(unittest.TestCase):
     def test_accessors_and_defaults(self):
-        p = _cfg("install:\n  install_dir: ~/AI\n  hosts: [127.0.0.1]\n"
-                 "model:\n  recipe_name: qwen\n")
+        p = _cfg(
+            "version: 3\ninstall:\n  install_dir: ~/AI\n  hosts: [127.0.0.1]\n"
+            "hosts:\n  - name: node-a\nmodels:\n  qwen:\n    active: true\n"
+        )
         cfg = load(str(p))
         self.assertTrue(str(cfg.install_dir).endswith("/AI"))
         self.assertEqual(cfg.hosts, ["127.0.0.1"])
@@ -32,18 +34,36 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg.model_api_base, "http://host.docker.internal:30000/v1")
 
     def test_cluster_detection(self):
-        cfg = load(str(_cfg("install:\n  hosts: [a, b]\n")))
+        cfg = load(
+            str(
+                _cfg(
+                    "version: 3\ninstall:\n  hosts: [a, b]\n"
+                    "hosts:\n  - name: a\n  - name: b\n"
+                    "models:\n  m:\n    active: true\n"
+                )
+            )
+        )
         self.assertTrue(cfg.is_cluster)
         self.assertEqual(len(cfg.hosts), 2)
 
+    def test_load_requires_v3(self):
+        # v1/v2 shapes were retired; loading one fails with a pointer, not a crash.
+        with self.assertRaises(ValueError) as cm:
+            load(str(_cfg("model:\n  recipe_name: qwen\n")))
+        self.assertIn("v3", str(cm.exception))
+
     def test_secret_resolved_from_env_file(self):
         d = Path(tempfile.mkdtemp())
-        (d / "c.yaml").write_text("model:\n  hf_token_env: HF_TOKEN\n")
+        (d / "c.yaml").write_text(
+            "version: 3\nhosts:\n  - name: n\nmodels:\n  t:\n    active: true\n    hf_token_env: HF_TOKEN\n"
+        )
         (d / ".env").write_text("HF_TOKEN=mytoken\n")
         self.assertEqual(load(str(d / "c.yaml")).secret("HF_TOKEN"), "mytoken")
 
     def test_secret_missing_is_empty(self):
-        cfg = load(str(_cfg("model:\n  hf_token_env: NOPE\n")))
+        cfg = load(
+            str(_cfg("version: 3\nhosts:\n  - name: n\nmodels:\n  t:\n    active: true\n    hf_token_env: NOPE\n"))
+        )
         self.assertEqual(cfg.secret("NOPE"), "")
         self.assertEqual(cfg.secret(None), "")
 

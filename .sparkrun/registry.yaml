@@ -2,7 +2,7 @@
 # This is the source of truth for the `sparkrun-registry` discovery source.
 # `file:` points at the runnable sparkrun recipe; the rest is discovery metadata.
 registry: spark-lab
-updated: "2026-08-22"
+updated: "2026-08-30"
 recipes:
   qwen38-27b:
     name: Qwen3.8-27B (NVFP4)
@@ -20,3 +20,51 @@ recipes:
     hardware: DGX Spark / GB10
     description: Compact 8B model for low-memory dev/test work.
     file: recipes/llama31-8b.yaml
+  qwen38-flash-next:
+    name: Qwen3.8-Flash-Next (NVFP4, MTP)
+    model: RadixArk/Qwen3.8-Flash-Next-NVFP4
+    image: lmsysorg/sglang:qwen38flashnext
+    tags: [ qwen, moe, 125b, nvfp4, speculative, mtp, 262k, single-node, needs-prepare ]
+    hardware: DGX Spark / GB10
+    description: >
+      125B MoE + 51B PLE (6B active), native 262k context, MTP 3/1/4. Needs the
+      one-time node-side preparation (scripts/flash-next-prepare.sh): image
+      patching + PLE dir + pinned revision weights.
+    file: recipes/qwen38-flash-next.yaml
+  qwen38-flash-next-nvfp4:
+    name: Qwen3.8-Flash-Next NVFP4 (SM121 fast QSA, 2-node)
+    model: RadixArk/Qwen3.8-Flash-Next-NVFP4
+    image: qwen38-flash-next-nvfp4-runtime:sm121-fast-qsa-mrope1
+    tags: [ qwen, moe, 125b, nvfp4, speculative, mtp, qsa, two-node, tensor-parallel, local-image ]
+    hardware: 2x DGX Spark / GB10 (CX7 InfiniBand)
+    description: >
+      125B MoE + 51B PLE (6B active) on the SM121 FlashInfer TRT-LLM sparse-QSA
+      path, BF16 Mamba state (97 slots), NEXTN (MTP) 3/1/4 in decode mode,
+      decode-only CUDA graphs. Requires the locally built image (patches baked
+      in; see recipe metadata). Spans both hosts (min_nodes: 2, TP=2).
+    file: recipes/qwen38-flash-next-nvfp4.yaml
+  nemotron35-lightning:
+    name: Nemotron 3.5 Lightning (NVFP4, DFlash)
+    model: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+    image: lmsysorg/sglang:dev-nemotron3-5-lightning
+    tags: [ nemotron, 30b, moe, nvfp4, speculative, dflash, 1m, single-node ]
+    hardware: DGX Spark / GB10
+    description: >
+      30B MoE (3B active), NVFP4 via Marlin on GB10, 1M context, DFlash
+      speculative decoding with a 1.2 GB public draft. Tuned from the SGLang
+      cookbook dgx-spark cell: mem-fraction 0.78, CUDA-graph decode ceiling
+      4, max-running-requests 4.
+    file: recipes/nemotron35-lightning.yaml
+  glm53-flash-exl3:
+    name: GLM-5.3-Flash (EXL3 + DFlash2, 2-node)
+    model: Mia-AiLab/GLM-5.3-Flash-EXL3-TR3-4bpw
+    image: ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks:exl3
+    tags: [ glm, moe, 320b, exl3, speculative, dflash2, 1m, two-node, tensor-parallel ]
+    hardware: 2x DGX Spark / GB10 (CX7 InfiniBand)
+    description: >
+      ~164 GiB EXL3 MoE served by vLLM tensor-parallel 2 across both Sparks.
+      Conversion of MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks (MIT). Spans two
+      hosts (min_nodes: 2); spark-lab launches it once from the head host
+      (first in the model's hosts: list). First boot downloads ~164 GiB of
+      weights to both nodes.
+    file: recipes/glm53-flash-exl3.yaml

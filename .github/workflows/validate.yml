@@ -48,7 +48,12 @@ jobs:
           (cd deploy/litellm && docker compose -f docker-compose.yml config -q && echo "compose ok")
 
       - name: shellcheck
-        run: shellcheck bin/spark-lab scripts/capture.sh scripts/secret-scan.sh scripts/staging.sh .githooks/pre-commit
+        run: shellcheck bin/spark-lab scripts/secret-scan.sh .githooks/pre-commit
+
+      - name: "ruff: lint + format (repo-wide)"
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
 
       - name: "Test suite + coverage (unit / integration / regression / parity on sparklab/)"
         run: |
@@ -57,7 +62,7 @@ jobs:
 
       - name: yamllint (example config + templates)
         run: |
-          .venv/bin/yamllint -d '{extends: default, rules: {line-length: {max: 120}, truthy: disable, comments: disable, comments-indentation: disable}}' config.example.yaml config.example.v2.yaml sparklab/templates
+          .venv/bin/yamllint -d '{extends: default, rules: {line-length: {max: 120}, truthy: disable, comments: disable, comments-indentation: disable}}' config.example.yaml sparklab/templates
 
       - name: Install gitleaks (pinned)
         run: |

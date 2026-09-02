@@ -26,10 +26,15 @@ from sparklab.commands import apply  # noqa: E402
 from tests.helpers import REFERENCE_ENV, SECRET_DUMMY, FakeRuntime, config_text  # noqa: E402
 
 
-def _args(config_path, runtime, dry=False, apply=False, diff=False):
+def _args(config_path, runtime, dry=False, restart_model=False, diff=False):
     return types.SimpleNamespace(
-        config=str(config_path), dry_run=dry, apply=apply, yes=apply, diff=diff,
-        verbose=False, json=False, runtime=runtime,
+        config=str(config_path),
+        dry_run=dry,
+        restart_model=restart_model,
+        diff=diff,
+        verbose=False,
+        json=False,
+        runtime=runtime,
     )
 
 
@@ -48,6 +53,22 @@ class TestApplyIntegration(unittest.TestCase):
     def tearDown(self):
         self._env.stop()
 
+    def test_renamed_recipe_keeps_stale_file_on_disk(self):
+        """A recipe rename converges by stopping the old workload; the old
+        recipe file is LEFT on disk (unmanaged) -- only the state record drops
+        it. Re-scaling up re-renders the recipe over it."""
+        rt = FakeRuntime()
+        self.assertEqual(apply.run(_args(self.cfg_path, rt)), 0)
+        old = self.install / "sparkrun" / "recipes" / "qwen.yaml"
+        new = self.install / "sparkrun" / "recipes" / "qwen2.yaml"
+        self.assertTrue(old.is_file())
+        self.cfg_path.write_text(config_text(str(self.install)).replace("  qwen:", "  qwen2:"))
+        self.assertEqual(apply.run(_args(self.cfg_path, rt, restart_model=True)), 0)
+        self.assertTrue(old.exists(), "stale recipe file is kept on disk (unmanaged)")
+        self.assertTrue(new.is_file())
+        self.assertNotIn("sparkrun/recipes/qwen.yaml", self._state()["files"])
+        self.assertIn("sparkrun/recipes/qwen2.yaml", self._state()["files"])
+
     def _state(self):
         return json.loads(self.state_file.read_text())
 
@@ -63,15 +84,33 @@ class TestApplyIntegration(unittest.TestCase):
         self.assertEqual(st["model"]["name"], "qwen")
         # the exact commands issued: control plane first (available while the model
         # loads), then the model launched detached, then a bounded readiness probe
-        compose = ["docker", "compose", "-f", str(self.install / "litellm" / "docker-compose.yml"),
-                   "up", "-d", "--remove-orphans"]
-        model_run = ["sparkrun", "run", str(self.install / "sparkrun" / "recipes" / "qwen.yaml"),
-                     "--ensure", "--hosts", "127.0.0.1"]
+        compose = [
+            "docker",
+            "compose",
+            "-f",
+            str(self.install / "litellm" / "docker-compose.yml"),
+            "up",
+            "-d",
+            "--remove-orphans",
+        ]
+        model_run = [
+            "sh",
+            "-c",
+            "echo $$ > /tmp/sparklab-model-launch.pid; exec sparkrun run "
+            + str(self.install / "sparkrun" / "recipes" / "qwen.yaml")
+            + " --ensure --hosts 127.0.0.1",
+        ]
         self.assertEqual(len(rt.commands), 3)
         self.assertEqual(rt.commands[0], compose)
         self.assertEqual(rt.commands[1], model_run)
         self.assertEqual(rt.commands[2][:2], ["sh", "-c"])
         self.assertIn("127.0.0.1:30000/health", rt.commands[2][2])
+        # the probe crash-detects via the launch PID file and tails the launch log
+        self.assertIn("kill -0", rt.commands[2][2])
+        self.assertIn("/tmp/sparklab-model-launch.pid", rt.commands[2][2])
+        self.assertIn("/tmp/sparklab-model-launch.log", rt.commands[2][2])
+        # the detached launch captured its log for the probe to tail
+        self.assertEqual(rt.spawn_logs, ["/tmp/sparklab-model-launch.log"])
 
     def test_reapply_is_idempotent_no_restart(self):
         apply.run(_args(self.cfg_path, FakeRuntime()))
@@ -82,43 +121,57 @@ class TestApplyIntegration(unittest.TestCase):
         # bounded readiness probe runs. (The engine always ensures the model is up,
         # by design.) The control plane is skipped (unchanged).
         self.assertEqual(len(rt2.commands), 2)
-        self.assertEqual(rt2.commands[0], ["sparkrun", "run",
-                                        str(self.install / "sparkrun" / "recipes" / "qwen.yaml"),
-                                        "--ensure", "--hosts", "127.0.0.1"])
+        self.assertEqual(
+            rt2.commands[0],
+            [
+                "sh",
+                "-c",
+                "echo $$ > /tmp/sparklab-model-launch.pid; exec sparkrun run "
+                + str(self.install / "sparkrun" / "recipes" / "qwen.yaml")
+                + " --ensure --hosts 127.0.0.1",
+            ],
+        )
         self.assertEqual(rt2.commands[1][:2], ["sh", "-c"])
         self.assertIn("127.0.0.1:30000/health", rt2.commands[1][2])
         self.assertFalse(any("stop" in argv for argv in rt2.commands))
         # recorded state is unchanged
         self.assertEqual(self._state(), before)
 
-    def test_recipe_change_stays_pending_without_apply(self):
+    def test_recipe_change_stays_pending_without_restart_flag(self):
         apply.run(_args(self.cfg_path, FakeRuntime()))
         before = self._state()["model"]["hash"]
         # mutate the recipe in config
         self.cfg_path.write_text(
-            self.cfg_path.read_text().replace("mem_fraction_static: 0.85",
-                                              "mem_fraction_static: 0.90"))
+            self.cfg_path.read_text().replace("mem_fraction_static: 0.85", "mem_fraction_static: 0.90")
+        )
         rt = FakeRuntime()
-        self.assertEqual(apply.run(_args(self.cfg_path, rt, apply=False)), 0)
+        self.assertEqual(apply.run(_args(self.cfg_path, rt)), 0)
         # no stop issued, and state still records the OLD recipe hash (pending)
         self.assertFalse(any("stop" in argv for argv in rt.commands))
         self.assertEqual(self._state()["model"]["hash"], before)
 
-    def test_recipe_change_converges_with_apply(self):
+    def test_recipe_change_converges_with_restart_model(self):
         apply.run(_args(self.cfg_path, FakeRuntime()))
         before = self._state()["model"]["hash"]
         self.cfg_path.write_text(
-            self.cfg_path.read_text().replace("mem_fraction_static: 0.85",
-                                              "mem_fraction_static: 0.90"))
+            self.cfg_path.read_text().replace("mem_fraction_static: 0.85", "mem_fraction_static: 0.90")
+        )
         rt = FakeRuntime()
-        self.assertEqual(apply.run(_args(self.cfg_path, rt, apply=True)), 0)
+        self.assertEqual(apply.run(_args(self.cfg_path, rt, restart_model=True)), 0)
         # the running recipe was stopped, then started again
-        self.assertTrue(any(argv == ["sparkrun", "stop",
-                                     str(self.install / "sparkrun" / "recipes" / "qwen.yaml"),
-                                     "--hosts", "127.0.0.1"] for argv in rt.commands))
-        self.assertTrue(any(argv == ["sparkrun", "run",
-                                     str(self.install / "sparkrun" / "recipes" / "qwen.yaml"),
-                                     "--ensure", "--hosts", "127.0.0.1"] for argv in rt.commands))
+        self.assertTrue(
+            any(
+                "sparkrun stop " + str(self.install / "sparkrun" / "recipes" / "qwen.yaml") + " --hosts 127.0.0.1"
+                in " ".join(map(str, argv))
+                for argv in rt.commands
+            )
+        )
+        self.assertTrue(
+            any(
+                "sparkrun run " in " ".join(map(str, argv)) and "--ensure" in " ".join(map(str, argv))
+                for argv in rt.commands
+            )
+        )
         # state now records the NEW recipe hash
         self.assertNotEqual(self._state()["model"]["hash"], before)
 
@@ -128,7 +181,6 @@ class TestApplyIntegration(unittest.TestCase):
         self.assertEqual(rt.commands, [])
         self.assertFalse((self.install / "sparkrun" / "recipes" / "qwen.yaml").exists())
         self.assertFalse(self.state_file.exists())
-
 
     def test_dry_run_diff_shows_changes(self):
         apply.run(_args(self.cfg_path, FakeRuntime()))  # seed the on-disk install

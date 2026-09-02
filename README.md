@@ -10,15 +10,15 @@ One config file plus one command:
 ```bash
 git clone <this-repo> spark-lab && cd spark-lab
 ./bin/spark-lab init          # create config.yaml + .env, generate keys
-# edit config.yaml and .env for your model / ports / dashboards
+# edit config.yaml and .env for your hosts / model / ports / dashboards
 ./bin/spark-lab apply --dry-run   # preview the plan
 ./bin/spark-lab apply             # deploy + converge
 ```
 
 `apply` is **idempotent and convergent**: it re-renders the stack from your
-config, diffs what changed since the last run, and only re-acts on the difference.
-Change the config or a template, run `apply` again, and the node(s) converge to
-the new state.
+config, diffs what changed since the last run, and only re-acts on the
+difference. Change the config or a template, run `apply` again, and the host(s)
+converge to the new state.
 
 ## What it does
 
@@ -36,53 +36,102 @@ the new state.
 ```bash
 git clone <your-fork> spark-lab && cd spark-lab
 git config core.hooksPath .githooks      # install the pre-commit secret gate (once)
-./bin/spark-lab init                       # copy config.example.yaml -> config.yaml, .env.example -> .env
-cp config.example.yaml config.yaml         # (init already did this; edit config.yaml to taste)
+./bin/spark-lab init                       # create config.yaml + .env (v3 example), generate keys
+# edit config.yaml: hosts, model, ports, dashboards, network
+./bin/spark-lab check                      # pre-flight (config + per-host render + binaries)
 ./bin/spark-lab apply --dry-run            # see the plan; touches nothing
-./bin/spark-lab apply --apply              # materialize: converge the node(s)
+./bin/spark-lab apply --hosts <your-host>  # materialize: converge the selected host(s)
 ```
 
-## Remote operator mode (optional)
+## Several Sparks, one config
 
-By default spark-lab converges **this machine** (a Spark). To operate a Spark
-from elsewhere — your laptop or workstation over Tailscale, for example — set
-an `install.remote` target and every command (`apply`, `status`, `teardown`,
-`upgrade`, `adopt`, `logs`, `check ...`) runs against that node over SSH
-(Fabric):
+A `version: 3` config describes the **whole cluster** — every managed node is
+an entry under `hosts:`, and every command takes `--hosts a,b` to scope itself
+(unset = all hosts):
 
 ```yaml
+version: 3
 install:
-  install_dir: ~/AI          # now a path ON THE TARGET node
-  remote:
-    host: luna               # SSH target (tailnet name / hostname / IP)
-    # user / port / identity_file: optional
-    # repo_dir: ~/spark-lab  # the node's spark-lab checkout (holds the state)
+  name: spark-lab
+  install_dir: ~/AI
+hosts:
+  - name: luna
+    ssh: luna.tailnet.example
+    remote: true
+    monitoring: {instance_label: luna}
+  - name: sol
+    ssh: sol.tailnet.example
+    remote: true
+    monitoring: {instance_label: spark}
+models:
+  qwen38-27b:
+    active: true
+    hosts: [luna, sol]          # where it is served -- this IS the scale
+    host_overrides:
+      sol: {litellm: {model_name: my-spark-qwen3-8-27b}}   # per-host tuning
 ```
 
-Key properties:
-
-- **One config targets one node.** Manage several Sparks with one config per
-  node (e.g. `labs/luna/config.yaml` + `labs/sol/config.yaml`) and switch with
-  `--config`. The `.env` next to each config supplies that node's secrets.
+- **Remote vs local is automatic.** `remote: true` means "reach it over SSH
+  (Fabric) when I'm not on it". Running `spark-lab status` on `luna` itself
+  converges `luna` **locally** and `sol` remotely, from the very same file.
+- **Anything in a host entry** besides `name`/`ssh`/`remote` is a per-host
+  override (deep-merged: `monitoring:`, `images:`, `install:`, ...), and
+  `models.<m>.host_overrides.<host>` tailors a model per host.
+- **Model scaling**: `spark-lab model up qwen38-27b --hosts sol` adds sol to
+  the model's `hosts:` and converges it; `model down ... --yes` removes hosts
+  and stops the workloads. One active model per host (enforced).
 - **State stays on the managed node** (in its spark-lab checkout), so
-  node-local and remote operation share one source of truth — no migration,
-  no drift between operators.
-- **Everything else is unchanged**: the same declarative converge, the same
-  `--apply` gate for model restarts, the same idempotent no-ops. Prerequisite:
-  SSH key access to the node (your key, or `identity_file`).
+  node-local and remote operation share one source of truth.
+- Prerequisite for remote hosts: SSH key access (your key, or `identity_file`;
+  `user@host` in `ssh:` works too). Node preparation (docker/tailscale/sparkrun)
+  is plain ops; `spark-lab check` verifies each host's binaries.
 
-Design + operations notes: [docs/REMOTE_OPERATOR_MODE.md](docs/REMOTE_OPERATOR_MODE.md).
+Legacy configs (single-node or `install.remote` shapes) are retired: declare
+`version: 3` per `config.example.yaml`.
+
+Design: [ADR-0008](docs/adr/0008-multi-host-cluster-config.md).
+Operations notes: [docs/REMOTE_OPERATOR_MODE.md](docs/REMOTE_OPERATOR_MODE.md).
+
+## Command surface
+
+```
+spark-lab init [--yes]                     # create config.yaml + .env
+spark-lab status [--hosts a,b] [--json]    # live view: engines (managed OR manual)
+                                           # + gateway served list + placement
+spark-lab apply [--hosts a,b] [--dry-run] [--diff] [--restart-model]
+spark-lab sync [--write]                   # PULL: unexposed engines / ghosts /
+                                           # drift; --write fixes what it can
+spark-lab expose <host[:port]> [--dry-run] # run it by hand -> one command to
+                                           # serve it through the gateway
+spark-lab litellm status|restart           # gateway: health, staleness, restart
+spark-lab model up <m> [--hosts a,b]       # scale a model up
+spark-lab model down <m> --yes [--hosts]   # scale a model down (stops workloads)
+spark-lab model stop --yes                 # stop now; config unchanged; next apply restarts
+spark-lab teardown --yes [--purge]         # model + whole stack
+spark-lab check [--hosts a,b]              # pre-flight: config + render + binaries
+                                           # + boot-survival probe
+spark-lab logs <service> [--hosts <one>] [-f]
+spark-lab adopt [--dry-run]                # take over an existing install (state only)
+```
+
+The loop: `status` (what is) -> edit `config.yaml` / `sync --write` / `expose`
+(what should be) -> `apply` (make it so). Gateway-only changes converge with a
+verified restart automatically.
+
+Refreshing deps/images is plain ops: `uv tool upgrade sparkrun` +
+`docker compose pull` on the node, then `spark-lab apply`.
 
 ## Layout
 
 ```
-config.example.yaml   # copy to config.yaml; every custom knob lives here
-.env.example          # copy to .env (gitignored); secrets, generated by init
-bin/spark-lab         # CLI entrypoint
-lib/                  # Python engine: config, render, converge, state, cli
-templates/            # Jinja templates + static Grafana dashboards
-docs/                 # SETUP, ARCHITECTURE, OPERATIONS, MODEL_RECIPES, NETWORKING
-scripts/capture.sh    # capture read-only terminal output (for docs/blog)
+config.example.yaml     # v3 multi-host cluster example (hosts: + model hosts/host_overrides)
+.env.example            # copy to .env (gitignored); secrets, generated by init
+bin/spark-lab           # CLI entrypoint
+sparklab/               # Python engine: config, render, converge, state, cluster, remote
+templates/              # Jinja templates + static Grafana dashboards
+docs/                   # COMMANDS, SETUP, ARCHITECTURE, OPERATIONS,
+                        # MODEL_RECIPES, NETWORKING, CLUSTERING,
+                        # REMOTE_OPERATOR_MODE, adr/
 ```
 
 ## Docs
@@ -97,7 +146,7 @@ scripts/capture.sh    # capture read-only terminal output (for docs/blog)
 ## Safety model
 
 `apply` is safe by default: it starts/recreates services idempotently but will
-**not** restart the running model unless you pass `--apply` (or `--yes`).
+**not** restart the running model unless you pass `--restart-model`.
 `--dry-run` prints the plan and touches nothing. Secrets live only in the
 gitignored `.env` and on the node — the repo contains no credentials.
 
@@ -105,21 +154,27 @@ gitignored `.env` and on the node — the repo contains no credentials.
 
 `apply` is declarative: it renders your config, diffs against the last applied
 state, and only acts on the difference — so **changing `config.yaml` (or pulling
-newer templates) and re-running `apply` converges the node to the new state**,
-including the running model:
+newer templates) and re-running `apply` converges every selected host to the new
+state**, including the running model:
 
 - **Add / change** a recipe or service → detected and applied.
 - **Switch or drop** a model → the old workload is stopped (gated) and the new
   one started; a removed service is reconciled via `docker compose up --remove-orphans`.
+- **Files that no longer render are removed** (e.g. an old recipe file after a
+  rename) — only after the model commands have run, so the stop step can still
+  address the old recipe by path, and never while a restart is still gated.
 - **Files-on-disk vs model-running are tracked separately.** A recipe change that
   hasn't been restarted stays *pending* and keeps prompting you to run
-  `apply --apply` — it does **not** silently record the new recipe as applied.
+  `apply --restart-model` — it does **not** silently record the new recipe as applied.
 - **No-op** re-runs are idempotent (no model restart).
-- **Stopping just the model** (stack keeps running): `spark-lab model stop --yes`.
-  The stop is recorded in state, and the next routine `apply` re-starts the model
-  (converge semantics: the config says the model should be running).
-- `spark-lab upgrade` refreshes the engine deps, `sparkrun`, and the stack images,
-  then re-applies with the model restart allowed.
+- **Scale a model across hosts** with `model up` / `model down` (they edit the
+  config's `models.<m>.hosts` and converge the affected hosts); stopping just
+  the model without changing config: `model stop --yes` (the next routine
+  `apply` re-starts it — converge semantics).
+- **Split the observability stack** with `monitoring.role` per host:
+  `full` (default: prometheus + grafana + exporters), `exporters` (exporter
+  sidecars only — a `full` host's prometheus scrapes it remotely, so one
+  central Grafana covers the whole cluster), or `none`.
 
 The converge decisions are pinned by `tests/test_converge.py` (add / remove /
 switch / no-op / pending), which runs in CI.

@@ -22,6 +22,10 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:  # annotation-only: remote pulls in fabric, never import eagerly
+    from .remote import RemoteRuntime
 
 
 class Runtime:
@@ -50,7 +54,20 @@ class Runtime:
         """
         return subprocess.run(list(argv))
 
-    def spawn(self, argv) -> subprocess.Popen:
+    def run_capture(self, argv) -> subprocess.CompletedProcess:
+        """Run ``argv`` with stdout/stderr CAPTURED (inventory-style reads:
+        the caller parses the output, nothing is streamed)."""
+        return subprocess.run(list(argv), capture_output=True, text=True)
+
+    def run_sudo(self, argv) -> subprocess.CompletedProcess:
+        """Run ``argv`` under ``sudo`` on this machine.
+
+        ``subprocess`` inherits the controlling terminal, so sudo's password
+        prompt appears here and the password is typed on this machine (never
+        passed through the command line)."""
+        return subprocess.run(["sudo"] + list(argv))
+
+    def spawn(self, argv, log: Optional[str] = None) -> subprocess.Popen:
         """Launch ``argv`` fully **detached** and return the ``Popen`` without
         waiting for it to exit.
 
@@ -60,12 +77,17 @@ class Runtime:
         away so it doesn't hold the caller's terminal; the model's own logs stay
         available via ``docker logs`` / ``spark-lab logs``, and a separate bounded
         probe confirms it actually came up.
+
+        ``log`` (a node-local path) captures the launch's own stdout/stderr
+        instead of discarding it, so a failed launch can be tailed by the
+        readiness probe / operator.
         """
+        out = open(log, "ab") if log else subprocess.DEVNULL
         return subprocess.Popen(
             list(argv),
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=out,
+            stderr=out,
             start_new_session=True,
         )
 
@@ -85,5 +107,6 @@ def runtime_for(cfg) -> "Runtime | RemoteRuntime":
     """
     if getattr(cfg, "is_remote", False):
         from .remote import RemoteRuntime, RemoteTarget
+
         return RemoteRuntime(RemoteTarget.from_config(cfg))
     return Runtime()

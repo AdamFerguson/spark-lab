@@ -21,6 +21,8 @@ defaults:
 command: |
   sglang serve \
     --enable-metrics \
+    --enable-mfu-metrics \
+    --enable-cache-report \
     --trust-remote-code \
     --model-path {model} \
     --kv-cache-dtype {kv_cache_dtype} \

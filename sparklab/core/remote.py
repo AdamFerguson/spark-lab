@@ -26,19 +26,23 @@ Design notes:
 from __future__ import annotations
 
 import contextlib
+import getpass
 import io
 import json
 import os
 import shlex
 import subprocess
+import sys
 import tempfile
 from typing import Dict, List, Optional
 
 # Fabric is imported at module level, but this module is only imported lazily
 # (see ``sparklab.core.runtime.runtime_for``) when a config has a remote target.
 from fabric import Connection
+from paramiko.ssh_exception import SSHException
 
 from . import state as state_mod
+from .node import file_mode
 
 # Standard PATH prefix for every remote command: uv tooling (~/.local/bin) and
 # cargo installs (~/.cargo/bin) are where sparkrun/uv usually live on a Spark.
@@ -62,9 +66,15 @@ class RemoteTarget:
     they are expanded against the *remote* home by :class:`RemoteRuntime.expand`.
     """
 
-    def __init__(self, host: str, user: Optional[str] = None, port: Optional[int] = None,
-                 identity_file: Optional[str] = None,
-                 install_dir: str = "~/AI", repo_dir: str = "~/spark-lab"):
+    def __init__(
+        self,
+        host: str,
+        user: Optional[str] = None,
+        port: Optional[int] = None,
+        identity_file: Optional[str] = None,
+        install_dir: str = "~/AI",
+        repo_dir: str = "~/spark-lab",
+    ):
         self.host = str(host)
         self.user = user
         self.port = int(port) if port else None
@@ -86,8 +96,10 @@ class RemoteTarget:
         )
 
     def __repr__(self) -> str:
-        return (f"RemoteTarget(host={self.host!r}, user={self.user!r}, "
-                f"install_dir={self.install_dir!r}, repo_dir={self.repo_dir!r})")
+        return (
+            f"RemoteTarget(host={self.host!r}, user={self.user!r}, "
+            f"install_dir={self.install_dir!r}, repo_dir={self.repo_dir!r})"
+        )
 
 
 def build_connection(target: RemoteTarget) -> Connection:
@@ -95,8 +107,7 @@ def build_connection(target: RemoteTarget) -> Connection:
     connect_kwargs: Dict = {}
     if target.identity_file:
         connect_kwargs["identity_filename"] = target.identity_file
-    return Connection(target.host, user=target.user, port=target.port,
-                      connect_kwargs=connect_kwargs or None)
+    return Connection(target.host, user=target.user, port=target.port, connect_kwargs=connect_kwargs or None)
 
 
 class _Detached:
@@ -126,22 +137,49 @@ class RemoteRuntime:
         self.target = target
         self._conn = connection if connection is not None else build_connection(target)
         self._remote_home: Optional[str] = None
+        # Set (with the reason) once a connect fails. Data-reading operations
+        # (home_path/locate/available + the remote state read) then degrade to
+        # safe values instead of re-attempting a failing connect, so a dry-run
+        # can render without live connectivity. Executions (run/run_sudo/save)
+        # still raise, so an apply that must touch the node fails clearly.
+        self._unreachable: Optional[str] = None
 
     # -- connection helpers --------------------------------------------------
     @property
     def conn(self) -> Connection:
         return self._conn
 
+    def _quiet_run(self, inner: str):
+        """Run a data-reading login-shell command; return the result, or ``None``
+        when the node is unreachable / the SSH layer failed (caching the reason
+        and printing a one-time warning). Read paths use this so a dry-run can
+        render offline; execution paths use :meth:`run` / :meth:`run_sudo`.
+        """
+        if self._unreachable is not None:
+            return None
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                return self._conn.run(_login(inner), warn=True)
+        except (OSError, SSHException) as e:
+            self._unreachable = f"{type(e).__name__}: {e}"
+            print(
+                f"spark-lab: cannot reach {self.label}: {self._unreachable}. "
+                f"Continuing with degraded (empty) node data for this host.",
+                file=sys.stderr,
+            )
+            return None
+
     def home_path(self) -> str:
         """The remote node's ``$HOME`` (fetched once, cached).
 
         Fetched quietly: the value is data for path expansion, not terminal
-        output (fabric echoes remote stdout to the local terminal).
+        output (fabric echoes remote stdout to the local terminal). When the
+        node is unreachable, degrades to ``~`` so ``~``-form paths still display
+        sensibly in a dry-run.
         """
         if self._remote_home is None:
-            with contextlib.redirect_stdout(io.StringIO()):
-                r = self._conn.run(_login('echo "$HOME"'), warn=True)
-            self._remote_home = r.stdout.strip() or "/"
+            r = self._quiet_run('echo "$HOME"')
+            self._remote_home = (r.stdout.strip() or "/") if r is not None else "~"
         return self._remote_home
 
     def expand(self, path: str) -> str:
@@ -168,29 +206,81 @@ class RemoteRuntime:
 
         Runs quietly (the path is data, not terminal output).
         """
-        with contextlib.redirect_stdout(io.StringIO()):
-            r = self._conn.run(_login("command -v " + shlex.quote(binary)), warn=True)
-        return r.stdout.strip() or None
+        r = self._quiet_run("command -v " + shlex.quote(binary))
+        return (r.stdout.strip() or None) if r is not None else None
 
     def available(self, binary: str) -> bool:
         """Presence check without leaking the path to the terminal."""
-        r = self._conn.run(_login("command -v " + shlex.quote(binary) + " >/dev/null"),
-                           warn=True)
-        return r.return_code == 0
+        r = self._quiet_run("command -v " + shlex.quote(binary) + " >/dev/null")
+        return (r.return_code == 0) if r is not None else False
 
     def run(self, argv: List) -> subprocess.CompletedProcess:
         """Run ``argv`` on the node, streaming its output; return the result."""
         r = self._conn.run(_login(_shell_argv(argv)), warn=True)
         return subprocess.CompletedProcess(list(argv), r.return_code, r.stdout, r.stderr)
 
-    def spawn(self, argv: List) -> _Detached:
-        """Launch ``argv`` fully detached on the node (new session, stdio off).
+    def run_capture(self, argv: List) -> subprocess.CompletedProcess:
+        """Run ``argv`` on the node with output CAPTURED (not streamed)."""
+        r = self._conn.run(_login(_shell_argv(argv)), hide=True, warn=True)
+        return subprocess.CompletedProcess(list(argv), r.return_code, r.stdout, r.stderr)
+
+    def _sudo_needs_password(self) -> bool:
+        """True when the node's sudo has no valid credential cache for us.
+
+        ``sudo -n -v`` (non-interactive, validate only) exits 0 when the cache
+        is fresh or sudo is passwordless; anything else means a prompt is due.
+        """
+        ch = self._conn.create_session()
+        ch.exec_command(_login("sudo -n -v"))
+        return ch.recv_exit_status() != 0
+
+    def run_sudo(self, argv: List) -> subprocess.CompletedProcess:
+        """Run ``argv`` under ``sudo`` on the node, prompting on the operator's
+        terminal when the node's sudo needs a password.
+
+        The prompt is local (``getpass``, no echo): the password travels over
+        the encrypted SSH channel to ``sudo -S`` and is never part of the
+        remote command line, so it does not show up in the node's ``ps`` or
+        shell history. Cached / passwordless sudo skips the prompt entirely.
+        The command's output is echoed to the local terminal as it arrives.
+        """
+        if not self._sudo_needs_password():
+            return self.run(["sudo", "-n"] + list(argv))
+        if not sys.stdin.isatty():
+            raise RuntimeError(
+                f"sudo on {self.label} needs a password, but this terminal is "
+                f"not interactive -- re-run from a terminal (or cache "
+                f"credentials / allow passwordless sudo on that node)."
+            )
+        pw = getpass.getpass(f"sudo password for {self.label}: ")
+        ch = self._conn.create_session()
+        ch.set_combine_stderr(True)
+        stdin, stdout, _stderr = ch.exec_command(_login("sudo -S -v && sudo -S " + _shell_argv(argv)))
+        stdin.write(pw.encode() + b"\n")
+        stdin.flush()
+        stdin.close()
+        out: List[bytes] = []
+        for raw in iter(stdout.readline, b""):
+            text = raw.decode("utf-8", "replace")
+            sys.stdout.write(text)
+            sys.stdout.flush()
+            out.append(raw)
+        rc = ch.recv_exit_status()
+        return subprocess.CompletedProcess(list(argv), rc, b"".join(out).decode("utf-8", "replace"), "")
+
+    def spawn(self, argv: List, log: Optional[str] = None) -> _Detached:
+        """Launch ``argv`` fully detached on the node (new session).
 
         The SSH channel closes immediately; the process keeps running on the
         node. Used for the model launch (which otherwise foreground-tails the
         model log and would hold the converge open until the model exits).
+
+        With ``log`` (a node-side path) the launch's stdout/stderr is captured
+        there instead of discarded, so the readiness probe can tail it when a
+        start fails; without it, stdio goes to /dev/null as before.
         """
-        inner = "setsid nohup " + _shell_argv(argv) + " </dev/null >/dev/null 2>&1 &"
+        sink = ">" + shlex.quote(log) if log else ">/dev/null"
+        inner = "setsid nohup " + _shell_argv(argv) + f" </dev/null {sink} 2>&1 &"
         r = self._conn.run(_login(inner), warn=True)
         return _Detached(list(argv), r.return_code)
 
@@ -247,22 +337,28 @@ class RemoteInstallFS:
             self.rt.conn.put(tmp, dest)
         finally:
             os.unlink(tmp)
+        # SFTP-created files land as 0600 (and umask varies) -- set the mode
+        # explicitly or prometheus/grafana crash-loop on unreadable configs.
+        self.rt.conn.run(_login("chmod " + oct(file_mode(rel))[2:] + " " + shlex.quote(dest)))
         return dest
+
+    def delete(self, rel: str) -> None:
+        """Remove a managed file that no longer renders (best-effort)."""
+        self.rt.conn.run(_login("rm -f " + shlex.quote(self.path_str(rel))), warn=True)
 
     def hash_files(self, rels: List[str]) -> Dict[str, Optional[str]]:
         """sha256 per rel (None where the file is absent) — read, then hash."""
         out: Dict[str, Optional[str]] = {}
         for rel in rels:
             data = self.read(rel)
-            out[rel] = (None if data is None else state_mod.sha256_bytes(data))
+            out[rel] = None if data is None else state_mod.sha256_bytes(data)
         return out
 
     def list_recipes(self) -> List[str]:
         """Recipe basenames (no .yaml) under ``sparkrun/recipes`` on the node."""
         d = self.path_str("sparkrun/recipes")
         with contextlib.redirect_stdout(io.StringIO()):
-            r = self.rt.conn.run(
-                _login(f"ls {shlex.quote(d)} 2>/dev/null | sed 's/\\.yaml$//'"), warn=True)
+            r = self.rt.conn.run(_login(f"ls {shlex.quote(d)} 2>/dev/null | sed 's/\\.yaml$//'"), warn=True)
         if r.return_code != 0:
             return []
         return sorted(r.stdout.split())
@@ -287,9 +383,8 @@ class RemoteState:
         return f"{self.rt.expand(self.rt.target.repo_dir)}/{self.STATE_REL}"
 
     def load(self) -> dict:
-        with contextlib.redirect_stdout(io.StringIO()):
-            r = self.rt.conn.run(_login("cat " + shlex.quote(self.path)), warn=True)
-        if r.return_code != 0 or not r.stdout.strip():
+        r = self.rt._quiet_run("cat " + shlex.quote(self.path))
+        if r is None or r.return_code != 0 or not r.stdout.strip():
             return {"files": {}}
         try:
             data = json.loads(r.stdout)

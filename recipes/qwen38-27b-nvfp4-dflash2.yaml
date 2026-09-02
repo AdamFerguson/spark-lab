@@ -1,0 +1,140 @@
+# Qwen3.8-27B NVFP4 + DFlash2 speculative decoding on SGLang, TP=2 over CX-7.
+#
+# Sibling of recipes/qwen38-27b.yaml (the NVFP4 + **DSpark** variant, single
+# node). This is the NVFP4 + **DFlash2** variant, run as a 2-node TP=2 cluster.
+# Same base model + gateway identity + costs; different speculator + image.
+#
+#   sparkrun run recipes/qwen38-27b-nvfp4-dflash2.yaml --hosts <head>,<worker>
+#
+# Draft: z-lab/Qwen3.8-27B-DFlash2 @ 50307d4c. The command loads it by its
+# on-disk snapshot path; the distribution_config below downloads it (and the
+# revision-pinned target) into every node's HF cache so that path exists.
+
+name: qwen38-27b-nvfp4-dflash2
+model: RadixArk/Qwen3.8-27B-NVFP4
+runtime: sglang
+min_nodes: 2
+max_nodes: 2
+container: lmsysorg/sglang:dev-cu13-qwen38-27b-dflash2
+executor: docker
+
+# Distribute the revision-pinned target + the DFlash2 draft to every node's HF
+# cache. Explicit per-entry revisions (a top-level model_revision would leak
+# onto the draft and 404 -- see the exl3 recipe). The draft's snapshot dir
+# (models--z-lab--Qwen3.8-27B-DFlash2/snapshots/50307d4c...) is exactly what the
+# --speculative-draft-model-path in `command` points at.
+distribution_config:
+  models:
+    entries:
+      - name: "{model}"
+        revision: 52d1adc5f38aa5ebf099c29ed7025ba34cfbb854
+      - name: z-lab/Qwen3.8-27B-DFlash2
+        revision: 50307d4c4cde6860d4eee73e2547cd786fe8e8a4
+
+executor_config:
+  ipc: host
+  shm_size: 32g
+  restart_policy: 'unless-stopped'
+  privileged: true
+  cap_add:
+    - SYS_PTRACE
+    - IPC_LOCK
+  # LIST of `type=soft[:hard]` strings -- a MAP renders as bare `--ulimit
+  # memlock` (value dropped) and docker rejects the run.
+  ulimit:
+    - memlock=-1
+    - stack=67108864
+  devices:
+    - /dev/infiniband
+  security_opt:
+    - seccomp=unconfined
+
+env:
+  # 2-node NCCL over the CX7 fabric. Only global knobs are pinned here; the
+  # per-node NCCL_SOCKET_IFNAME / GLOO_SOCKET_IFNAME / NCCL_IB_HCA are
+  # intentionally OMITTED so sparkrun auto-detects each host's ACTIVE IB
+  # interface. (The reference spec hardcoded f1 / enp1s0f1np1 / rocep1s0f1,
+  # but on this cluster the active RoCE link is f0 / enp1s0f0np0 / rocep1s0f0;
+  # f1 is DOWN. Auto-detection picks the right one per host.)
+  NCCL_IB_DISABLE: "0"
+  NCCL_IB_GID_INDEX: "3"
+  NCCL_CROSS_NIC: "1"
+
+metadata:
+  description: "RadixArk/Qwen3.8-27B-NVFP4 + DFlash2 served by SGLang TP=2 (2-node)"
+  model_dtype: nvfp4
+  kv_dtype: fp8
+  model_params: '10960848640'
+  # Gateway identity + costs kept identical to the DSpark variant so the two
+  # are drop-in interchangeable on the LiteLLM gateway.
+  litellm:
+    model_name: Qwen3.8-27B-NVFP4
+    model_info:
+      supports_vision: true
+      max_input_tokens: 262144
+      max_output_tokens: 131072
+      input_cost_per_token: 0.00000045
+      output_cost_per_token: 0.00000320
+      cache_read_input_token_cost: 0.000000045
+      supports_reasoning: true
+      supported_reasoning_efforts: [low, medium, xhigh]
+
+# Values available as {name} placeholders inside `command` below.
+defaults:
+  host: 0.0.0.0
+  port: 8000
+  tensor_parallel: 2
+  gpu_memory_utilization: 0.5
+  attention_backend: flashinfer
+  tool_call_parser: qwen3_coder
+  reasoning_parser: qwen3
+  revision: 52d1adc5f38aa5ebf099c29ed7025ba34cfbb854
+  speculative_draft_snapshot_path: /cache/huggingface/hub/models--z-lab--Qwen3.8-27B-DFlash2/snapshots/50307d4c4cde6860d4eee73e2547cd786fe8e8a4
+  speculative_num_draft_tokens: 8
+  chunked_prefill_size: 8192
+  max_mamba_cache_size: 96
+  max_running_requests: 8
+  cuda_graph_max_bs: 8
+  torch_compile_max_bs: 4
+  num_continuous_decode_steps: 2
+  mamba_radix_cache_strategy: extra_buffer
+  mamba_ssm_dtype: bfloat16
+  kv_cache_dtype: fp8_e4m3
+
+# NOTE: no --served-model-name override (unlike the reference spec's
+# `qwen3.8-27b`). SGLang then serves under --model-path = the HF id, matching
+# the DSpark recipe and the LiteLLM template (which forwards the HF id) -- so
+# the gateway works unchanged. Add `--served-model-name X` only if you also
+# forward X from the gateway.
+command: |
+    sglang serve \
+        --enable-metrics \
+        --enable-mfu-metrics \
+        --enable-cache-report \
+        --trust-remote-code \
+        --model-path {model} \
+        --revision {revision} \
+        --tp-size {tensor_parallel} \
+        --mem-fraction-static {gpu_memory_utilization} \
+        --kv-cache-dtype {kv_cache_dtype} \
+        --attention-backend {attention_backend} \
+        --chunked-prefill-size {chunked_prefill_size} \
+        --disable-prefill-cuda-graph \
+        --cuda-graph-max-bs {cuda_graph_max_bs} \
+        --disable-flashinfer-autotune \
+        --speculative-algorithm DFLASH \
+        --speculative-draft-model-path {speculative_draft_snapshot_path} \
+        --speculative-num-draft-tokens {speculative_num_draft_tokens} \
+        --speculative-draft-model-quantization unquant \
+        --mamba-radix-cache-strategy {mamba_radix_cache_strategy} \
+        --mamba-ssm-dtype {mamba_ssm_dtype} \
+        --max-mamba-cache-size {max_mamba_cache_size} \
+        --max-running-requests {max_running_requests} \
+        --enable-torch-compile \
+        --torch-compile-max-bs {torch_compile_max_bs} \
+        --num-continuous-decode-steps {num_continuous_decode_steps} \
+        --language-only \
+        --reasoning-parser {reasoning_parser} \
+        --tool-call-parser {tool_call_parser} \
+        --host {host} \
+        --port {port}

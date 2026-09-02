@@ -35,6 +35,7 @@ from tests.helpers import (  # noqa: E402
     REFERENCE_CONFIG,
     REFERENCE_ENV,
     SECRET_DUMMY,
+    V3_CLUSTER_CONFIG,
 )
 
 
@@ -51,13 +52,25 @@ def main() -> None:
 
         GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
         (GOLDEN_DIR / "reference_config.yaml").write_text(REFERENCE_CONFIG)
-        (GOLDEN_DIR / "expected_sha256.json").write_text(
-            json.dumps(sha, indent=2, sort_keys=True) + "\n")
+        (GOLDEN_DIR / "expected_sha256.json").write_text(json.dumps(sha, indent=2, sort_keys=True) + "\n")
         (GOLDEN_DIR / "expected_recipe.yaml").write_text(
-            rendered[f"sparkrun/recipes/{cfg.recipe_name}.yaml"].decode("utf-8"))
+            rendered[f"sparkrun/recipes/{cfg.recipe_name}.yaml"].decode("utf-8")
+        )
         (GOLDEN_DIR / "expected_commands.json").write_text(json.dumps(cmds, indent=2) + "\n")
-        print(f"wrote {GOLDEN_DIR}: {len(sha)} files, {len(cmds)} commands, "
-              f"recipe={cfg.recipe_name}")
+
+        # v3 cluster golden: per-host view renders for the fixed two-host config
+        (d / "v3.yaml").write_text(V3_CLUSTER_CONFIG)
+        v3 = config_mod.load(str(d / "v3.yaml"))
+        v3_sha: dict = {}
+        for host in (s.name for s in v3.host_specs):
+            view = v3.view_for(host)
+            r = render.render(view, d / f"v3-{host}")
+            v3_sha[host] = {rel: hashlib.sha256(data).hexdigest() for rel, data in r.items()}
+        (GOLDEN_DIR / "expected_v3_sha256.json").write_text(json.dumps(v3_sha, indent=2, sort_keys=True) + "\n")
+        print(
+            f"wrote {GOLDEN_DIR}: {len(sha)} files, {len(cmds)} commands, "
+            f"recipe={cfg.recipe_name} (+ v3 views: {', '.join(v3_sha)})"
+        )
 
 
 if __name__ == "__main__":

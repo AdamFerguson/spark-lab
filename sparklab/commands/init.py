@@ -1,17 +1,20 @@
-"""`spark-lab init` -- system precheck, then create config.yaml + .env."""
+"""`spark-lab init` -- create the local ``config.yaml`` + ``.env``.
+
+Copies ``config.example.yaml`` to ``config.yaml`` (edit it for your lab),
+creates ``.env`` from ``.env.example`` with freshly generated secrets
+(chmod 600). ``--yes`` skips the "press Ctrl+C" pause. Node preparation is
+plain ops now: ensure docker/tailscale on the node yourself, then
+``spark-lab check`` (binaries per host) and ``spark-lab apply``.
+"""
+
 from __future__ import annotations
 
 import secrets
 import sys
 from pathlib import Path
 
-from . import system
-
 
 def run(args) -> int:
-    runtime = getattr(args, "runtime", None)
-    _system_precheck(args, runtime)
-
     cfg_path = Path(args.config).expanduser()
     if not cfg_path.is_absolute():
         cfg_path = Path.cwd() / cfg_path
@@ -26,43 +29,11 @@ def run(args) -> int:
             return 1
     _generate_env(cfg_path, args.yes)
     print("\nNext steps:")
-    print(f"  1. Edit {cfg_path} (model, ports, dashboards, network).")
+    print(f"  1. Edit {cfg_path} (hosts, models, ports, dashboards, network).")
     print(f"  2. Review the secrets in {repo / '.env'}.")
-    print("  3. Run `spark-lab apply --dry-run` to preview the plan.")
-    print("  4. Run `spark-lab apply` (add --apply to restart the model on recipe change).")
+    print("  3. Run `spark-lab check` (pre-flight on every host), then")
+    print("     `spark-lab apply --dry-run` to preview the plan, then `spark-lab apply`.")
     return 0
-
-
-def _system_precheck(args, runtime) -> None:
-    """Detect required/optional tools; report, and (interactively) offer to install
-    the missing required ones. Never blocks config creation."""
-    if runtime is None:
-        return
-    results = system.detect(runtime)
-    system.print_table(results)
-    caps = system.check_capabilities(runtime)
-    system.print_capabilities(caps)
-    cap_fix = system.caps_needing_fix(caps)
-    for c in cap_fix:
-        print(f"\n! {c['name']} -- {c['why']}")
-        print(f"  to fix (needs sudo, then a fresh shell): {c['fix']}")
-    req_missing = system.missing(results, required_only=True)
-    if not req_missing:
-        if not cap_fix:
-            print("\nAll required tools present.")
-        return
-    print("Missing required tool(s): " + ", ".join(r["name"] for r in req_missing))
-    if getattr(args, "yes", False):
-        print("To install them, run: `spark-lab check system --install`")
-        return
-    try:
-        ans = input("Install the missing required tools now? [y/N] ")
-    except (EOFError, OSError):
-        ans = "n"
-    if ans.strip().lower() in ("y", "yes"):
-        system.install(results, runtime)
-    else:
-        print("Skipped. You can install later with `spark-lab check system --install`.")
 
 
 def _generate_env(config_path: Path, yes: bool) -> None:

@@ -1,42 +1,101 @@
+# Qwen3.8-27B NVFP4 + DSPark speculative decoding on one DGX Spark (SGLang).
+# This is the NVFP4 + **DSpark** variant (single node). The NVFP4 + **DFlash2**
+# variant (2-node TP=2) is recipes/qwen38-27b-nvfp4-dflash2.yaml -- same base
+# model, gateway identity, and costs; different speculator + image.
+#
+# A plain, directly-runnable sparkrun recipe (no spark-lab-specific keys):
+#   sparkrun run recipes/qwen38-27b.yaml
+# Gated checkpoint: authenticate host-side first (hf auth / huggingface-cli
+# login) -- sparkrun downloads with host credentials and runs the container
+# HF-offline.
+#
+# spark-lab (v3) references this file from config.yaml:
+#   models.<alias>.recipe: qwen38-27b
+# and renders a node-side copy that adds a `layout:` placement pin + the
+# HF token from the cluster .env -- the repo file itself stays clean.
+#
+# Direct smoke test (engine, no gateway):
+#   curl -sS http://127.0.0.1:30000/v1/chat/completions \
+#     -H 'Content-Type: application/json' \
+#     -d '{"model":"RadixArk/Qwen3.8-27B-NVFP4","messages":[{"role":"user","content":"12*17"}],"max_tokens":512}'
+
 name: qwen38-27b
 model: RadixArk/Qwen3.8-27B-NVFP4
 runtime: sglang
 min_nodes: 1
 container: lmsysorg/sglang:qwen38-27b
 executor: docker
+# The stock GB10/SGLang executor block. spark-lab renders this verbatim (with
+# the explanatory comments) when the placement entry declares no overrides.
 executor_config:
   ipc: host
   shm_size: 32g
+  restart_policy: 'unless-stopped'
   privileged: true
   cap_add:
     - SYS_PTRACE
   security_opt:
     - seccomp=unconfined
-env:
-  PYTORCH_CUDA_ALLOC_CONF: ""
-  # Gated model -- the token is injected at deploy time from your .env.
-  HF_TOKEN: "{env:HF_TOKEN}"
 
 metadata:
-  description: "mylab -- RadixArk/Qwen3.8-27B-NVFP4 served by SGLang"
+  description: "RadixArk/Qwen3.8-27B-NVFP4 + DSPark served by SGLang"
+  model_dtype: nvfp4
+  # spark-lab gateway metadata (sparkrun ignores metadata extras). Served on
+  # the cluster gateway under this name; costs keep LiteLLM spend tracking
+  # meaningful for self-hosted tokens.
+  litellm:
+    model_name: Qwen3.8-27B-NVFP4
+    model_info:
+      supports_vision: true
+      max_input_tokens: 262144
+      max_output_tokens: 131072
+      input_cost_per_token: 0.00000045
+      output_cost_per_token: 0.00000320
+      cache_read_input_token_cost: 0.000000045
+      supports_reasoning: true
+      supported_reasoning_efforts: [low, medium, xhigh]
 
+# Values available as {name} placeholders inside `command` below.
+# (Key order here is part of the rendered recipe -- keep it stable.)
 defaults:
   host: 0.0.0.0
   port: 30000
   kv_cache_dtype: fp8_e4m3
   mem_fraction_static: 0.85
   attention_backend: flashinfer
+  chunked_prefill_size: 2048
+  max_running_requests: 12
+  reasoning_parser: qwen3
+  tool_call_parser: qwen3_coder
+  mamba_full_memory_ratio: 0.5
+  max_mamba_cache_size: 48
+  mamba_radix_cache_strategy: extra_buffer_lazy
+  mamba_ssm_dtype: bfloat16
   speculative_algorithm: DSPARK
+  speculative_draft_model: RadixArk/Qwen3.8-27B-DSpark
+  speculative_draft_attention_backend: flashinfer
 
 command: |
-  sglang serve \
-    --enable-metrics \
-    --enable-cache-report \
-    --trust-remote-code \
-    --model-path {model} \
-    --kv-cache-dtype {kv_cache_dtype} \
-    --mem-fraction-static {mem_fraction_static} \
-    --attention-backend {attention_backend} \
-    --speculative-algorithm {speculative_algorithm} \
-    --host {host} \
-    --port {port}
+    sglang serve \
+        --enable-metrics \
+        --enable-mfu-metrics \
+        --enable-cache-report \
+        --trust-remote-code \
+        --disable-prefill-cuda-graph \
+        --model-path {model} \
+        --kv-cache-dtype {kv_cache_dtype} \
+        --mem-fraction-static {mem_fraction_static} \
+        --attention-backend {attention_backend} \
+        --chunked-prefill-size {chunked_prefill_size} \
+        --max-running-requests {max_running_requests} \
+        --reasoning-parser {reasoning_parser} \
+        --tool-call-parser {tool_call_parser} \
+        --mamba-full-memory-ratio {mamba_full_memory_ratio} \
+        --max-mamba-cache-size {max_mamba_cache_size} \
+        --mamba-radix-cache-strategy {mamba_radix_cache_strategy} \
+        --mamba-ssm-dtype {mamba_ssm_dtype} \
+        --speculative-algorithm {speculative_algorithm} \
+        --speculative-draft-model-path {speculative_draft_model} \
+        --speculative-draft-attention-backend {speculative_draft_attention_backend} \
+        --host {host} \
+        --port {port}

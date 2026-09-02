@@ -1,8 +1,17 @@
 # Remote operator mode (Fabric) — design + implementation plan
 
+> **Partially superseded by [ADR-0008](adr/0008-multi-host-cluster-config.md)
+> (2026-08-27):** the *mechanism* (Fabric `RemoteRuntime`, node-side state,
+> `bash -lc` login shell, detached model launch, per-command remote fan-out)
+> is kept and is still the accurate description of how remote hosts are driven.
+> The *config shape* — one config per node with `install.remote` under `labs/<node>/`
+> — is replaced by the v3 cluster config (one `hosts:` list per cluster, with
+> local auto-detection and `--hosts` selection). The legacy `install.remote`
+> shape is no longer accepted (`load` requires `version: 3`).
+
 **Status:** APPROVED (2026-08-26) — implementation complete (steps 1–10, 132 tests
 green incl. 25 new remote tests, goldens byte-identical); step 11 (wiring on
-pop-os) pending.
+pop-os) complete (2026-08-27).
 
 **Deviations from the original plan (all deliberate):**
 * `RemoteState` lives in `core/remote.py` (not `state.py`) — `state.py` stays
@@ -39,8 +48,16 @@ generalized form.
   `labs/<node>/config.yaml` + `labs/<node>/.env` (per-node secrets: luna and sol have
   different `LITELLM_MASTER_KEY` etc.).
 - ADR-0007's single-control-plane/worker architecture is a *later* step, unchanged.
+- **Sudo on the node** (`check system --install` on a remote host): when the
+  node's sudo needs a password, the CLI pauses and prompts **on the operator's
+  machine** (via `getpass`, no echo) for that node's sudo password; the password
+  travels over the encrypted SSH channel to `sudo -S` and is never part of the
+  remote command line (so it does not appear in the node's `ps` or shell
+  history, and is not stored anywhere). Cached / passwordless sudo skips the
+  prompt entirely; a non-interactive terminal (CI, pipes) is refused with a
+  clear error rather than hanging.
 
-## Config surface (new block, v1 + v2)
+## Config surface (new block, v1 + v2 — historical; the `install.remote` shape is retired)
 
 ```yaml
 install:
@@ -48,8 +65,8 @@ install:
   install_dir: ~/AI                 # path ON THE TARGET node (expanduser'd there)
   hosts: [sol.local, luna.local]    # unchanged (sparkrun cluster-mesh semantics)
   remote:                           # NEW — omit/empty = local (today's behavior)
-    host: luna.tail9d5411.ts.net    # SSH target (magic-DNS name or tailnet IP)
-    user: adam                      # optional; default = local user
+    host: luna.tailnet.example    # SSH target (magic-DNS name or tailnet IP)
+    user: you                     # optional; default = local user
     port: 22                        # optional
     identity_file: ~/.ssh/id_ed25519  # optional
     repo_dir: ~/spark-lab           # optional; node's spark-lab checkout (state + upgrade)
@@ -125,18 +142,19 @@ install:
 - [x] **10. Docs** — README: "Remote operator mode" section (config snippet, per-node
       `labs/<node>/` layout, "state lives on the node", ssh-key prerequisite).
       OPERATIONS.md: remote notes (login-shell PATH, long probes over SSH).
-      `config.example.yaml` / `config.example.v2.yaml`: documented `remote:` block.
+      `config.example.yaml`: the v3 `hosts:` entries carry the ssh/remote shape
+      (the v2 `install.remote` block + `config.example.v2.yaml` are since retired).
       ADR-0007: status note that the remote primitive shipped in this generalized form
       (control-plane/worker split still pending).
-- [ ] **11. Wire it up on pop-os (the payoff)** —
+- [x] **11. Wire it up on pop-os (the payoff)** —
   - `labs/luna/{config.yaml,.env}`: luna's current config values (incl. the tuned
     params/flags added 2026-08-26: mamba tuning, DSPARK, cache-report flags) +
-    `install.remote.host: luna.tail9d5411.ts.net`; `.env` copied from luna's
+    `install.remote.host: luna.tailnet.example`; `.env` copied from luna's
     `~/spark-lab/.env` (node-side copy, never printed). Luna specifics: model_name
     `Qwen3.8-27B-NVFP4`, instance_label `luna`, images pin
     `docker.litellm.ai/berriai/litellm:main-stable`, model_info 32768/8192.
   - `labs/sol/{config.yaml,.env}`: same for sol (model_name
-    `adam-spark-qwen3-8-27b`, instance_label `adam-spark`, litellm pin
+    `my-spark-qwen3-8-27b`, instance_label `spark`, litellm pin
     `ghcr.io/berriai/litellm:v1.99.0-dev.2`, model_info 262144/131072).
   - Run `spark-lab --config labs/luna/config.yaml adopt` + `apply --dry-run` from
     pop-os → confirm the pending luna recipe change shows with LiteLLM untouched.
