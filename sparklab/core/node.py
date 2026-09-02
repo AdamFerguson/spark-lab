@@ -69,7 +69,7 @@ class LocalInstallFS:
         out = {}
         for rel in rels:
             data = self.read(rel)
-            out[rel] = (None if data is None else state_mod.sha256_bytes(data))
+            out[rel] = None if data is None else state_mod.sha256_bytes(data)
         return out
 
     def list_recipes(self) -> List[str]:
@@ -87,5 +87,6 @@ def node_env(cfg, runtime) -> Tuple[object, object]:
     """
     if getattr(runtime, "is_remote", False):
         from .remote import RemoteInstallFS, RemoteState
+
         return RemoteInstallFS(runtime), RemoteState(runtime)
     return LocalInstallFS(Path(cfg.install_dir)), state_mod.State(cfg.state_dir)

@@ -14,6 +14,7 @@ laptop *and* on every Spark. When spark-lab runs on a node that appears in
 ``remote: true`` (we're already here -- no SSH needed); the remaining hosts are
 still reached over SSH.
 """
+
 from __future__ import annotations
 
 import os
@@ -30,7 +31,7 @@ class HostTarget:
 
     def __init__(self, spec: HostSpec, cfg, runtime):
         self.spec = spec
-        self.cfg = cfg          # the per-host view (v3) or the config itself (v1/v2)
+        self.cfg = cfg  # the per-host view (v3) or the config itself (v1/v2)
         self.runtime = runtime
         self.name = spec.name
         self._fs = None
@@ -77,7 +78,7 @@ def local_identities() -> set:
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.settimeout(0.2)
-        s.connect(("8.8.8.8", 80))   # UDP: no packet is actually sent
+        s.connect(("8.8.8.8", 80))  # UDP: no packet is actually sent
         ids.add(s.getsockname()[0])
         s.close()
     except OSError:
@@ -109,6 +110,7 @@ def is_on_host(spec: HostSpec) -> bool:
 def build_remote(spec: HostSpec, view_cfg):
     """The Fabric-backed runtime for a remote host (one connection per run)."""
     from .remote import RemoteRuntime, RemoteTarget
+
     ssh = str(spec.ssh or "")
     user = spec.user or (ssh.split("@", 1)[0] if "@" in ssh else None) or os.environ.get("USER")
     target = RemoteTarget(
@@ -122,9 +124,9 @@ def build_remote(spec: HostSpec, view_cfg):
     return RemoteRuntime(target)
 
 
-def targets(cfg, names: Optional[List[str]] = None,
-            runtime: Optional[object] = None,
-            remote_factory: Optional[Callable] = None) -> List[HostTarget]:
+def targets(
+    cfg, names: Optional[List[str]] = None, runtime: Optional[object] = None, remote_factory: Optional[Callable] = None
+) -> List[HostTarget]:
     """Build a :class:`HostTarget` per selected host of ``cfg``.
 
     ``runtime``: an injected runtime used for LOCAL targets (tests inject a

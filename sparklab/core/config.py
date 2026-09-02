@@ -65,10 +65,17 @@ def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]
 class HostSpec:
     """One managed node: connection identity + per-host config overrides."""
 
-    def __init__(self, name: str, ssh: Optional[str] = None, remote: bool = False,
-                 user: Optional[str] = None, port: Optional[int] = None,
-                 identity_file: Optional[str] = None, ip: Optional[str] = None,
-                 overrides: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        name: str,
+        ssh: Optional[str] = None,
+        remote: bool = False,
+        user: Optional[str] = None,
+        port: Optional[int] = None,
+        identity_file: Optional[str] = None,
+        ip: Optional[str] = None,
+        overrides: Optional[Dict[str, Any]] = None,
+    ):
         self.name = str(name)
         self.ssh = ssh
         self.remote = bool(remote)
@@ -114,9 +121,10 @@ class HostSpec:
         itself resolvable where sparkrun runs)."""
         return self.ip or self.name
 
-    def __repr__(self) -> str:   # pragma: no cover - debug aid
-        return (f"HostSpec(name={self.name!r}, ssh={self.ssh!r}, remote={self.remote}, "
-                f"overrides={sorted(self.overrides)})")
+    def __repr__(self) -> str:  # pragma: no cover - debug aid
+        return (
+            f"HostSpec(name={self.name!r}, ssh={self.ssh!r}, remote={self.remote}, overrides={sorted(self.overrides)})"
+        )
 
 
 def load_dotenv(path: Path) -> Dict[str, str]:
@@ -143,8 +151,14 @@ def load_dotenv(path: Path) -> Dict[str, str]:
 class Config:
     """A thin wrapper over the parsed config.yaml plus resolved secret values."""
 
-    def __init__(self, data: Dict[str, Any], config_path: Path, env: Dict[str, str],
-                 _host: Optional[str] = None, _base: Optional["Config"] = None):
+    def __init__(
+        self,
+        data: Dict[str, Any],
+        config_path: Path,
+        env: Dict[str, str],
+        _host: Optional[str] = None,
+        _base: Optional["Config"] = None,
+    ):
         self.config_path = Path(config_path)
         self.repo_root = self.config_path.parent
         self.env = env
@@ -153,9 +167,7 @@ class Config:
         self.data = recipe_mod.resolve_all(data or {}, self.repo_root)
         # v3 only: the config (or a view of one) declares 'version: 3'.
         if _base is None and self.data.get("version") != 3:
-            raise ValueError(
-                "config.yaml must be schema v3 ('version: 3'); see "
-                "docs/SETUP.md for the current shape")
+            raise ValueError("config.yaml must be schema v3 ('version: 3'); see docs/SETUP.md for the current shape")
         # Per-host view bookkeeping (v3): ``_host`` names the host this view is
         # for; ``_base`` is the base (cluster-wide) config the view was cut from.
         self._view_host = _host
@@ -185,7 +197,8 @@ class Config:
                 raise ValueError(
                     f"model '{alias}' spans {min_nodes} hosts (its recipe's "
                     f"min_nodes) but is placed on fewer: hosts: "
-                    f"{mdef.get('hosts')!r}")
+                    f"{mdef.get('hosts')!r}"
+                )
 
     def placement_table(self) -> List[Tuple[str, str, str, bool]]:
         """Derived host -> model view (v3 base only): one row per host, config
@@ -244,9 +257,7 @@ class Config:
         if isinstance(cp, bool):
             return cp
         if not isinstance(cp, dict) or "enabled" not in cp:
-            raise ValueError(
-                "control_plane must be a boolean or {enabled: <bool>} "
-                f"(got {cp!r})")
+            raise ValueError(f"control_plane must be a boolean or {{enabled: <bool>}} (got {cp!r})")
         enabled = cp["enabled"]
         if isinstance(enabled, str):
             enabled = enabled.strip().lower()
@@ -274,8 +285,8 @@ class Config:
                 continue
             if view.monitoring_role() == "none":
                 problems.append(
-                    f"host '{spec.name}' would run nothing (control_plane disabled "
-                    "and monitoring.role: none)")
+                    f"host '{spec.name}' would run nothing (control_plane disabled and monitoring.role: none)"
+                )
         return problems
 
     # -- v3 implicit central serving (ADR-0008 addendum #3) -----------------
@@ -304,7 +315,7 @@ class Config:
             mdef = (self.data.get("models") or {}).get(alias) or {}
             run_hosts = base.model_host_list(alias)
             if not run_hosts:
-                continue            # scaled down: nothing to serve
+                continue  # scaled down: nothing to serve
             lit = deep_merge(self.litellm, mdef.get("litellm") or {})
             port = int(mdef.get("port", 30000))
             explicit = str(lit.get("api_base") or "").strip()
@@ -314,10 +325,7 @@ class Config:
             # only when it IS the head. A single-node model runs an independent
             # instance on each of its hosts, so any run host serves it locally.
             is_cluster = int(mdef.get("min_nodes", 1) or 1) > 1
-            serves_locally = (
-                self._view_host == run_hosts[0] if is_cluster
-                else self._view_host in run_hosts
-            )
+            serves_locally = self._view_host == run_hosts[0] if is_cluster else self._view_host in run_hosts
             if explicit:
                 api_base = explicit
             elif serves_locally:
@@ -332,15 +340,21 @@ class Config:
                 spec = base.select_hosts([run_hosts[0]])[0]
                 remote_addr = spec.ip or spec.ssh_host or spec.name
                 api_base = f"http://{remote_addr}:{port}/v1"
-            entries.append({
-                "alias": alias,
-                "model_name": lit.get("model_name", "my-spark-model"),
-                "hf_model": mdef.get("hf_model", ""),
-                "api_base": api_base,
-                "model_info": lit.get("model_info", {}),
-                "model_settings": {"temperature": 1.0, "top_p": 0.95, "top_k": 20,
-                                   **(lit.get("model_settings") or {})},
-            })
+            entries.append(
+                {
+                    "alias": alias,
+                    "model_name": lit.get("model_name", "my-spark-model"),
+                    "hf_model": mdef.get("hf_model", ""),
+                    "api_base": api_base,
+                    "model_info": lit.get("model_info", {}),
+                    "model_settings": {
+                        "temperature": 1.0,
+                        "top_p": 0.95,
+                        "top_k": 20,
+                        **(lit.get("model_settings") or {}),
+                    },
+                }
+            )
         return entries
 
     def serving_conflicts(self) -> List[str]:
@@ -354,14 +368,12 @@ class Config:
         if self._view_base is not None:
             return []
         problems: List[str] = []
-        running = [a for a in self._active_model_aliases()
-                   if self.model_host_list(a)]
-        if running and not any(self.view_for(s.name).control_plane_enabled()
-                               for s in self.host_specs):
+        running = [a for a in self._active_model_aliases() if self.model_host_list(a)]
+        if running and not any(self.view_for(s.name).control_plane_enabled() for s in self.host_specs):
             problems.append(
-                "model(s) " + ", ".join(running) +
-                " run but no host has the control plane enabled -- nothing can "
-                "serve them (enable control_plane on at least one host)")
+                "model(s) " + ", ".join(running) + " run but no host has the control plane enabled -- nothing can "
+                "serve them (enable control_plane on at least one host)"
+            )
         for spec in self.host_specs:
             view = self.view_for(spec.name)
             if not view.control_plane_enabled():
@@ -373,7 +385,8 @@ class Config:
                     problems.append(
                         f"gateway on '{spec.name}': models '{seen[name]}' and "
                         f"'{entry['alias']}' would both be served as '{name}' -- "
-                        "give each a distinct litellm.model_name")
+                        "give each a distinct litellm.model_name"
+                    )
                 else:
                     seen[name] = str(entry["alias"])
         return problems
@@ -395,11 +408,13 @@ class Config:
             port = None
             if other.model:
                 port = other.model.get("port", 30000)
-            out.append({
-                "name": spec.ssh_host or spec.name,
-                "instance": (other.data.get("monitoring") or {}).get("instance_label", "spark"),
-                "model_port": port,
-            })
+            out.append(
+                {
+                    "name": spec.ssh_host or spec.name,
+                    "instance": (other.data.get("monitoring") or {}).get("instance_label", "spark"),
+                    "model_port": port,
+                }
+            )
         return out
 
     def _select_active(self) -> Tuple[str, Dict[str, Any]]:
@@ -431,12 +446,14 @@ class Config:
                 raise ValueError(
                     "config: two active models would both serve the same host: "
                     f"{self._conflict_pairs()} -- one host runs one active model "
-                    "(scale one down or give it hosts: [])")
+                    "(scale one down or give it hosts: [])"
+                )
             return active[0], models[active[0]] or {}
         raise ValueError(
             f"host '{self._view_host}': active models {active} all serve "
             "it, but a host runs at most one active model -- scale one down "
-            "(model down <name> --yes --hosts ...) or set its hosts: to []")
+            "(model down <name> --yes --hosts ...) or set its hosts: to []"
+        )
 
     @staticmethod
     def _serves(host: str, mdef: Dict[str, Any]) -> bool:
@@ -462,7 +479,7 @@ class Config:
         models = self.data.get("models") or {}
         active = [a for a, m in models.items() if (m or {}).get("active")]
         for i, a in enumerate(active):
-            for b in active[i + 1:]:
+            for b in active[i + 1 :]:
                 if set(self.model_host_list(a)) & set(self.model_host_list(b)):
                     return True
         return False
@@ -472,7 +489,7 @@ class Config:
         active = [a for a, m in models.items() if (m or {}).get("active")]
         pairs = []
         for i, a in enumerate(active):
-            for b in active[i + 1:]:
+            for b in active[i + 1 :]:
                 shared = sorted(set(self.model_host_list(a)) & set(self.model_host_list(b)))
                 if shared:
                     pairs.append(f"{a} & {b} on {', '.join(shared)}")
@@ -526,8 +543,7 @@ class Config:
         if self.redis().get("enabled", False):
             out["redis"] = self.image("redis")
         if self.monitoring.get("enabled", True):
-            for k in ("prometheus", "grafana", "node_exporter", "dcgm_exporter",
-                      "cadvisor", "gpu_textfile"):
+            for k in ("prometheus", "grafana", "node_exporter", "dcgm_exporter", "cadvisor", "gpu_textfile"):
                 out[k] = self.image(k)
         return out
 
@@ -594,10 +610,9 @@ class Config:
         by_name = {s.name: s for s in specs}
         unknown = [n for n in names if n not in by_name]
         if unknown:
-            raise ValueError(
-                f"unknown host '{unknown[0]}' (config hosts: {', '.join(by_name)})")
+            raise ValueError(f"unknown host '{unknown[0]}' (config hosts: {', '.join(by_name)})")
         wanted = set(names)
-        return [s for s in specs if s.name in wanted]   # config order, deduped
+        return [s for s in specs if s.name in wanted]  # config order, deduped
 
     def view_for(self, host_name: str) -> "Config":
         """The cluster-wide config with one host's overrides applied (v3).
@@ -618,7 +633,7 @@ class Config:
             return cached[host_name]
         spec = self.select_hosts([host_name])[0]
         merged = deep_merge(self.data, {k: v for k, v in spec.overrides.items() if k != "hosts"})
-        merged.pop("hosts", None)   # host selection lives on the base config
+        merged.pop("hosts", None)  # host selection lives on the base config
         models = dict(merged.get("models") or {})
         for alias, mdef in models.items():
             mdef = dict(mdef or {})
@@ -758,9 +773,7 @@ class Config:
 def load(config_path: str | Path) -> Config:
     config_path = Path(config_path).expanduser().resolve()
     if not config_path.is_file():
-        raise FileNotFoundError(
-            f"config not found: {config_path}. Run `spark-lab init` first."
-        )
+        raise FileNotFoundError(f"config not found: {config_path}. Run `spark-lab init` first.")
     data = yaml.safe_load(config_path.read_text()) or {}
     env = load_dotenv(config_path.parent / ".env")
     return Config(data, config_path, env)

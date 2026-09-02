@@ -86,8 +86,7 @@ class TestParity(unittest.TestCase):
         for host in (s.name for s in cfg.host_specs):
             view = cfg.view_for(host)
             rendered = render.render(view, d / f"v3-{host}")
-            actual[host] = {rel: hashlib.sha256(data).hexdigest()
-                            for rel, data in rendered.items()}
+            actual[host] = {rel: hashlib.sha256(data).hexdigest() for rel, data in rendered.items()}
         self.assertEqual(actual, expected)
         # the two hosts really differ where the config says they should
         a = actual["alpha"]["sparkrun/recipes/qwen.yaml"]

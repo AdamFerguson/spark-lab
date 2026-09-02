@@ -46,8 +46,7 @@ class TestSelectHosts(unittest.TestCase):
 
     def test_selection_subsets_and_reorders_to_config_order(self):
         self.assertEqual([s.name for s in self.cfg.select_hosts(["beta"])], ["beta"])
-        self.assertEqual([s.name for s in self.cfg.select_hosts(["beta", "alpha"])],
-                         ["alpha", "beta"])
+        self.assertEqual([s.name for s in self.cfg.select_hosts(["beta", "alpha"])], ["alpha", "beta"])
 
     def test_unknown_host_raises_with_valid_names(self):
         with self.assertRaises(ValueError) as cm:
@@ -110,8 +109,7 @@ class TestHostViews(unittest.TestCase):
         self.assertIn("litellm/docker-compose.yml", rendered)
         alpha = cfg.view_for("alpha")
         self.assertEqual(alpha.active_alias, "qwen")
-        self.assertIn("sparkrun/recipes/qwen.yaml",
-                      render.render(alpha, sub / "deploy-a"))
+        self.assertIn("sparkrun/recipes/qwen.yaml", render.render(alpha, sub / "deploy-a"))
 
 
 class TestMonitoringRoles(unittest.TestCase):
@@ -120,7 +118,8 @@ class TestMonitoringRoles(unittest.TestCase):
 
     V3_EXPORTERS = V3_CLUSTER_CONFIG.replace(
         "    monitoring:\n      instance_label: beta-node",
-        "    monitoring:\n      instance_label: beta-node\n      role: exporters")
+        "    monitoring:\n      instance_label: beta-node\n      role: exporters",
+    )
 
     def _load(self, text, name="role"):
         sub = self.d / name
@@ -143,11 +142,11 @@ class TestMonitoringRoles(unittest.TestCase):
         self.assertEqual(cfg.view_for("beta").monitoring_role(), "full")
         cfg = self._load(self.V3_EXPORTERS, "exporters")
         self.assertEqual(cfg.view_for("beta").monitoring_role(), "exporters")
-        off = V3_CLUSTER_CONFIG.replace("enabled: true\n  instance_label: alpha-node",
-                                        "enabled: false\n  instance_label: alpha-node")
+        off = V3_CLUSTER_CONFIG.replace(
+            "enabled: true\n  instance_label: alpha-node", "enabled: false\n  instance_label: alpha-node"
+        )
         self.assertEqual(self._load(off, "off").monitoring_role(), "none")
-        bad = V3_CLUSTER_CONFIG.replace("hosts:\n", "hosts:\n  - name: bad\n"
-                                          "    monitoring: {role: bogus}\n")
+        bad = V3_CLUSTER_CONFIG.replace("hosts:\n", "hosts:\n  - name: bad\n    monitoring: {role: bogus}\n")
         with self.assertRaises(ValueError):
             self._load(bad, "bad").view_for("bad").monitoring_role()
 
@@ -171,16 +170,17 @@ class TestMonitoringRoles(unittest.TestCase):
         cfg = self._load(self.V3_EXPORTERS, "exporters")
         alpha = cfg.view_for("alpha")
         targets = alpha.remote_scrape_targets()
-        self.assertEqual(targets, [{"name": "beta.tailx.ts.net",
-                                    "instance": "beta-node", "model_port": 30000}])
+        self.assertEqual(targets, [{"name": "beta.tailx.ts.net", "instance": "beta-node", "model_port": 30000}])
         prom = render.render(alpha, self.d / "alpha-deploy")["litellm/prometheus.yml"].decode()
-        for needle in ("job_name: sglang_beta.tailx.ts.net",
-                       "targets: [beta.tailx.ts.net:30000]",
-                       "job_name: node_beta.tailx.ts.net",
-                       "targets: [beta.tailx.ts.net:9100]",
-                       "targets: [beta.tailx.ts.net:9835]",
-                       "targets: [beta.tailx.ts.net:8080]",
-                       "instance: beta-node"):
+        for needle in (
+            "job_name: sglang_beta.tailx.ts.net",
+            "targets: [beta.tailx.ts.net:30000]",
+            "job_name: node_beta.tailx.ts.net",
+            "targets: [beta.tailx.ts.net:9100]",
+            "targets: [beta.tailx.ts.net:9835]",
+            "targets: [beta.tailx.ts.net:8080]",
+            "instance: beta-node",
+        ):
             self.assertIn(needle, prom)
         # the local jobs are unchanged and the remote host is not self-targeted
         self.assertIn("targets: [node_exporter:9100]", prom)
@@ -201,12 +201,13 @@ class TestMonitoringRoles(unittest.TestCase):
         self.assertNotIn("Remote exporters host", prom)
 
     def test_multi_active_models_disjoint_hosts_are_ok(self):
-        text = V3_CLUSTER_CONFIG.replace(
-            "hosts: [alpha, beta]", "hosts: [alpha]", 1).replace(
+        text = V3_CLUSTER_CONFIG.replace("hosts: [alpha, beta]", "hosts: [alpha]", 1).replace(
             "litellm:\n  model_name:",
             "  llama:\n    active: true\n    hosts: [beta]\n"
             "    hf_model: test-llm/llama\n    image: lmsysorg/sglang:llama\n"
-            "litellm:\n  model_name:", 1)
+            "litellm:\n  model_name:",
+            1,
+        )
         sub = self.d / "sub2"
         sub.mkdir()
         (sub / "config.yaml").write_text(text)
@@ -232,7 +233,9 @@ class TestMonitoringRoles(unittest.TestCase):
             "litellm:\n  model_name:",
             "  llama:\n    active: true\n    hosts: [beta]\n"
             "    hf_model: test-llm/llama\n    image: lmsysorg/sglang:llama\n"
-            "litellm:\n  model_name:", 1)
+            "litellm:\n  model_name:",
+            1,
+        )
         sub = self.d / "sub3"
         sub.mkdir()
         (sub / "config.yaml").write_text(text)
@@ -246,12 +249,13 @@ class TestMonitoringRoles(unittest.TestCase):
     def test_multi_active_disjoint_hosts_views_pick_theirs(self):
         # qwen -> alpha only, llama -> beta only: loads; each view selects its
         # own active model.
-        text = V3_CLUSTER_CONFIG.replace(
-            "hosts: [alpha, beta]", "hosts: [alpha]", 1).replace(
+        text = V3_CLUSTER_CONFIG.replace("hosts: [alpha, beta]", "hosts: [alpha]", 1).replace(
             "litellm:\n  model_name:",
             "  llama:\n    active: true\n    hosts: [beta]\n"
             "    hf_model: test-llm/llama\n    image: lmsysorg/sglang:llama\n"
-            "litellm:\n  model_name:", 1)
+            "litellm:\n  model_name:",
+            1,
+        )
         sub = self.d / "sub6"
         sub.mkdir()
         (sub / "config.yaml").write_text(text)
@@ -265,12 +269,9 @@ class TestControlPlane(unittest.TestCase):
     """control_plane.enabled split: on (default -- gateway + DB + Redis),
     off (observability-only host: no gateway, no litellm config files)."""
 
-    MODEL_ALPHA_ONLY = V3_CLUSTER_CONFIG.replace("    hosts: [alpha, beta]",
-                                                 "    hosts: [alpha]")
+    MODEL_ALPHA_ONLY = V3_CLUSTER_CONFIG.replace("    hosts: [alpha, beta]", "    hosts: [alpha]")
 
-    BETA_OFF = (
-        "    control_plane:\n      enabled: false\n"
-        "    monitoring:\n      instance_label: beta-node")
+    BETA_OFF = "    control_plane:\n      enabled: false\n    monitoring:\n      instance_label: beta-node"
 
     def _load(self, text, name="cp"):
         sub = self.d / name
@@ -291,26 +292,33 @@ class TestControlPlane(unittest.TestCase):
         cfg = self._load(V3_CLUSTER_CONFIG)
         self.assertTrue(cfg.view_for("alpha").control_plane_enabled())
         self.assertTrue(cfg.view_for("beta").control_plane_enabled())
-        off = self._load(V3_CLUSTER_CONFIG.replace(
-            "    monitoring:\n      instance_label: beta-node", self.BETA_OFF), "off")
+        off = self._load(
+            V3_CLUSTER_CONFIG.replace("    monitoring:\n      instance_label: beta-node", self.BETA_OFF), "off"
+        )
         self.assertFalse(off.view_for("beta").control_plane_enabled())
         self.assertTrue(off.view_for("alpha").control_plane_enabled())
-        s = self._load(V3_CLUSTER_CONFIG.replace(
-            "    monitoring:\n      instance_label: beta-node",
-            "    control_plane:\n      enabled: \"false\"\n"
-            "    monitoring:\n      instance_label: beta-node"), "s")
+        s = self._load(
+            V3_CLUSTER_CONFIG.replace(
+                "    monitoring:\n      instance_label: beta-node",
+                '    control_plane:\n      enabled: "false"\n    monitoring:\n      instance_label: beta-node',
+            ),
+            "s",
+        )
         self.assertFalse(s.view_for("beta").control_plane_enabled())
-        bad = self._load(V3_CLUSTER_CONFIG.replace(
-            "    monitoring:\n      instance_label: beta-node",
-            "    control_plane:\n      enabled: bogus\n"
-            "    monitoring:\n      instance_label: beta-node"), "bad")
+        bad = self._load(
+            V3_CLUSTER_CONFIG.replace(
+                "    monitoring:\n      instance_label: beta-node",
+                "    control_plane:\n      enabled: bogus\n    monitoring:\n      instance_label: beta-node",
+            ),
+            "bad",
+        )
         with self.assertRaises(ValueError):
             bad.view_for("beta").control_plane_enabled()
 
     def test_off_host_renders_no_control_plane_files_or_services(self):
         text = self.MODEL_ALPHA_ONLY.replace(
-            "    monitoring:\n      instance_label: beta-node",
-            self.BETA_OFF + "\n      role: exporters")
+            "    monitoring:\n      instance_label: beta-node", self.BETA_OFF + "\n      role: exporters"
+        )
         cfg = self._load(text, "off")
         self.assertEqual(cfg.control_plane_conflicts(), [])
         rendered = render.render(cfg.view_for("beta"), self.d / "beta-deploy")
@@ -327,15 +335,12 @@ class TestControlPlane(unittest.TestCase):
         self.assertNotIn("postgres_data", compose)
         self.assertNotIn("redis_data", compose)
         parsed = yaml.safe_load(compose)
-        self.assertEqual(set(parsed["services"]),
-                         {"node_exporter", "dcgm_exporter", "cadvisor", "gpu_textfile"})
+        self.assertEqual(set(parsed["services"]), {"node_exporter", "dcgm_exporter", "cadvisor", "gpu_textfile"})
         self.assertEqual(set(parsed["volumes"]), {"gpu_textfile_data"})
 
     def test_default_host_still_renders_full_control_plane(self):
         cfg = self._load(self.MODEL_ALPHA_ONLY)
-        compose = render.render(
-            cfg.view_for("alpha"), self.d / "alpha-deploy")[
-            "litellm/docker-compose.yml"].decode()
+        compose = render.render(cfg.view_for("alpha"), self.d / "alpha-deploy")["litellm/docker-compose.yml"].decode()
         for svc in ("  litellm:", "  db:", "  redis:"):
             self.assertIn(svc, compose)
         self.assertIn("postgres_data", compose)
@@ -344,17 +349,16 @@ class TestControlPlane(unittest.TestCase):
     def test_model_host_control_plane_off_is_fine_when_served(self):
         # beta runs the model with the control plane off; alpha (CP on) serves
         # it -> valid (the implicit central-gateway case)
-        text = V3_CLUSTER_CONFIG.replace(
-            "    monitoring:\n      instance_label: beta-node", self.BETA_OFF)
+        text = V3_CLUSTER_CONFIG.replace("    monitoring:\n      instance_label: beta-node", self.BETA_OFF)
         cfg = self._load(text, "served")
         self.assertEqual(cfg.control_plane_conflicts(), [])
         self.assertEqual(cfg.serving_conflicts(), [])
 
     def test_conflict_no_gateway_host_to_serve_model(self):
-        text = V3_CLUSTER_CONFIG.replace(
-            "    monitoring:\n      instance_label: beta-node", self.BETA_OFF)
-        text = text.replace("remote: false", "remote: false\n    control_plane:\n"
-                            "      enabled: false", 1)   # alpha off too
+        text = V3_CLUSTER_CONFIG.replace("    monitoring:\n      instance_label: beta-node", self.BETA_OFF)
+        text = text.replace(
+            "remote: false", "remote: false\n    control_plane:\n      enabled: false", 1
+        )  # alpha off too
         cfg = self._load(text, "nogw")
         problems = cfg.serving_conflicts()
         self.assertEqual(len(problems), 1)
@@ -367,25 +371,25 @@ class TestControlPlane(unittest.TestCase):
         # default serving name. Only alpha keeps its control plane, so the
         # duplicate surfaces on alpha's gateway.
         text = V3_CLUSTER_CONFIG.replace(
-            "    active: true\n    hosts: [alpha, beta]",
-            "    active: true\n    hosts: [beta]")
-        text = text.replace(
-            "    monitoring:\n      instance_label: beta-node", self.BETA_OFF)
+            "    active: true\n    hosts: [alpha, beta]", "    active: true\n    hosts: [beta]"
+        )
+        text = text.replace("    monitoring:\n      instance_label: beta-node", self.BETA_OFF)
         text = text.replace(
             "litellm:\n  model_name:",
             "  llama:\n    active: true\n    hosts: [alpha]\n"
             "    hf_model: test-llm/llama\n    image: lmsysorg/sglang:llama\n"
-            "litellm:\n  model_name:", 1)
+            "litellm:\n  model_name:",
+            1,
+        )
         cfg = self._load(text, "dup")
         problems = cfg.serving_conflicts()
-        self.assertTrue(any("'qwen'" in p and "'llama'" in p and "'alpha'" in p
-                            for p in problems), problems)
+        self.assertTrue(any("'qwen'" in p and "'llama'" in p and "'alpha'" in p for p in problems), problems)
 
     def test_conflict_host_would_run_nothing(self):
         text = self.MODEL_ALPHA_ONLY.replace(
             "    monitoring:\n      instance_label: beta-node",
-            "    control_plane:\n      enabled: false\n"
-            "    monitoring:\n      enabled: false")
+            "    control_plane:\n      enabled: false\n    monitoring:\n      enabled: false",
+        )
         cfg = self._load(text, "nothing")
         problems = cfg.control_plane_conflicts()
         self.assertEqual(len(problems), 1)
@@ -422,14 +426,19 @@ class TestServingEntries(unittest.TestCase):
     def test_local_entry_matches_historical_values(self):
         cfg = self._load(V3_CLUSTER_CONFIG)
         entries = cfg.view_for("alpha").serving_entries()
-        self.assertEqual(entries, [{
-            "alias": "qwen",
-            "model_name": "my-spark-model",
-            "hf_model": "test-llm/model",
-            "api_base": "http://host.docker.internal:30000/v1",
-            "model_info": {"supports_vision": True},
-            "model_settings": {"temperature": 1.0, "top_p": 0.95, "top_k": 20},
-        }])
+        self.assertEqual(
+            entries,
+            [
+                {
+                    "alias": "qwen",
+                    "model_name": "my-spark-model",
+                    "hf_model": "test-llm/model",
+                    "api_base": "http://host.docker.internal:30000/v1",
+                    "model_info": {"supports_vision": True},
+                    "model_settings": {"temperature": 1.0, "top_p": 0.95, "top_k": 20},
+                }
+            ],
+        )
 
     def test_remote_entry_points_at_running_host(self):
         text = V3_CLUSTER_CONFIG.replace("hosts: [alpha, beta]", "hosts: [beta]")
@@ -446,28 +455,25 @@ class TestServingEntries(unittest.TestCase):
     def test_serving_identity_precedence(self):
         text = V3_CLUSTER_CONFIG.replace(
             "    host_overrides:\n      beta:\n",
-            "    litellm:\n      model_name: model-level-name\n"
-            "    host_overrides:\n      beta:\n")
+            "    litellm:\n      model_name: model-level-name\n    host_overrides:\n      beta:\n",
+        )
         text = text.replace(
             "        litellm:\n          model_name: beta-served-name",
-            "        litellm:\n          model_name: host-level-name")
+            "        litellm:\n          model_name: host-level-name",
+        )
         cfg = self._load(text, "prec")
         # beta (the model host): its host_overrides identity wins
-        self.assertEqual(cfg.view_for("beta").serving_entries()[0]["model_name"],
-                         "host-level-name")
+        self.assertEqual(cfg.view_for("beta").serving_entries()[0]["model_name"], "host-level-name")
         # alpha (remote gateway): no host_overrides there -> the model-level name
-        self.assertEqual(cfg.view_for("alpha").serving_entries()[0]["model_name"],
-                         "model-level-name")
+        self.assertEqual(cfg.view_for("alpha").serving_entries()[0]["model_name"], "model-level-name")
 
     def test_explicit_api_base_wins(self):
         text = V3_CLUSTER_CONFIG.replace(
-            "    host_overrides:",
-            "    litellm:\n      api_base: http://lb.internal:30001/v1\n"
-            "    host_overrides:")
+            "    host_overrides:", "    litellm:\n      api_base: http://lb.internal:30001/v1\n    host_overrides:"
+        )
         cfg = self._load(text, "lb")
         for host in ("alpha", "beta"):
-            self.assertEqual(cfg.view_for(host).serving_entries()[0]["api_base"],
-                             "http://lb.internal:30001/v1")
+            self.assertEqual(cfg.view_for(host).serving_entries()[0]["api_base"], "http://lb.internal:30001/v1")
 
     def test_scaled_down_model_registers_nowhere(self):
         text = V3_CLUSTER_CONFIG.replace("hosts: [alpha, beta]", "hosts: []")
@@ -482,32 +488,31 @@ class TestServingEntries(unittest.TestCase):
         text = V3_CLUSTER_CONFIG.replace("    active: true", "    active: false")
         cfg = self._load(text, "inactive")
         self.assertEqual(cfg.view_for("alpha").serving_entries(), [])
-        mc = render.render(cfg.view_for("alpha"), self.d / "inact")[
-            "litellm/model_config.yaml"].decode()
+        mc = render.render(cfg.view_for("alpha"), self.d / "inact")["litellm/model_config.yaml"].decode()
         self.assertIn("model_list: []", mc)
         self.assertEqual(cfg.serving_conflicts(), [])
 
     def test_two_models_two_entries_one_gateway(self):
         text = V3_CLUSTER_CONFIG.replace(
-            "    active: true\n    hosts: [alpha, beta]",
-            "    active: true\n    hosts: [alpha]")
+            "    active: true\n    hosts: [alpha, beta]", "    active: true\n    hosts: [alpha]"
+        )
         text = text.replace(
             "litellm:\n  model_name:",
             "  llama:\n    active: true\n    hosts: [beta]\n"
             "    litellm:\n      model_name: llama-served\n"
             "    hf_model: test-llm/llama\n    image: lmsysorg/sglang:llama\n"
-            "litellm:\n  model_name:", 1)
+            "litellm:\n  model_name:",
+            1,
+        )
         cfg = self._load(text, "two")
         entries = cfg.view_for("alpha").serving_entries()
         self.assertEqual([e["alias"] for e in entries], ["qwen", "llama"])
         self.assertEqual(entries[0]["api_base"], "http://host.docker.internal:30000/v1")
         self.assertEqual(entries[1]["api_base"], "http://beta.tailx.ts.net:30000/v1")
         self.assertEqual(entries[1]["model_name"], "llama-served")
-        mc = render.render(cfg.view_for("alpha"), self.d / "two")[
-            "litellm/model_config.yaml"].decode()
+        mc = render.render(cfg.view_for("alpha"), self.d / "two")["litellm/model_config.yaml"].decode()
         parsed = yaml.safe_load(mc)
-        self.assertEqual([e["model_name"] for e in parsed["model_list"]],
-                         ["my-spark-model", "llama-served"])
+        self.assertEqual([e["model_name"] for e in parsed["model_list"]], ["my-spark-model", "llama-served"])
         self.assertEqual(cfg.serving_conflicts(), [])
 
 
@@ -518,12 +523,8 @@ class TestLocalDetection(unittest.TestCase):
     def test_detection_matches_name_or_ssh_host_first_label(self):
         with mock.patch.object(cluster, "local_identities", return_value={"alpha"}):
             self.assertTrue(cluster.is_on_host(HostSpec(name="alpha", ssh="x", remote=True)))
-            self.assertTrue(
-                cluster.is_on_host(HostSpec(name="other", ssh="alpha.tailx.ts.net",
-                                            remote=True)))
-            self.assertFalse(
-                cluster.is_on_host(HostSpec(name="other", ssh="beta.tailx.ts.net",
-                                            remote=True)))
+            self.assertTrue(cluster.is_on_host(HostSpec(name="other", ssh="alpha.tailx.ts.net", remote=True)))
+            self.assertFalse(cluster.is_on_host(HostSpec(name="other", ssh="beta.tailx.ts.net", remote=True)))
 
     def test_no_match_is_remote(self):
         with mock.patch.object(cluster, "local_identities", return_value={"unrelated"}):
@@ -546,8 +547,9 @@ class TestTargets(unittest.TestCase):
         fake_remote.is_remote = True
         fake_remote.label = "you@beta (stub)"
         with mock.patch.object(cluster, "local_identities", return_value=set()):
-            ts = cluster.targets(cfg, ["beta", "alpha"], runtime=fake_local,
-                                 remote_factory=lambda spec, view: fake_remote)
+            ts = cluster.targets(
+                cfg, ["beta", "alpha"], runtime=fake_local, remote_factory=lambda spec, view: fake_remote
+            )
         self.assertEqual([t.name for t in ts], ["alpha", "beta"])
         self.assertIs(ts[0].runtime, fake_local)
         self.assertIs(ts[1].runtime, fake_remote)
@@ -564,6 +566,7 @@ class TestTargets(unittest.TestCase):
 
     def test_single_local_host_target(self):
         from tests.helpers import config_text
+
         (self.d / "config.yaml").write_text(config_text(str(self.d / "install")))
         (self.d / ".env").write_text(REFERENCE_ENV)
         cfg = config_mod.load(str(self.d / "config.yaml"))
@@ -572,7 +575,7 @@ class TestTargets(unittest.TestCase):
         self.assertEqual(len(ts), 1)
         self.assertIs(ts[0].runtime, rt)
         self.assertFalse(ts[0].is_remote)
-        self.assertEqual(ts[0].cfg.view_host, "mylab")   # a view of the cluster
+        self.assertEqual(ts[0].cfg.view_host, "mylab")  # a view of the cluster
 
     def test_parse_hosts_arg(self):
         self.assertIsNone(cluster.parse_hosts_arg(None))
@@ -587,8 +590,7 @@ class TestRunOnEach(unittest.TestCase):
 
     def test_all_ok(self):
         seen = []
-        rc = cluster.run_on_each(self._targets(["a", "b"]),
-                                 lambda t: seen.append(t.name) or 0)
+        rc = cluster.run_on_each(self._targets(["a", "b"]), lambda t: seen.append(t.name) or 0)
         self.assertEqual(rc, 0)
         self.assertEqual(seen, ["a", "b"])
 
@@ -601,7 +603,7 @@ class TestRunOnEach(unittest.TestCase):
 
         rc = cluster.run_on_each(self._targets(["a", "b", "c"]), op)
         self.assertEqual(rc, 1)
-        self.assertEqual(seen, ["a", "b", "c"])   # c still ran after b failed
+        self.assertEqual(seen, ["a", "b", "c"])  # c still ran after b failed
 
     def test_truthy_nonzero_op_result_counts_as_failure(self):
         rc = cluster.run_on_each(self._targets(["a"]), lambda t: 0 or 0)

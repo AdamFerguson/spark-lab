@@ -50,6 +50,11 @@ jobs:
       - name: shellcheck
         run: shellcheck bin/spark-lab scripts/secret-scan.sh .githooks/pre-commit
 
+      - name: "ruff: lint + format (repo-wide)"
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
       - name: "Test suite + coverage (unit / integration / regression / parity on sparklab/)"
         run: |
           .venv/bin/python -m coverage run -m unittest discover -s tests -t .

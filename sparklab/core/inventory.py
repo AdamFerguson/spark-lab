@@ -11,6 +11,7 @@ module probes, ON THE NODE (read-only, via the runtime seam):
 Feeds ``status`` (human + ``--json``), ``sync`` and ``expose``. No writes, no
 restarts -- pure observation.
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -26,13 +27,13 @@ _ENGINES_FMT = (
     "n=$(docker inspect -f '{{.Name}}' $id | cut -c2-); "
     "pp=$(docker inspect -f "
     "'{{range .NetworkSettings.Ports}}{{range .}}{{.HostPort}} {{end}}{{end}}' $id); "
-    "cmd=$(docker inspect -f '{{join .Config.Cmd \" \"}} {{join .Config.Entrypoint \" \"}}' $id); "
+    'cmd=$(docker inspect -f \'{{join .Config.Cmd " "}} {{join .Config.Entrypoint " "}}\' $id); '
     "ports=\"$pp $(echo \"$cmd\" | grep -oE '[-][-]?port[= ][0-9]+' | grep -oE '[0-9]+')\"; "
     "for port in $(echo \"$ports\" | tr ' ' '\\n' | sort -u | grep -E '^[0-9]+$'); do "
-    "[ \"$port\" = \"%s\" ] && continue; "
-    "m=$(curl -sf -m 3 \"http://127.0.0.1:$port/v1/models\" 2>/dev/null "
-    "| grep -oE '\"id\"[ ]*:[ ]*\"[^\"]*\"' | cut -d'\"' -f4 | paste -sd, -); "
-    "[ -n \"$m\" ] && echo \"ENGINE|$n|$port|$m\"; "
+    '[ "$port" = "%s" ] && continue; '
+    'm=$(curl -sf -m 3 "http://127.0.0.1:$port/v1/models" 2>/dev/null '
+    '| grep -oE \'"id"[ ]*:[ ]*"[^"]*"\' | cut -d\'"\' -f4 | paste -sd, -); '
+    '[ -n "$m" ] && echo "ENGINE|$n|$port|$m"; '
     "done; done"
 )
 
@@ -45,9 +46,11 @@ def _models_argv(port: int, key: str) -> List[str]:
     """GET the gateway's /v1/models. The auth key is inlined into the
     node-side curl header (generated secrets are [A-Za-z0-9.-]; the argv is
     never echoed -- run_capture hides output and no banner prints this)."""
-    script = (f'curl -sf -m 5 -H "Authorization: Bearer {key}" '
-              f'http://127.0.0.1:{port}/v1/models '
-              '| grep -oE \'"id"[ ]*:[ ]*"[^"]*"\' | cut -d\'"\' -f4')
+    script = (
+        f'curl -sf -m 5 -H "Authorization: Bearer {key}" '
+        f"http://127.0.0.1:{port}/v1/models "
+        '| grep -oE \'"id"[ ]*:[ ]*"[^"]*"\' | cut -d\'"\' -f4'
+    )
     return ["sh", "-c", script]
 
 
@@ -63,12 +66,12 @@ def discover(runtime, cfg) -> Dict[str, Any]:
     for line in (r.stdout or "").splitlines():
         parts = line.split("|")
         if len(parts) == 4 and parts[0] == "ENGINE":
-            out["engines"].append({"container": parts[1], "port": int(parts[2]),
-                                   "models": [m for m in parts[3].split(",") if m]})
+            out["engines"].append(
+                {"container": parts[1], "port": int(parts[2]), "models": [m for m in parts[3].split(",") if m]}
+            )
     if getattr(cfg, "control_plane_enabled", lambda: True)():
         key = cfg.secret((cfg.litellm or {}).get("master_key_env")) or ""
         g = runtime.run_capture(_models_argv(gw_port, key))
         served: List[str] = [s.strip() for s in (g.stdout or "").splitlines() if s.strip()]
-        out["gateway"] = {"port": gw_port, "served": served,
-                          "reachable": g.returncode == 0 and bool(served)}
+        out["gateway"] = {"port": gw_port, "served": served, "reachable": g.returncode == 0 and bool(served)}
     return out

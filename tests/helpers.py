@@ -210,14 +210,23 @@ class FakeRuntime:
     is_remote = False
 
     def __init__(self, available=None, fail=None, captures=None):
-        self._available = set(available) if available is not None else {
-            "sh", "sparkrun", "docker", "systemctl", "tailscale", "cloudflared",
-        }
+        self._available = (
+            set(available)
+            if available is not None
+            else {
+                "sh",
+                "sparkrun",
+                "docker",
+                "systemctl",
+                "tailscale",
+                "cloudflared",
+            }
+        )
         self._fail = dict(fail or {})
-        self.captures = dict(captures or {})   # needle -> (returncode, stdout)
+        self.captures = dict(captures or {})  # needle -> (returncode, stdout)
         self.calls = []
-        self.spawned = []   # the subset of commands launched detached (via spawn)
-        self.spawn_logs = []   # the log path each detached launch was given
+        self.spawned = []  # the subset of commands launched detached (via spawn)
+        self.spawn_logs = []  # the log path each detached launch was given
 
     def available(self, binary: str) -> bool:
         return binary in self._available

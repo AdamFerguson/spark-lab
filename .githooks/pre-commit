@@ -15,6 +15,23 @@
 set -uo pipefail
 repo="$(git rev-parse --show-toplevel)"
 
+# --- ruff: lint + format the staged Python (CI enforces unconditionally) ----
+mapfile -t pyfiles < <(git diff --cached --name-only --diff-filter=ACM | grep -E '\.py$' || true)
+if [ "${#pyfiles[@]}" -gt 0 ]; then
+  if command -v uv >/dev/null 2>&1; then
+    if ! (cd "$repo" && uv run --quiet ruff check --fix "${pyfiles[@]}"); then
+      echo "" >&2
+      echo "COMMIT BLOCKED — ruff lint findings that need human attention (above)." >&2
+      echo "  Auto-fixables were applied; fix the rest and re-stage." >&2
+      exit 1
+    fi
+    (cd "$repo" && uv run --quiet ruff format "${pyfiles[@]}" >/dev/null)
+    git add -- "${pyfiles[@]}"   # keep formatting/lint fixes in the commit
+  else
+    echo "note: uv not found — skipped local ruff (CI will still enforce it)." >&2
+  fi
+fi
+
 if ! bash "$repo/scripts/secret-scan.sh"; then
   echo "" >&2
   echo "COMMIT BLOCKED — spark-lab secret scan found potential secrets (above)." >&2

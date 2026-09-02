@@ -29,11 +29,8 @@ def _render():
 def _render_with_model_extra(extra: str):
     """Render REFERENCE_CONFIG with extra keys (written at the v1-style 2-space
     indent) added to the model block, inserted before its ``params:``."""
-    extra4 = "".join("  " + ln if ln.strip() else ln
-                     for ln in extra.splitlines(keepends=True))
-    text = REFERENCE_CONFIG.replace(
-        "    min_nodes: 1\n    params:",
-        "    min_nodes: 1\n" + extra4 + "    params:", 1)
+    extra4 = "".join("  " + ln if ln.strip() else ln for ln in extra.splitlines(keepends=True))
+    text = REFERENCE_CONFIG.replace("    min_nodes: 1\n    params:", "    min_nodes: 1\n" + extra4 + "    params:", 1)
     assert extra4 in text, "model-extra not inserted"
     d = Path(tempfile.mkdtemp())
     (d / "config.yaml").write_text(text)
@@ -43,8 +40,7 @@ def _render_with_model_extra(extra: str):
 
 
 def _recipe_text(rendered):
-    return next(v for k, v in rendered.items()
-                if k.startswith("sparkrun/recipes/")).decode("utf-8")
+    return next(v for k, v in rendered.items() if k.startswith("sparkrun/recipes/")).decode("utf-8")
 
 
 class TestRender(unittest.TestCase):
@@ -102,17 +98,15 @@ class TestRender(unittest.TestCase):
         # switch -- clients send {"enable_thinking": false} per request.
         _cfg, rendered = _render()
         text = rendered["litellm/model_config.yaml"].decode("utf-8")
-        self.assertIn('allowed_openai_params: ["reasoning_effort", "chat_template_kwargs"]',
-                      text)
+        self.assertIn('allowed_openai_params: ["reasoning_effort", "chat_template_kwargs"]', text)
 
     def test_missing_key_names_fall_back_to_default_env_names(self):
         # An omitted master_key_env/salt_key_env must resolve the standard .env
         # names -- never silently render empty secrets into litellm/.env.
         import re as _re
+
         d = Path(tempfile.mkdtemp())
-        no_names = _re.sub(
-            r"\n\s+(master_key_env|salt_key_env):.+", "",
-            REFERENCE_CONFIG)
+        no_names = _re.sub(r"\n\s+(master_key_env|salt_key_env):.+", "", REFERENCE_CONFIG)
         self.assertNotIn("master_key_env", no_names)
         (d / "config.yaml").write_text(no_names)
         (d / ".env").write_text(REFERENCE_ENV)
@@ -156,11 +150,12 @@ class TestRecipeOverrides(unittest.TestCase):
         _cfg, rendered = _render_with_model_extra(
             "  executor_config:\n"
             "    shm_size: 16g\n"
-            "    user: \"$SHELL_USER\"\n"
+            '    user: "$SHELL_USER"\n'
             "    memory_limit: 116g\n"
             "    volumes:\n"
             "      - /home/user/AI/flash-next/ple:/ple\n"
-            "      - /home/user/AI/flash-next/build/qwen4_exp.py:/sgl-workspace/sglang/python/sglang/srt/models/qwen4_exp.py:ro\n")
+            "      - /home/user/AI/flash-next/build/qwen4_exp.py:/sgl-workspace/sglang/python/sglang/srt/models/qwen4_exp.py:ro\n"
+        )
         doc = yaml.safe_load(_recipe_text(rendered))
         ec = doc["executor_config"]
         # override wins; base keys kept; no duplicate keys (YAML parse = proof)
@@ -176,9 +171,8 @@ class TestRecipeOverrides(unittest.TestCase):
 
     def test_env_override_appended_and_hf_token_kept(self):
         _cfg, rendered = _render_with_model_extra(
-            "  env:\n"
-            "    SGLANG_QWEN4_PLE_MMAP_DIR: /ple\n"
-            "    PYTHONUNBUFFERED: \"1\"\n")
+            '  env:\n    SGLANG_QWEN4_PLE_MMAP_DIR: /ple\n    PYTHONUNBUFFERED: "1"\n'
+        )
         doc = yaml.safe_load(_recipe_text(rendered))
         self.assertEqual(doc["env"]["SGLANG_QWEN4_PLE_MMAP_DIR"], "/ple")
         self.assertEqual(doc["env"]["PYTHONUNBUFFERED"], "1")
@@ -194,10 +188,8 @@ class TestRecipeOverrides(unittest.TestCase):
 
     def test_serve_command_replaces_generated_serve_block(self):
         _cfg, rendered = _render_with_model_extra(
-            "  serve_command: |\n"
-            "    my-serve \\\n"
-            "      --model-path {model} \\\n"
-            "      --port {port}\n")
+            "  serve_command: |\n    my-serve \\\n      --model-path {model} \\\n      --port {port}\n"
+        )
         doc = yaml.safe_load(_recipe_text(rendered))
         cmd = doc["command"]
         self.assertIn("my-serve", cmd)

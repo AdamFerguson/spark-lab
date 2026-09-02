@@ -6,6 +6,7 @@ creates ``.env`` from ``.env.example`` with freshly generated secrets
 plain ops now: ensure docker/tailscale on the node yourself, then
 ``spark-lab check`` (binaries per host) and ``spark-lab apply``.
 """
+
 from __future__ import annotations
 
 import secrets

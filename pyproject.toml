@@ -33,6 +33,7 @@ dependencies = [
 dev = [
     "coverage>=7.0",
     "yamllint>=1.35",
+    "ruff>=0.6",
 ]
 
 [project.scripts]
@@ -45,3 +46,14 @@ packages = ["sparklab", "sparklab.core", "sparklab.commands"]
 # Ship the Jinja templates + verbatim JSON inside the package so the CLI works
 # both from a git checkout and when installed via pip/pipx (ADR 0001).
 sparklab = ["templates/**/*"]
+
+[tool.ruff]
+line-length = 120          # house style (matches the yamllint budget)
+target-version = "py310"
+extend-exclude = ["deploy", "recipes/flash-next/patches", "spark_lab.egg-info"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]   # ruff's pragmatic default set
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]   # sys.path bootstrap before imports is the suite pattern

@@ -7,6 +7,7 @@ policies + enabled-at-boot services) -- the failure shape behind "litellm
 didn't come back after a reboot". Writes nothing and runs no state-changing
 commands; for remote hosts everything is checked on the *target node*.
 """
+
 from __future__ import annotations
 
 import sys
@@ -24,13 +25,11 @@ def _boot_probe(units: list) -> str:
     lines = [
         "bad=$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}} {{.Name}}' "
         "$(docker ps -q 2>/dev/null) 2>/dev/null | grep '^no ' | cut -d' ' -f2-)",
-        '[ -n "$bad" ] && printf "%s\n" "$bad" '
-        '| sed "s#^#     WARN no restart policy (won\'t survive reboot): #"',
+        '[ -n "$bad" ] && printf "%s\n" "$bad" | sed "s#^#     WARN no restart policy (won\'t survive reboot): #"',
         '[ -z "$bad" ] && echo "     ok: every running container has a restart policy"',
     ]
     for u in units:
-        lines.append(f"systemctl is-enabled {u} >/dev/null 2>&1 "
-                     f"|| echo '     WARN: {u} not enabled at boot'")
+        lines.append(f"systemctl is-enabled {u} >/dev/null 2>&1 || echo '     WARN: {u} not enabled at boot'")
     return "; ".join(lines)
 
 
@@ -48,7 +47,7 @@ def _check_host(t, bins: list) -> int:
     except Exception as e:  # noqa: BLE001 - any render failure == invalid config
         print(f"[RENDER ERROR] {e}", file=sys.stderr)
         return 1
-    where = (f"{cfg.install_dir_raw} on the node" if t.is_remote else str(cfg.install_dir))
+    where = f"{cfg.install_dir_raw} on the node" if t.is_remote else str(cfg.install_dir)
     print(f"   render: OK ({len(rendered)} file(s) would be written to {where})")
     if missing:
         print(f"   WARN: missing binaries: {', '.join(missing)} — they'll be skipped at runtime.")
@@ -66,8 +65,7 @@ def run(args) -> int:
         return 1
 
     if cfg.active_host_conflicts():
-        print(f"[INVALID] two active models share a host: {cfg._conflict_pairs()}",
-              file=sys.stderr)
+        print(f"[INVALID] two active models share a host: {cfg._conflict_pairs()}", file=sys.stderr)
         return 1
     for problem in cfg.control_plane_conflicts():
         print(f"[INVALID] {problem}", file=sys.stderr)
@@ -96,6 +94,5 @@ def run(args) -> int:
     print(f"  hosts: {', '.join(t.name for t in ts)}")
     rc = cluster.run_on_each(ts, lambda t: _check_host(t, bins))
     if rc == 0:
-        print("\nConfig is valid and renderable on every selected host. "
-              "`spark-lab apply` is safe to run.")
+        print("\nConfig is valid and renderable on every selected host. `spark-lab apply` is safe to run.")
     return rc

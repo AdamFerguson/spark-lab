@@ -4,6 +4,7 @@ The single place that turns an ``argv`` list into a subprocess call, routed
 through the runtime seam (ADR 0002). Commands import :func:`run_command` so they
 never touch ``subprocess`` directly.
 """
+
 from __future__ import annotations
 
 from .core import runtime as runtime_mod

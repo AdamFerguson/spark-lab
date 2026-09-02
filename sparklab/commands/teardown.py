@@ -1,4 +1,5 @@
 """`spark-lab teardown` — stop the model + remove the stack (per selected host)."""
+
 from __future__ import annotations
 
 import sys
@@ -18,9 +19,10 @@ def _teardown_one(t, purge: bool) -> int:
     # when nothing is running -- see converge.tolerant_stop_argv).
     recipe_file = cfg.node_path(f"sparkrun/recipes/{cfg.recipe_name}.yaml", home)
     stop_argv = converge.tolerant_stop_argv(
-        sparkrun, recipe_file,
-        ["--cluster", cfg.cluster_name] if cfg.is_cluster
-        else ["--hosts", ",".join(str(h) for h in cfg.hosts)])
+        sparkrun,
+        recipe_file,
+        ["--cluster", cfg.cluster_name] if cfg.is_cluster else ["--hosts", ",".join(str(h) for h in cfg.hosts)],
+    )
     print("Stopping model workload...")
     run_command(stop_argv, ok=True, runtime=runtime)
     down_argv = ["docker", "compose", "-f", compose_file, "down"]
@@ -48,14 +50,11 @@ def run(args) -> int:
         print("same data. Add --purge to destroy the named volumes too. --", file=sys.stderr)
         return 1
     if args.purge:
-        print("WARNING: --purge DESTROYS the named volumes on every selected host:",
-              file=sys.stderr)
-        print("  litellm_postgres_data   -- the LiteLLM/Postgres database (model list,",
-              file=sys.stderr)
+        print("WARNING: --purge DESTROYS the named volumes on every selected host:", file=sys.stderr)
+        print("  litellm_postgres_data   -- the LiteLLM/Postgres database (model list,", file=sys.stderr)
         print("                            spend/auth data): UNRECOVERABLE", file=sys.stderr)
         print("  litellm_redis_data      -- gateway cache/queues", file=sys.stderr)
-        print("  litellm_prometheus_data / litellm_grafana_data -- observability state",
-              file=sys.stderr)
+        print("  litellm_prometheus_data / litellm_grafana_data -- observability state", file=sys.stderr)
     names = cluster.parse_hosts_arg(getattr(args, "hosts", None))
     ts = cluster.targets(cfg, names, runtime=getattr(args, "runtime", None))
     if not ts:
