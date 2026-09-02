@@ -20,6 +20,7 @@ scale:
 Up/down rewrite ``config.yaml`` on disk (YAML round-trip: comments in the
 file are not preserved). Both refuse when two active models would share a host.
 """
+
 from __future__ import annotations
 
 import sys
@@ -27,7 +28,7 @@ from pathlib import Path
 
 import yaml
 
-from ..core import cluster, config, converge, node
+from ..core import cluster, config, converge
 from ..util import run_command
 from . import apply as apply_cmd
 
@@ -45,8 +46,7 @@ def _check_conflict(cfg, model: str, host_names):
     """Refuse when another active model would share a host with `model`."""
     data = cfg.data
     models = data.get("models") or {}
-    active_others = [a for a, m in models.items()
-                     if a != model and (m or {}).get("active")]
+    active_others = [a for a, m in models.items() if a != model and (m or {}).get("active")]
     all_names = [s.name for s in cfg.host_specs]
     for other in active_others:
         o_hosts = (models[other] or {}).get("hosts")
@@ -55,7 +55,8 @@ def _check_conflict(cfg, model: str, host_names):
         if shared:
             raise ValueError(
                 f"cannot serve '{model}' on {', '.join(sorted(shared))}: "
-                f"active model '{other}' already serves it (one model per host)")
+                f"active model '{other}' already serves it (one model per host)"
+            )
 
 
 # --------------------------------------------------------------------------- #
@@ -64,14 +65,12 @@ def _check_conflict(cfg, model: str, host_names):
 def up(args) -> int:
     cfg = config.load(args.config)
     if cfg.view_host is not None:
-        print("[ERROR] `model up` runs against the cluster config, not a "
-              "single-host view.", file=sys.stderr)
+        print("[ERROR] `model up` runs against the cluster config, not a single-host view.", file=sys.stderr)
         return 1
     model = args.model
     models = cfg.data.get("models") or {}
     if model not in models:
-        print(f"[ERROR] no such model '{model}' (models: {', '.join(models) or '(none)'}).",
-              file=sys.stderr)
+        print(f"[ERROR] no such model '{model}' (models: {', '.join(models) or '(none)'}).", file=sys.stderr)
         return 1
 
     all_names = [s.name for s in cfg.host_specs]
@@ -79,8 +78,7 @@ def up(args) -> int:
     names = cluster.parse_hosts_arg(getattr(args, "hosts", None))
     targets_names = names if names else [n for n in all_names if n not in current]
     if not targets_names:
-        print(f"Model '{model}' is already served on every host "
-              f"({', '.join(all_names)}). Nothing to scale up.")
+        print(f"Model '{model}' is already served on every host ({', '.join(all_names)}). Nothing to scale up.")
         return 0
     try:
         _check_conflict(cfg, model, targets_names)
@@ -99,22 +97,19 @@ def up(args) -> int:
             entry["active"] = True
         text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
         cfg.config_path.write_text(text)
-        print(f"Updated {cfg.config_path}: models.{model}.hosts = "
-              f"[{', '.join(new_hosts)}]\n")
+        print(f"Updated {cfg.config_path}: models.{model}.hosts = [{', '.join(new_hosts)}]\n")
 
     cfg2 = config.load(args.config)
     for problem in (*cfg2.control_plane_conflicts(), *cfg2.serving_conflicts()):
         print(f"[ERROR] {problem}", file=sys.stderr)
-        print("(the config was updated on disk; revert it or fix the cluster before retrying)",
-              file=sys.stderr)
+        print("(the config was updated on disk; revert it or fix the cluster before retrying)", file=sys.stderr)
         return 1
     ts = cluster.targets(cfg2, targets_names, runtime=getattr(args, "runtime", None))
     if not ts:
         return 1
     print(f"== spark-lab model up {model} ==")
     print(f"   hosts : {', '.join(t.name for t in ts)}")
-    return cluster.run_on_each(ts, lambda t: apply_cmd._converge_one(
-        t, dry=False, allow_restart=False, diff=False))
+    return cluster.run_on_each(ts, lambda t: apply_cmd._converge_one(t, dry=False, allow_restart=False, diff=False))
 
 
 # --------------------------------------------------------------------------- #
@@ -128,24 +123,24 @@ def down(args) -> int:
         return 1
     cfg = config.load(args.config)
     if cfg.view_host is not None:
-        print("[ERROR] `model down` runs against the cluster config, not a "
-              "single-host view.", file=sys.stderr)
+        print("[ERROR] `model down` runs against the cluster config, not a single-host view.", file=sys.stderr)
         return 1
     model = args.model
     models = cfg.data.get("models") or {}
     if model not in models:
-        print(f"[ERROR] no such model '{model}' (models: {', '.join(models) or '(none)'}).",
-              file=sys.stderr)
+        print(f"[ERROR] no such model '{model}' (models: {', '.join(models) or '(none)'}).", file=sys.stderr)
         return 1
 
-    all_names = [s.name for s in cfg.host_specs]
     current = cfg.model_host_list(model)
     names = cluster.parse_hosts_arg(getattr(args, "hosts", None))
     if names:
         bad = [n for n in names if n not in current]
         if bad:
-            print(f"[ERROR] '{model}' is not served on: {', '.join(bad)} "
-                  f"(currently: {', '.join(current) or '(nowhere)'}).", file=sys.stderr)
+            print(
+                f"[ERROR] '{model}' is not served on: {', '.join(bad)} "
+                f"(currently: {', '.join(current) or '(nowhere)'}).",
+                file=sys.stderr,
+            )
             return 1
         targets_names = list(names)
     else:
@@ -161,25 +156,22 @@ def down(args) -> int:
         entry["hosts"] = remaining
     else:
         entry["hosts"] = []
-        entry.pop("active", None)     # fully scaled down: not active anywhere
+        entry.pop("active", None)  # fully scaled down: not active anywhere
     text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
     cfg.config_path.write_text(text)
-    print(f"Updated {cfg.config_path}: models.{model}.hosts = "
-          f"[{', '.join(remaining) or '(scaled down)'}]\n")
+    print(f"Updated {cfg.config_path}: models.{model}.hosts = [{', '.join(remaining) or '(scaled down)'}]\n")
 
     cfg2 = config.load(args.config)
     for problem in (*cfg2.control_plane_conflicts(), *cfg2.serving_conflicts()):
         print(f"[ERROR] {problem}", file=sys.stderr)
-        print("(the config was updated on disk; revert it or fix the cluster before retrying)",
-              file=sys.stderr)
+        print("(the config was updated on disk; revert it or fix the cluster before retrying)", file=sys.stderr)
         return 1
     ts = cluster.targets(cfg2, targets_names, runtime=getattr(args, "runtime", None))
     if not ts:
         return 1
     print(f"== spark-lab model down {model} ==")
     print(f"   hosts : {', '.join(t.name for t in ts)}")
-    return cluster.run_on_each(ts, lambda t: apply_cmd._converge_one(
-        t, dry=False, allow_restart=True, diff=False))
+    return cluster.run_on_each(ts, lambda t: apply_cmd._converge_one(t, dry=False, allow_restart=True, diff=False))
 
 
 # --------------------------------------------------------------------------- #
@@ -193,22 +185,20 @@ def _stop_one(t) -> int:
     if callable(node_path):
         recipe_file = node_path(f"sparkrun/recipes/{cfg.recipe_name}.yaml", home)
     else:  # pragma: no cover - test fakes
-        recipe_file = str(Path(str(cfg.install_dir)) / "sparkrun" / "recipes"
-                          / f"{cfg.recipe_name}.yaml")
+        recipe_file = str(Path(str(cfg.install_dir)) / "sparkrun" / "recipes" / f"{cfg.recipe_name}.yaml")
     stop_argv = converge.tolerant_stop_argv(
-        sparkrun, recipe_file,
-        ["--cluster", cfg.cluster_name] if cfg.is_cluster
-        else ["--hosts", ",".join(str(h) for h in cfg.hosts)])
+        sparkrun,
+        recipe_file,
+        ["--cluster", cfg.cluster_name] if cfg.is_cluster else ["--hosts", ",".join(str(h) for h in cfg.hosts)],
+    )
     print(f"Stopping model workload '{cfg.recipe_name}' (stack stays up)...")
     rc = run_command(stop_argv, ok=True, runtime=runtime)
     if rc != 0:
-        print(f"!! sparkrun stop failed (the workload may still be running)",
-              file=sys.stderr)
+        print("!! sparkrun stop failed (the workload may still be running)", file=sys.stderr)
         return rc
     _, st = t.env()
-    st.set_state(st.files, None)   # record the stop; file hashes untouched
-    print("Model stopped. State updated: the next `apply` will start it again "
-          "(idempotent `sparkrun run --ensure`).")
+    st.set_state(st.files, None)  # record the stop; file hashes untouched
+    print("Model stopped. State updated: the next `apply` will start it again (idempotent `sparkrun run --ensure`).")
     return 0
 
 
@@ -222,6 +212,6 @@ def stop(args) -> int:
     ts = _targets(args, cfg)
     if not ts:
         return 1
-    print(f"== spark-lab model stop ==")
+    print("== spark-lab model stop ==")
     print(f"   hosts : {', '.join(t.name for t in ts)}")
     return cluster.run_on_each(ts, _stop_one)

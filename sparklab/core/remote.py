@@ -66,9 +66,15 @@ class RemoteTarget:
     they are expanded against the *remote* home by :class:`RemoteRuntime.expand`.
     """
 
-    def __init__(self, host: str, user: Optional[str] = None, port: Optional[int] = None,
-                 identity_file: Optional[str] = None,
-                 install_dir: str = "~/AI", repo_dir: str = "~/spark-lab"):
+    def __init__(
+        self,
+        host: str,
+        user: Optional[str] = None,
+        port: Optional[int] = None,
+        identity_file: Optional[str] = None,
+        install_dir: str = "~/AI",
+        repo_dir: str = "~/spark-lab",
+    ):
         self.host = str(host)
         self.user = user
         self.port = int(port) if port else None
@@ -90,8 +96,10 @@ class RemoteTarget:
         )
 
     def __repr__(self) -> str:
-        return (f"RemoteTarget(host={self.host!r}, user={self.user!r}, "
-                f"install_dir={self.install_dir!r}, repo_dir={self.repo_dir!r})")
+        return (
+            f"RemoteTarget(host={self.host!r}, user={self.user!r}, "
+            f"install_dir={self.install_dir!r}, repo_dir={self.repo_dir!r})"
+        )
 
 
 def build_connection(target: RemoteTarget) -> Connection:
@@ -99,8 +107,7 @@ def build_connection(target: RemoteTarget) -> Connection:
     connect_kwargs: Dict = {}
     if target.identity_file:
         connect_kwargs["identity_filename"] = target.identity_file
-    return Connection(target.host, user=target.user, port=target.port,
-                      connect_kwargs=connect_kwargs or None)
+    return Connection(target.host, user=target.user, port=target.port, connect_kwargs=connect_kwargs or None)
 
 
 class _Detached:
@@ -155,9 +162,11 @@ class RemoteRuntime:
                 return self._conn.run(_login(inner), warn=True)
         except (OSError, SSHException) as e:
             self._unreachable = f"{type(e).__name__}: {e}"
-            print(f"spark-lab: cannot reach {self.label}: {self._unreachable}. "
-                  f"Continuing with degraded (empty) node data for this host.",
-                  file=sys.stderr)
+            print(
+                f"spark-lab: cannot reach {self.label}: {self._unreachable}. "
+                f"Continuing with degraded (empty) node data for this host.",
+                file=sys.stderr,
+            )
             return None
 
     def home_path(self) -> str:
@@ -241,12 +250,12 @@ class RemoteRuntime:
             raise RuntimeError(
                 f"sudo on {self.label} needs a password, but this terminal is "
                 f"not interactive -- re-run from a terminal (or cache "
-                f"credentials / allow passwordless sudo on that node).")
+                f"credentials / allow passwordless sudo on that node)."
+            )
         pw = getpass.getpass(f"sudo password for {self.label}: ")
         ch = self._conn.create_session()
         ch.set_combine_stderr(True)
-        stdin, stdout, _stderr = ch.exec_command(
-            _login("sudo -S -v && sudo -S " + _shell_argv(argv)))
+        stdin, stdout, _stderr = ch.exec_command(_login("sudo -S -v && sudo -S " + _shell_argv(argv)))
         stdin.write(pw.encode() + b"\n")
         stdin.flush()
         stdin.close()
@@ -257,8 +266,7 @@ class RemoteRuntime:
             sys.stdout.flush()
             out.append(raw)
         rc = ch.recv_exit_status()
-        return subprocess.CompletedProcess(
-            list(argv), rc, b"".join(out).decode("utf-8", "replace"), "")
+        return subprocess.CompletedProcess(list(argv), rc, b"".join(out).decode("utf-8", "replace"), "")
 
     def spawn(self, argv: List, log: Optional[str] = None) -> _Detached:
         """Launch ``argv`` fully detached on the node (new session).
@@ -272,7 +280,7 @@ class RemoteRuntime:
         start fails; without it, stdio goes to /dev/null as before.
         """
         sink = ">" + shlex.quote(log) if log else ">/dev/null"
-        inner = f"setsid nohup " + _shell_argv(argv) + f" </dev/null {sink} 2>&1 &"
+        inner = "setsid nohup " + _shell_argv(argv) + f" </dev/null {sink} 2>&1 &"
         r = self._conn.run(_login(inner), warn=True)
         return _Detached(list(argv), r.return_code)
 
@@ -343,15 +351,14 @@ class RemoteInstallFS:
         out: Dict[str, Optional[str]] = {}
         for rel in rels:
             data = self.read(rel)
-            out[rel] = (None if data is None else state_mod.sha256_bytes(data))
+            out[rel] = None if data is None else state_mod.sha256_bytes(data)
         return out
 
     def list_recipes(self) -> List[str]:
         """Recipe basenames (no .yaml) under ``sparkrun/recipes`` on the node."""
         d = self.path_str("sparkrun/recipes")
         with contextlib.redirect_stdout(io.StringIO()):
-            r = self.rt.conn.run(
-                _login(f"ls {shlex.quote(d)} 2>/dev/null | sed 's/\\.yaml$//'"), warn=True)
+            r = self.rt.conn.run(_login(f"ls {shlex.quote(d)} 2>/dev/null | sed 's/\\.yaml$//'"), warn=True)
         if r.return_code != 0:
             return []
         return sorted(r.stdout.split())

@@ -35,7 +35,7 @@ def find_sparkrun(runtime=None) -> str:
         return os.environ["SPARKRUN"]
     if runtime is not None and getattr(runtime, "is_remote", False):
         located = runtime.locate("sparkrun")
-        return located or "sparkrun"   # bare name: a clear error will surface if missing
+        return located or "sparkrun"  # bare name: a clear error will surface if missing
     which = shutil.which("sparkrun")
     if which:
         return which
@@ -47,13 +47,13 @@ def find_sparkrun(runtime=None) -> str:
 
 class Plan:
     def __init__(self) -> None:
-        self.file_changes: List[tuple] = []   # (target_rel, "added" | "changed" | "removed" | "kept")
-        self.commands: List[tuple] = []       # (description, [argv])
+        self.file_changes: List[tuple] = []  # (target_rel, "added" | "changed" | "removed" | "kept")
+        self.commands: List[tuple] = []  # (description, [argv])
         self.notes: List[str] = []
         # model convergence bookkeeping
-        self.model_converged: bool = False          # was the model already on the current recipe?
-        self.model_restart_pending: bool = False    # a model restart is needed but was not requested
-        self.current_hash: Optional[str] = None     # sha256 of the current rendered recipe (None if no model)
+        self.model_converged: bool = False  # was the model already on the current recipe?
+        self.model_restart_pending: bool = False  # a model restart is needed but was not requested
+        self.current_hash: Optional[str] = None  # sha256 of the current rendered recipe (None if no model)
         self.recipe_name: Optional[str] = None
         # commands whose failure is non-fatal (root-gated infra ensures); a failure
         # here warns + continues instead of aborting the whole converge.
@@ -87,8 +87,7 @@ def tolerant_stop_argv(sparkrun: str, recipe_path: str, host_flag: List[str]) ->
     exits 0 for that specific outcome only. Every other failure (ambiguous
     workload, docker/ssh errors, ...) still fails the converge.
     """
-    inner = " ".join(shlex.quote(str(x)) for x in
-                     [sparkrun, "stop", recipe_path] + list(host_flag))
+    inner = " ".join(shlex.quote(str(x)) for x in [sparkrun, "stop", recipe_path] + list(host_flag))
     script = (
         f"out=$({inner} 2>&1); rc=$?; "
         f"printf '%s\\n' \"$out\"; "
@@ -101,8 +100,7 @@ def tolerant_stop_argv(sparkrun: str, recipe_path: str, host_flag: List[str]) ->
     return ["sh", "-c", script]
 
 
-def _model_readiness_probe(cfg, pidfile: Optional[str] = None,
-                           logfile: Optional[str] = None) -> List[str]:
+def _model_readiness_probe(cfg, pidfile: Optional[str] = None, logfile: Optional[str] = None) -> List[str]:
     """A bounded shell command that polls the model ``/health`` until ready.
 
     Replaces the model's foreground log-tail as the "is it up?" signal: a bounded
@@ -127,15 +125,11 @@ def _model_readiness_probe(cfg, pidfile: Optional[str] = None,
     sleep_s = 5
     polls = max(1, seconds // sleep_s)
     url = f"http://{host}:{port}/health"
-    loop = (
-        "deads=0; "
-        f"for i in $(seq 1 {polls}); do "
-        f"curl -fsS -m 5 {url} >/dev/null 2>&1 && exit 0; "
-    )
+    loop = f"deads=0; for i in $(seq 1 {polls}); do curl -fsS -m 5 {url} >/dev/null 2>&1 && exit 0; "
     if pidfile:
         loop += (
             f"if [ -f {shlex.quote(pidfile)} ] && "
-            f"! kill -0 \"$(cat {shlex.quote(pidfile)} 2>/dev/null)\" 2>/dev/null; then "
+            f'! kill -0 "$(cat {shlex.quote(pidfile)} 2>/dev/null)" 2>/dev/null; then '
             "deads=$((deads + 1)); "
             'if [ "$deads" -ge 2 ]; then '
             'echo "model launch process exited before the model was ready" >&2; '
@@ -167,14 +161,18 @@ def _install_rel_path(cfg, rel: str, home: Optional[str]) -> str:
 def gateway_health_argv(port) -> list:
     """Bounded liveness poll for the gateway (60s): used by converge after a
     planned restart and by `spark-lab litellm restart`."""
-    return ["sh", "-c",
-            "for i in $(seq 1 30); do "
-            f"curl -fsS -o /dev/null http://127.0.0.1:{port}/health/liveliness"
-            " && exit 0; sleep 2; done; exit 1"]
+    return [
+        "sh",
+        "-c",
+        "for i in $(seq 1 30); do "
+        f"curl -fsS -o /dev/null http://127.0.0.1:{port}/health/liveliness"
+        " && exit 0; sleep 2; done; exit 1",
+    ]
 
 
-def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restart: bool,
-               runtime=None, launch_model: bool = True) -> Plan:
+def build_plan(
+    cfg, rendered: dict, state_files: dict, state_model, allow_restart: bool, runtime=None, launch_model: bool = True
+) -> Plan:
     plan = Plan()
     recipe_rel = _recipe_rel(cfg.recipe_name)
     has_model = recipe_rel in rendered
@@ -202,10 +200,7 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
         kind = "kept" if rel.startswith("sparkrun/recipes/") else "removed"
         plan.file_changes.append((rel, kind))
 
-    litellm_touched = (
-        any(r.startswith("litellm/") for r in changed)
-        or any(r.startswith("litellm/") for r in removed)
-    )
+    litellm_touched = any(r.startswith("litellm/") for r in changed) or any(r.startswith("litellm/") for r in removed)
 
     # --- model convergence --------------------------------------------------
     # A spanning model (min_nodes > 1) is a single workload that spans multiple
@@ -218,20 +213,18 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
     # explicit ``ip:`` when set, else its name) -- its layout pins + ``--hosts``
     # match cluster host IPs, not hostnames.
     _addr = dict(getattr(cfg, "sparkrun_addresses", {}) or {})
-    placement = ([_addr.get(str(h), str(h))
-                  for h in cfg.model_host_list(cfg.active_alias)]
-                 if spanning else [])
+    placement = [_addr.get(str(h), str(h)) for h in cfg.model_host_list(cfg.active_alias)] if spanning else []
 
     if launch_model:
         # Converged = the model is confirmed running the current recipe with the
         # current content. Anything else (new recipe, changed recipe, or removed)
         # needs a restart to converge.
         plan.model_converged = bool(
-            has_model and state_model
+            has_model
+            and state_model
             and state_model.get("name") == cfg.recipe_name
             and state_model.get("hash") == current_hash
         )
-        needs_restart = has_model and not plan.model_converged
 
         # Model workloads that were previously managed/running but are no longer
         # the current recipe (switched away from, or removed): stop them to
@@ -245,14 +238,12 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
         # one but its content changed (a brand-new recipe has nothing running
         # under it).
         restart_current = bool(
-            state_model and state_model.get("name") == cfg.recipe_name
-            and state_model.get("hash") != current_hash
+            state_model and state_model.get("name") == cfg.recipe_name and state_model.get("hash") != current_hash
         )
     else:
         # Worker host: the head owns the model; treat it as converged here so no
         # stop/restart is planned and no "needs restart" note is left pending.
         plan.model_converged = True
-        needs_restart = False
         stale_recipes = []
         restart_current = False
 
@@ -284,8 +275,8 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
             # tolerant_stop_argv): a stale state entry for a model that is not
             # (anymore) running must not abort the converge.
             plan.commands.append(
-                (f"Stop model workload {name}",
-                 tolerant_stop_argv(sparkrun, recipe_path, _host_flag())))
+                (f"Stop model workload {name}", tolerant_stop_argv(sparkrun, recipe_path, _host_flag()))
+            )
         else:
             plan.notes.append(
                 f"Model '{name}' needs to stop/restart, but that was not requested. "
@@ -296,13 +287,16 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
         # Build the passwordless SSH mesh from the head to its peers so the
         # spanning run can schedule the worker nodes. (No saved cluster: the run
         # targets the placement directly via --hosts.)
-        plan.commands.append(("Set up passwordless SSH mesh across hosts",
-                              [sparkrun, "setup", "ssh", "--hosts", placement_flag]))
+        plan.commands.append(
+            ("Set up passwordless SSH mesh across hosts", [sparkrun, "setup", "ssh", "--hosts", placement_flag])
+        )
     elif cluster:
-        plan.commands.append(("Set up passwordless SSH mesh across hosts",
-                              [sparkrun, "setup", "ssh", "--hosts", hosts]))
-        plan.commands.append(("Create the saved cluster",
-                              [sparkrun, "cluster", "create", cfg.cluster_name, "--hosts", hosts]))
+        plan.commands.append(
+            ("Set up passwordless SSH mesh across hosts", [sparkrun, "setup", "ssh", "--hosts", hosts])
+        )
+        plan.commands.append(
+            ("Create the saved cluster", [sparkrun, "cluster", "create", cfg.cluster_name, "--hosts", hosts])
+        )
 
     # stop model workloads that are no longer current
     for name in stale_recipes:
@@ -319,22 +313,30 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
     # does not block the converge.
     if litellm_touched:
         plan.commands.append(
-            ("Reconcile LiteLLM + monitoring stack (up + remove orphans)",
-             ["docker", "compose", "-f", compose_file, "up", "-d", "--remove-orphans"]))
+            (
+                "Reconcile LiteLLM + monitoring stack (up + remove orphans)",
+                ["docker", "compose", "-f", compose_file, "up", "-d", "--remove-orphans"],
+            )
+        )
         # A bind-mounted config change is invisible to a RUNNING prometheus:
         # compose up only recreates services whose definition changed, and the
         # prometheus service definition does not when only prometheus.yml does.
         # Hot-reload it -- but only when the file was tracked before (a fresh
         # stack reads the file at boot). Best-effort: a briefly-down daemon
         # just misses the reload and picks the file up on its next start.
-        if ("litellm/prometheus.yml" in state_files
-                and "litellm/prometheus.yml" in changed
-                and cfg.monitoring_role() == "full"):
+        if (
+            "litellm/prometheus.yml" in state_files
+            and "litellm/prometheus.yml" in changed
+            and cfg.monitoring_role() == "full"
+        ):
             prom_port = str(cfg.prometheus().get("port", 9090))
             reload_desc = "Reload prometheus config (hot, best-effort)"
             plan.commands.append(
-                (reload_desc, ["curl", "-fsS", "-o", "/dev/null", "-X", "POST",
-                               f"http://127.0.0.1:{prom_port}/-/reload"]))
+                (
+                    reload_desc,
+                    ["curl", "-fsS", "-o", "/dev/null", "-X", "POST", f"http://127.0.0.1:{prom_port}/-/reload"],
+                )
+            )
             plan.best_effort.add(reload_desc)
         # Same bug class, gateway edition: a changed model list / gateway config
         # is invisible to a RUNNING litellm (it reads model_list at boot and
@@ -347,19 +349,17 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
         # from the new files. Restart is best-effort, then VERIFIED: a restart
         # that does not come back healthy fails the converge loudly instead
         # of silently serving the old model list.
-        gateway_files = [rel for rel in ("litellm/model_config.yaml", "litellm/config.yaml",
-                                         "litellm/extra_models.yaml")
-                         if (rel in changed or rel in removed) and state_files]
+        gateway_files = [
+            rel
+            for rel in ("litellm/model_config.yaml", "litellm/config.yaml", "litellm/extra_models.yaml")
+            if (rel in changed or rel in removed) and state_files
+        ]
         if gateway_files and getattr(cfg, "control_plane_enabled", lambda: True)():
             restart_desc = "Restart litellm to apply the changed model list (best-effort)"
-            plan.commands.append(
-                (restart_desc, ["docker", "compose", "-f", compose_file,
-                                "restart", "litellm"]))
+            plan.commands.append((restart_desc, ["docker", "compose", "-f", compose_file, "restart", "litellm"]))
             plan.best_effort.add(restart_desc)
             gw_port = cfg.litellm.get("port", 4000)
-            plan.commands.append((
-                "Verify the gateway came back healthy (bounded)",
-                gateway_health_argv(gw_port)))
+            plan.commands.append(("Verify the gateway came back healthy (bounded)", gateway_health_argv(gw_port)))
     else:
         plan.notes.append("LiteLLM stack unchanged (skipping `docker compose up`).")
 
@@ -381,24 +381,24 @@ def build_plan(cfg, rendered: dict, state_files: dict, state_model, allow_restar
         logfile = "/tmp/sparklab-model-launch.log"
         plan.model_launch = {"pidfile": pidfile, "logfile": logfile}
         plan.commands.append(
-            (model_desc, ["sh", "-c",
-                          f"echo $$ > {shlex.quote(pidfile)}; exec "
-                          + shlex.join(launch_argv)]))
+            (model_desc, ["sh", "-c", f"echo $$ > {shlex.quote(pidfile)}; exec " + shlex.join(launch_argv)])
+        )
         plan.background.add(model_desc)
         plan.commands.append(
-            ("Wait for model to be ready (bounded)",
-             _model_readiness_probe(cfg, pidfile=pidfile, logfile=logfile)))
+            ("Wait for model to be ready (bounded)", _model_readiness_probe(cfg, pidfile=pidfile, logfile=logfile))
+        )
     elif has_model:
         plan.notes.append(
             f"Worker host for spanning model '{cfg.active_alias}': the workload "
             f"is launched by the head host (rank 0, {placement[0] if placement else '?'}); "
-            f"nothing to launch here.")
+            f"nothing to launch here."
+        )
 
     # --- network ------------------------------------------------------------
     if cfg.tailscale().get("enabled", True):
         ts_desc = "Ensure Tailscale is enabled + running"
         plan.commands.append((ts_desc, ["systemctl", "enable", "--now", "tailscaled"]))
-        plan.best_effort.add(ts_desc)   # needs root; a denial shouldn't abort the converge
+        plan.best_effort.add(ts_desc)  # needs root; a denial shouldn't abort the converge
     if cfg.cloudflare().get("enabled", False):
         cf_desc = "Ensure Cloudflare Tunnel is running"
         plan.commands.append((cf_desc, ["systemctl", "enable", "--now", "cloudflared"]))
@@ -422,8 +422,7 @@ def expand_install_dir(rel: str, data: bytes, base: Optional[str]) -> bytes:
     before they land in the install dir; a no-op otherwise (byte-identity
     for placeholder-free recipes is preserved).
     """
-    if base and rel.startswith("sparkrun/recipes/") \
-            and INSTALL_DIR_PLACEHOLDER.encode() in data:
+    if base and rel.startswith("sparkrun/recipes/") and INSTALL_DIR_PLACEHOLDER.encode() in data:
         return data.replace(INSTALL_DIR_PLACEHOLDER.encode(), base.encode())
     return data
 
@@ -436,6 +435,7 @@ def write_files(cfg, rendered: dict, dry_run: bool, fs=None) -> List[str]:
     """
     if fs is None:
         from . import node as node_mod
+
         fs = node_mod.LocalInstallFS(Path(cfg.install_dir))
     base = str(getattr(fs, "base", "")) or None
     written: List[str] = []
@@ -455,8 +455,9 @@ def compute_files_after_apply(rendered: dict) -> Dict[str, str]:
     return {rel: state_mod.sha256_bytes(data) for rel, data in rendered.items()}
 
 
-def compute_model_after_apply(state_model, current_recipe: Optional[str],
-                              current_hash: Optional[str], converged_after: bool):
+def compute_model_after_apply(
+    state_model, current_recipe: Optional[str], current_hash: Optional[str], converged_after: bool
+):
     """Model entry to record after a successful apply.
 
     ``converged_after`` is True when, after this apply, the model is confirmed
@@ -479,6 +480,7 @@ def execute(plan: Plan, dry_run: bool, verbose: bool = True, runtime=None) -> in
     """
     if runtime is None:
         from . import runtime as runtime_mod
+
         runtime = runtime_mod.default_runtime()
     exit_code = 0
     for desc, argv in plan.commands:
@@ -499,8 +501,10 @@ def execute(plan: Plan, dry_run: bool, verbose: bool = True, runtime=None) -> in
         result = runtime.run(argv)
         if result.returncode != 0:
             if desc in getattr(plan, "best_effort", set()):
-                print(f"!! (best-effort, continuing) {desc} returned {result.returncode} "
-                      f"(usually needs root; the rest of the converge still applies)")
+                print(
+                    f"!! (best-effort, continuing) {desc} returned {result.returncode} "
+                    f"(usually needs root; the rest of the converge still applies)"
+                )
                 continue
             print(f"!! command failed ({result.returncode}): {' '.join(map(str, argv))}")
             exit_code = result.returncode

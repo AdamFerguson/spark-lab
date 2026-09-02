@@ -22,6 +22,10 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:  # annotation-only: remote pulls in fabric, never import eagerly
+    from .remote import RemoteRuntime
 
 
 class Runtime:
@@ -103,5 +107,6 @@ def runtime_for(cfg) -> "Runtime | RemoteRuntime":
     """
     if getattr(cfg, "is_remote", False):
         from .remote import RemoteRuntime, RemoteTarget
+
         return RemoteRuntime(RemoteTarget.from_config(cfg))
     return Runtime()

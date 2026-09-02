@@ -33,22 +33,50 @@ Cluster-shaped values stay in the config on purpose:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import yaml
 
 # Top-level keys a sparkrun recipe may carry -- mirrored from
 # sparkrun.core.recipe._KNOWN_KEYS (sparkrun 0.3.4, 2026-08-28). Keep in sync;
 # the test suite asserts every committed recipes/*.yaml against this set.
-SPARKRUN_KNOWN_KEYS: frozenset = frozenset({
-    "sparkrun_version", "recipe_version", "name", "description", "model",
-    "model_revision", "runtime", "runtime_version", "mode", "min_nodes",
-    "max_nodes", "container", "defaults", "env", "command", "runtime_config",
-    "cluster_only", "solo_only", "benchmark", "metadata", "pre_exec",
-    "post_exec", "post_commands", "mods", "stop_after_post", "builder",
-    "builder_config", "executor", "executor_config", "scheduler",
-    "distribution_config", "layout", "cluster_config",
-})
+SPARKRUN_KNOWN_KEYS: frozenset = frozenset(
+    {
+        "sparkrun_version",
+        "recipe_version",
+        "name",
+        "description",
+        "model",
+        "model_revision",
+        "runtime",
+        "runtime_version",
+        "mode",
+        "min_nodes",
+        "max_nodes",
+        "container",
+        "defaults",
+        "env",
+        "command",
+        "runtime_config",
+        "cluster_only",
+        "solo_only",
+        "benchmark",
+        "metadata",
+        "pre_exec",
+        "post_exec",
+        "post_commands",
+        "mods",
+        "stop_after_post",
+        "builder",
+        "builder_config",
+        "executor",
+        "executor_config",
+        "scheduler",
+        "distribution_config",
+        "layout",
+        "cluster_config",
+    }
+)
 
 # Placement keys a v3 model block owns; everything else in the block is
 # inline model data that beats the referenced recipe on merge.
@@ -72,11 +100,12 @@ def load_recipe_file(config_dir: Path, name: str) -> Dict[str, Any]:
     """
     path = recipe_dir(config_dir) / f"{name}.yaml"
     if not path.is_file():
-        available = sorted(p.stem for p in recipe_dir(config_dir).glob("*.yaml")) \
-            if recipe_dir(config_dir).is_dir() else []
+        available = (
+            sorted(p.stem for p in recipe_dir(config_dir).glob("*.yaml")) if recipe_dir(config_dir).is_dir() else []
+        )
         raise RecipeError(
-            f"recipe file not found: {path}"
-            + (f" (available: {', '.join(available)})" if available else ""))
+            f"recipe file not found: {path}" + (f" (available: {', '.join(available)})" if available else "")
+        )
     try:
         data = yaml.safe_load(path.read_text())
     except yaml.YAMLError as e:
@@ -89,22 +118,21 @@ def load_recipe_file(config_dir: Path, name: str) -> Dict[str, Any]:
             f"recipe '{name}' carries unknown top-level key(s) {bad}: a recipe "
             "must stay a plain, directly-runnable sparkrun recipe (sparkrun "
             "would silently sweep them into runtime_config). Put gateway or "
-            "probe metadata under 'metadata:' instead.")
+            "probe metadata under 'metadata:' instead."
+        )
     inner = str(data.get("name") or "")
     if inner and inner != name:
         raise RecipeError(
             f"recipe '{name}': inner 'name' is '{inner}' but the file stem is "
-            f"'{name}' -- they must match (the reference is by file stem).")
+            f"'{name}' -- they must match (the reference is by file stem)."
+        )
     if not str(data.get("model") or "").strip():
-        raise RecipeError(
-            f"recipe '{name}': 'model:' (the HF model id) is required.")
+        raise RecipeError(f"recipe '{name}': 'model:' (the HF model id) is required.")
     command = data.get("command")
     if not (isinstance(command, str) and command.strip()):
         has_defaults = isinstance(data.get("defaults"), dict) and data.get("defaults")
         if not has_defaults:
-            raise RecipeError(
-                f"recipe '{name}': needs a 'command:' (or at least 'defaults:') "
-                "to launch.")
+            raise RecipeError(f"recipe '{name}': needs a 'command:' (or at least 'defaults:') to launch.")
     return data
 
 
@@ -220,7 +248,8 @@ def layout_for_view(cfg) -> List[Tuple[str, List[int]]]:
     if len(host_names) < min_nodes:
         raise RecipeError(
             f"model '{alias}' spans {min_nodes} hosts but is placed on "
-            f"{len(host_names)} ({host_names}) -- extend its hosts: list.")
+            f"{len(host_names)} ({host_names}) -- extend its hosts: list."
+        )
     # The placement IS the run pool for a spanning model, so each name is
     # matched by construction (the host-order/count check above is the
     # real guard; it also fails earlier at load via _validate_recipe_spans).

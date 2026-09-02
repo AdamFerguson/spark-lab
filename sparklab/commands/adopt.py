@@ -17,26 +17,24 @@ In remote mode the same read-only adoption runs against the remote node, and
 the state file is written *on the managed node* (in its spark-lab checkout) so
 node-local and remote operation share one source of truth.
 """
+
 from __future__ import annotations
 
 import sys
 import tempfile
 from pathlib import Path
 
-from ..core import cluster, config, node, render, state
+from ..core import cluster, config, render, state
 
 
 def _adopt_one(t, dry: bool) -> int:
     cfg = t.cfg
-    runtime = t.runtime
     fs, st = t.env()
     install_desc = cfg.install_dir_raw if t.is_remote else str(cfg.install_dir)
     if not fs.base_exists():
         print(f"[ERROR] install dir not found: {install_desc}", file=sys.stderr)
-        print("Adoption assumes an already-installed (running) setup. Point the config's",
-              file=sys.stderr)
-        print("install.install_dir at it, or run `spark-lab init` + `apply` first.",
-              file=sys.stderr)
+        print("Adoption assumes an already-installed (running) setup. Point the config's", file=sys.stderr)
+        print("install.install_dir at it, or run `spark-lab init` + `apply` first.", file=sys.stderr)
         return 1
 
     rendered = render.render(cfg, Path(tempfile.mkdtemp(prefix="sparklab-adopt-")))
@@ -50,10 +48,10 @@ def _adopt_one(t, dry: bool) -> int:
         on_disk = fs.read(rel)
         if on_disk is not None:
             on_disk_h = state.sha256_bytes(on_disk)
-            files[rel] = on_disk_h          # adopt on-disk reality
+            files[rel] = on_disk_h  # adopt on-disk reality
             (adopted if on_disk_h == rendered_h else drift).append(rel)
         else:
-            missing.append(rel)            # not on disk; left out so next `apply` adds it
+            missing.append(rel)  # not on disk; left out so next `apply` adds it
 
     # --- model: adopt the on-disk active recipe (so a routine apply won't restart) ---
     model = None
@@ -69,10 +67,10 @@ def _adopt_one(t, dry: bool) -> int:
                 f"{install_desc}/sparkrun/recipes. "
                 f"Recipes on disk: {', '.join(recipes_on_disk) or '(none)'}\n"
                 f"      Set the model's recipe name to one of those so the "
-                f"running model is adopted. The model will be recorded as 'none' for now.\n")
+                f"running model is adopted. The model will be recorded as 'none' for now.\n"
+            )
 
-    model_converged = bool(
-        model and model["hash"] == state.sha256_bytes(rendered.get(recipe_rel, b"")))
+    model_converged = bool(model and model["hash"] == state.sha256_bytes(rendered.get(recipe_rel, b"")))
 
     print(f"   install dir : {install_desc}{' (remote)' if t.is_remote else ''}")
     print(f"   active model: {cfg.recipe_name or '(none)'}")
@@ -84,8 +82,10 @@ def _adopt_one(t, dry: bool) -> int:
     for rel in missing:
         print(f"      - {rel}   (next `apply` would add it)")
     if model:
-        print(f"   model adopted           : {model['name']}"
-              f"{' (converged: matches the render)' if model_converged else ' (drifts from the render)'}")
+        print(
+            f"   model adopted           : {model['name']}"
+            f"{' (converged: matches the render)' if model_converged else ' (drifts from the render)'}"
+        )
     else:
         print("   model adopted           : none")
 
@@ -104,8 +104,7 @@ def _adopt_one(t, dry: bool) -> int:
     print("  2. `spark-lab apply --dry-run`   -- preview any drift to converge; a routine apply will")
     print("                                      NOT restart the model (fail-safe).")
     if drift:
-        print("  3. To converge the drifted files (one-time model restart), run "
-              "`apply --restart-model`")
+        print("  3. To converge the drifted files (one-time model restart), run `apply --restart-model`")
         print("     deliberately; otherwise the live files stay as they are.")
     return 0
 

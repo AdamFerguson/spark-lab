@@ -31,9 +31,19 @@ CAPTURES = {
 
 
 def _args(cp, runtime, **kw):
-    base = dict(config=str(cp), hosts=None, dry_run=False, write=False, yes=False,
-                port=None, served_model=None, public_name=None, verbose=False,
-                json=False, runtime=runtime)
+    base = dict(
+        config=str(cp),
+        hosts=None,
+        dry_run=False,
+        write=False,
+        yes=False,
+        port=None,
+        served_model=None,
+        public_name=None,
+        verbose=False,
+        json=False,
+        runtime=runtime,
+    )
     base.update(kw)
     return types.SimpleNamespace(**base)
 
@@ -53,7 +63,7 @@ class ExposeSyncBase(unittest.TestCase):
         self._env.stop()
 
     def _config_extra_names(self):
-        lit = (yaml.safe_load(self.cp.read_text()).get("litellm") or {})
+        lit = yaml.safe_load(self.cp.read_text()).get("litellm") or {}
         return [m.get("model_name") for m in lit.get("extra_models") or []]
 
 
@@ -64,16 +74,14 @@ class TestExpose(ExposeSyncBase):
         self.assertEqual(entry["litellm_params"]["api_base"], "http://10.0.0.5:8000/v1")
         expose_cmd.add_extra_model(self.cp, entry)
         self.assertEqual(self._config_extra_names(), ["pretty"])
-        with self.assertRaises(ValueError):      # duplicate name refused
+        with self.assertRaises(ValueError):  # duplicate name refused
             expose_cmd.add_extra_model(self.cp, entry)
 
     def test_expose_probe_then_writes_and_converges(self):
-        with mock.patch.object(expose_cmd, "probe_engine",
-                               return_value=["manual-model"]) as probe:
-            rc = expose_cmd.run(_args(self.cp, FakeRuntime(available=_AVAIL),
-                                       host="mylab", dry_run=True))
+        with mock.patch.object(expose_cmd, "probe_engine", return_value=["manual-model"]) as probe:
+            rc = expose_cmd.run(_args(self.cp, FakeRuntime(available=_AVAIL), host="mylab", dry_run=True))
             self.assertEqual(rc, 0)
-            self.assertEqual(self._config_extra_names(), [])   # dry run: untouched
+            self.assertEqual(self._config_extra_names(), [])  # dry run: untouched
             rt = FakeRuntime(available=_AVAIL)
             rc = expose_cmd.run(_args(self.cp, rt, host="mylab"))
         self.assertEqual(rc, 0)
@@ -86,12 +94,10 @@ class TestExpose(ExposeSyncBase):
         self.assertFalse(any("sparkrun run" in c for c in joined))
 
     def test_expose_probe_failure_is_actionable(self):
-        with mock.patch.object(expose_cmd, "probe_engine",
-                               side_effect=OSError("connection refused")):
+        with mock.patch.object(expose_cmd, "probe_engine", side_effect=OSError("connection refused")):
             buf = io.StringIO()
             with contextlib.redirect_stderr(buf):
-                rc = expose_cmd.run(_args(self.cp, FakeRuntime(available=_AVAIL),
-                                          host="mylab"))
+                rc = expose_cmd.run(_args(self.cp, FakeRuntime(available=_AVAIL), host="mylab"))
         self.assertEqual(rc, 1)
         self.assertIn("engine probe failed", buf.getvalue())
         self.assertEqual(self._config_extra_names(), [])
@@ -106,24 +112,54 @@ class TestSync(ExposeSyncBase):
         out = buf.getvalue()
         self.assertIn("manual-model", out)
         self.assertIn("NOT EXPOSED", out)
-        self.assertEqual(self._config_extra_names(), [])   # read-only
+        self.assertEqual(self._config_extra_names(), [])  # read-only
 
     def test_write_adds_entry_and_refreshes_state(self):
         rt = FakeRuntime(available=_AVAIL, captures=CAPTURES)
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(sync_cmd.run(_args(self.cp, rt, write=True)), 0)
         self.assertEqual(self._config_extra_names(), ["manual-model"])
-        entry = (yaml.safe_load(self.cp.read_text())["litellm"]["extra_models"][0])
+        entry = yaml.safe_load(self.cp.read_text())["litellm"]["extra_models"][0]
         self.assertEqual(entry["litellm_params"]["api_base"], "http://127.0.0.1:8000/v1")
         # node state adopted from on-disk reality
         self.assertTrue((self.d / ".sparklab-state" / "state.json").is_file())
 
+    def test_write_converges_all_control_plane_hosts_not_just_selection(self):
+        # config gains a second host with the control plane OFF; syncing only
+        # 'mylab' must still converge the gateway on every CONTROL-PLANE host
+        # (here: just mylab -- the off host is excluded from the apply scope).
+        text = self.cp.read_text().replace(
+            "hosts:\n  - name: mylab\n    remote: false\n    ip: 127.0.0.1\n",
+            "hosts:\n  - name: mylab\n    remote: false\n    ip: 127.0.0.1\n"
+            "  - name: quiet\n    remote: false\n    control_plane:\n      enabled: false\n",
+        )
+        self.cp.write_text(text)
+        rt = FakeRuntime(available=_AVAIL, captures=CAPTURES)
+        seen = {}
+        real_apply = apply_cmd.run
+
+        def spy(ns):
+            seen["hosts"] = ns.hosts
+            return real_apply(ns)
+
+        with mock.patch.object(sync_cmd.apply_cmd, "run", spy), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(sync_cmd.run(_args(self.cp, rt, write=True)), 0)
+        self.assertEqual(seen["hosts"], "mylab")  # control-plane hosts only
+
 
 class TestLitellmVerb(ExposeSyncBase):
     def _apply(self, rt):
-        ns = types.SimpleNamespace(config=str(self.cp), hosts=None, dry_run=False,
-                                   restart_model=False, diff=False, no_model=False,
-                                   verbose=False, json=False, runtime=rt)
+        ns = types.SimpleNamespace(
+            config=str(self.cp),
+            hosts=None,
+            dry_run=False,
+            restart_model=False,
+            diff=False,
+            no_model=False,
+            verbose=False,
+            json=False,
+            runtime=rt,
+        )
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(apply_cmd.run(ns), 0)
 
@@ -142,8 +178,7 @@ class TestLitellmVerb(ExposeSyncBase):
 
     def test_restart_writes_stale_files_and_verifies(self):
         self._apply(FakeRuntime(available=_AVAIL))
-        self.cp.write_text(self.cp.read_text().replace("model_name: my-spark-model",
-                                                       "model_name: renamed-gateway"))
+        self.cp.write_text(self.cp.read_text().replace("model_name: my-spark-model", "model_name: renamed-gateway"))
         rt = FakeRuntime(available=_AVAIL, captures=CAPTURES)
         with contextlib.redirect_stdout(io.StringIO()):
             rc = litellm_cmd.run(_args(self.cp, rt, litellm_cmd="restart"))
@@ -160,6 +195,19 @@ class TestLitellmVerb(ExposeSyncBase):
         with contextlib.redirect_stdout(buf):
             litellm_cmd.run(_args(self.cp, rt2, litellm_cmd="status"))
         self.assertIn("in sync", buf.getvalue())
+
+    def test_restart_failure_leaves_state_untouched(self):
+        self._apply(FakeRuntime(available=_AVAIL))
+        self.cp.write_text(self.cp.read_text().replace("model_name: my-spark-model", "model_name: renamed-gateway"))
+        state_file = self.d / ".sparklab-state" / "state.json"
+        before = state_file.read_text()
+        rt = FakeRuntime(available=_AVAIL, captures=CAPTURES, fail={"docker": 1})
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = litellm_cmd.run(_args(self.cp, rt, litellm_cmd="restart"))
+        self.assertNotEqual(rc, 0)
+        self.assertIn("NOT updated", buf.getvalue())
+        self.assertEqual(state_file.read_text(), before)  # state NOT rewritten
 
 
 if __name__ == "__main__":

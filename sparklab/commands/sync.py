@@ -15,11 +15,12 @@ hashes) and reports it against `config.yaml`:
 config gets exposure entries added (YAML round-trip: comments not
 preserved), node state adopts reality, drift reports are advisory.
 """
+
 from __future__ import annotations
 
 import sys
 
-from ..core import cluster, config as config_mod, inventory, node as node_mod, render, state
+from ..core import cluster, config as config_mod, inventory, render, state
 from . import adopt as adopt_cmd, apply as apply_cmd, expose as expose_cmd
 from pathlib import Path
 
@@ -30,6 +31,7 @@ def _file_drift(t) -> list:
     if not fs.base_exists():
         return []
     import tempfile
+
     rendered = render.render(t.cfg, Path(tempfile.mkdtemp(prefix="sparklab-sync-")))
     drift = []
     for rel, data in rendered.items():
@@ -55,7 +57,7 @@ def run(args) -> int:
         if inv["gateway"] and inv["gateway"]["reachable"]:
             served.update(inv["gateway"]["served"])
 
-    expected = {r[2] for r in cfg.placement_table() if r[2]}   # gateway names from placement
+    expected = {r[2] for r in cfg.placement_table() if r[2]}  # gateway names from placement
     declared = {m.get("model_name") for m in cfg.litellm.get("extra_models") or []}
 
     print("\n-- live engines --")
@@ -66,8 +68,7 @@ def run(args) -> int:
                 continue
             hit = e["models"][0] in served
             mark = "exposed" if hit else "NOT EXPOSED"
-            print(f"   {host}/{e['container']:<26} :{e['port']:<6} "
-                  f"{e['models'][0]:<36} [{mark}]")
+            print(f"   {host}/{e['container']:<26} :{e['port']:<6} {e['models'][0]:<36} [{mark}]")
             if not hit:
                 unexposed.append((host, e))
     if not any(i["engines"] for i in invs.values()):
@@ -98,36 +99,53 @@ def run(args) -> int:
 
     if not write:
         n_un = len(unexposed)
-        print("\nRead-only. `sync --write` adds extra_models entries for the "
-              f"{n_un} unexposed engine(s) and refreshes node state"
-              " (never touches model workloads).")
+        print(
+            "\nRead-only. `sync --write` adds extra_models entries for the "
+            f"{n_un} unexposed engine(s) and refreshes node state"
+            " (never touches model workloads)."
+        )
         return 0
 
     if unexposed:
         cp = Path(cfg.config_path)
         for host, e in unexposed:
             spec = cfg.select_hosts([host])[0]
-            entry = expose_cmd.entry_for(e["models"][0], spec.ip or spec.ssh_host or spec.name,
-                                         e["port"])
+            entry = expose_cmd.entry_for(e["models"][0], spec.ip or spec.ssh_host or spec.name, e["port"])
             try:
                 expose_cmd.add_extra_model(cp, entry)
             except ValueError as err:
                 print(f"[WARN] {err}", file=sys.stderr)
                 continue
-            print(f"   + extra_models: {entry['model_name']} -> "
-                  f"{entry['litellm_params']['api_base']}")
+            print(f"   + extra_models: {entry['model_name']} -> {entry['litellm_params']['api_base']}")
         print("   (config YAML round-tripped: comments not preserved)")
-        ns = _apply_ns(args)
-        rc = apply_cmd.run(ns)          # gateway files converge (+verified restart)
+        # Gateway files matter to EVERY control-plane host -- converge all of
+        # them, not just the hosts this sync was scoped to (a scoped --write
+        # that skipped a gateway would leave it serving the old list).
+        fresh = config_mod.load(args.config)
+        gw_names = [s.name for s in fresh.host_specs if fresh.view_for(s.name).control_plane_enabled()]
+        if gw_names:
+            rc = apply_cmd.run(_apply_ns(args, ",".join(gw_names)))
+        else:
+            print("   (no control-plane hosts: nothing to converge)")
+            rc = 0
     else:
         rc = 0
     for t in ts:
-        adopt_cmd._adopt_one(t, dry=False)   # refresh node state from on-disk reality
+        adopt_cmd._adopt_one(t, dry=False)  # refresh node state from on-disk reality
     return rc
 
 
-def _apply_ns(args):
+def _apply_ns(args, hosts=None):
     from types import SimpleNamespace
-    return SimpleNamespace(config=args.config, hosts=None, dry_run=False, no_model=True,
-                           restart_model=False, diff=False, verbose=False, json=False,
-                           runtime=args.runtime)
+
+    return SimpleNamespace(
+        config=args.config,
+        hosts=hosts,
+        dry_run=False,
+        no_model=True,
+        restart_model=False,
+        diff=False,
+        verbose=False,
+        json=False,
+        runtime=args.runtime,
+    )

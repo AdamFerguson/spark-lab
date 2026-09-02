@@ -6,10 +6,10 @@ managed or hand-started) and the gateway's actually-served model list, then
 tailscale. `--json` emits one machine-readable object (placement + per-host
 inventory) for scripts and for `sync`.
 """
+
 from __future__ import annotations
 
 import json
-import sys
 
 from ..core import cluster, config, converge, inventory
 from ..util import run_command
@@ -49,8 +49,7 @@ def _status_one(t) -> int:
 
 
 def _placement_rows(cfg):
-    return [{"host": h, "model": m, "gateway_name": n, "control_plane": cp}
-            for h, m, n, cp in cfg.placement_table()]
+    return [{"host": h, "model": m, "gateway_name": n, "control_plane": cp} for h, m, n, cp in cfg.placement_table()]
 
 
 def _json_status(cfg, ts) -> int:
@@ -58,9 +57,13 @@ def _json_status(cfg, ts) -> int:
     for t in ts:
         inv = inventory.discover(t.runtime, t.cfg)
         hosts[t.name] = inv
-    print(json.dumps({"config": str(cfg.config_path),
-                      "placement": _placement_rows(cfg),
-                      "hosts": hosts}, indent=2, sort_keys=True))
+    print(
+        json.dumps(
+            {"config": str(cfg.config_path), "placement": _placement_rows(cfg), "hosts": hosts},
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0
 
 
@@ -77,7 +80,9 @@ def run(args) -> int:
         print("== placement (from config) ==")
         print(f"{'host':<8} {'model':<32} {'gateway name':<24} control plane")
         for r in rows:
-            print(f"{r['host']:<8} {r['model'] or '(none)':<32} "
-                  f"{r['gateway_name'] or '-':<24} {'on' if r['control_plane'] else 'off'}")
+            print(
+                f"{r['host']:<8} {r['model'] or '(none)':<32} "
+                f"{r['gateway_name'] or '-':<24} {'on' if r['control_plane'] else 'off'}"
+            )
         print()
     return cluster.run_on_each(ts, _status_one)

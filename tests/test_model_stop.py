@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from sparklab.core import config as config_mod, remote, state as state_mod  # noqa: E402
+from sparklab.core import config as config_mod, state as state_mod  # noqa: E402
 from sparklab.commands import model as model_cmd  # noqa: E402
 from tests.helpers import FakeRuntime, REFERENCE_ENV, SECRET_DUMMY, config_text  # noqa: E402
 from tests.test_remote import STATE_PATH, StubConnection, make_runtime  # noqa: E402
@@ -37,8 +37,7 @@ class TestModelStopLocal(unittest.TestCase):
         (self.d / ".env").write_text(REFERENCE_ENV)
         self.cfg = config_mod.load(str(self.d / "config.yaml"))
         files = {"litellm/docker-compose.yml": "h1", "sparkrun/recipes/qwen.yaml": "h2"}
-        state_mod.State(self.cfg.state_dir).set_state(files,
-                                                      {"name": "qwen", "hash": "h2"})
+        state_mod.State(self.cfg.state_dir).set_state(files, {"name": "qwen", "hash": "h2"})
 
     def tearDown(self):
         self._env.stop()
@@ -56,15 +55,13 @@ class TestModelStopLocal(unittest.TestCase):
         rc = model_cmd.stop(make_args(self.d, yes=True, runtime=rt))
         self.assertEqual(rc, 0)
         self.assertTrue(
-            "sparkrun stop " +
-            str(self.d / "install" / "sparkrun" / "recipes" / "qwen.yaml") +
-            " --hosts 127.0.0.1" in " ".join(map(str, rt.calls[0])),
+            "sparkrun stop " + str(self.d / "install" / "sparkrun" / "recipes" / "qwen.yaml") + " --hosts 127.0.0.1"
+            in " ".join(map(str, rt.calls[0])),
         )
         st = state_mod.State(self.cfg.state_dir)
         self.assertIsNone(st.model)
         # file hashes untouched
-        self.assertEqual(st.files, {"litellm/docker-compose.yml": "h1",
-                                     "sparkrun/recipes/qwen.yaml": "h2"})
+        self.assertEqual(st.files, {"litellm/docker-compose.yml": "h1", "sparkrun/recipes/qwen.yaml": "h2"})
 
 
 class TestModelStopRemote(unittest.TestCase):
@@ -73,15 +70,19 @@ class TestModelStopRemote(unittest.TestCase):
         self._env.start()
         self.d = Path(tempfile.mkdtemp())
         text = config_text("/opt/sparklab").replace(
-            "install_dir: /opt/sparklab",
-            "install_dir: /opt/sparklab\n  remote:\n    host: luna\n", 1)
+            "install_dir: /opt/sparklab", "install_dir: /opt/sparklab\n  remote:\n    host: luna\n", 1
+        )
         (self.d / "config.yaml").write_text(text)
         (self.d / ".env").write_text(REFERENCE_ENV)
-        state = json.dumps({"files": {"sparkrun/recipes/qwen.yaml": "h2"},
-                            "model": {"name": "qwen", "hash": "h2"}}, sort_keys=True) + "\n"
+        state = (
+            json.dumps(
+                {"files": {"sparkrun/recipes/qwen.yaml": "h2"}, "model": {"name": "qwen", "hash": "h2"}}, sort_keys=True
+            )
+            + "\n"
+        )
         self.stub = StubConnection(
-            binaries={"sparkrun": "/home/user/.local/bin/sparkrun"},
-            files={STATE_PATH: state.encode()})
+            binaries={"sparkrun": "/home/user/.local/bin/sparkrun"}, files={STATE_PATH: state.encode()}
+        )
         self.rt, _ = make_runtime(stub=self.stub, install_dir="/opt/sparklab")
 
     def tearDown(self):
@@ -91,8 +92,7 @@ class TestModelStopRemote(unittest.TestCase):
         rc = model_cmd.stop(make_args(self.d, yes=True, runtime=self.rt))
         self.assertEqual(rc, 0)
         joined = "\n".join(self.stub.runs)
-        self.assertIn("sparkrun stop /opt/sparklab/sparkrun/recipes/qwen.yaml --hosts 127.0.0.1",
-                      joined)
+        self.assertIn("sparkrun stop /opt/sparklab/sparkrun/recipes/qwen.yaml --hosts 127.0.0.1", joined)
         # state on the node: model entry gone, file hashes kept
         data = json.loads(self.stub.files[STATE_PATH])
         self.assertNotIn("model", data)
