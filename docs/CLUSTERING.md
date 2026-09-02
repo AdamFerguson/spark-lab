@@ -30,8 +30,7 @@ that is already in `spark-lab`'s converge engine.
   peer. `spark-lab` drives this via `sparkrun setup ssh --hosts`.
 - **One node is the controller**: it runs the sparkrun CLI, the LiteLLM +
   monitoring stack (docker compose), and the state. The peers run the model
-  workload containers that the controller schedules. (Confirm the controller
-  selection rule on hardware — see open questions.)
+  workload containers that the controller schedules.
 
 ---
 
@@ -133,30 +132,6 @@ spark-lab teardown --cluster               # or, to tear the whole controller st
 ```
 Confirm the exact "remove cluster" sparkrun command on hardware (may be
 `sparkrun cluster delete <name>` or similar).
-
----
-
-## Open questions to confirm on hardware
-
-- [x] **Placement addresses are IPs, not hostnames (confirmed 2026-08-29):**
-      sparkrun resolves `layout.placements` / `--hosts` entries against cluster
-      host IP addresses — a hostname there is not recognized. Host entries in
-      `config.yaml` may set `ip:` (their tailnet IP); the rendered layout pins
-      and the `--hosts` flag use that IP (falling back to the name when unset).
-- [ ] **Exact sparkrun multi-node CLI:** `setup ssh --hosts`, `cluster create
-      <name> --hosts`, `run --cluster`, and the stop/remove equivalents. The
-      `spark-lab` converge engine uses these; validate the flags against the
-      installed sparkrun version.
-- [ ] **Controller selection:** which node runs the CLI/controller? Is it the
-      first in `hosts`, or explicit? Does the peer need sparkrun running, or just
-      docker?
-- [ ] **Image distribution:** does sparkrun pull the model image on each node, or
-      must it be pre-pulled (and are the two Sparks on a registry cache)?
-- [ ] **Node placement:** how `min_nodes` + `node_assignment` actually place the
-      workload (auto-balanced vs pinned).
-- [ ] **Networking for the model's inter-node traffic** (tensor/pipeline
-      parallel): does sparkrun wire up the GPU interconnect / RDMA, or is plain
-      (tailnet) TCP the transport?
 
 These five are the real unknowns; everything else is already handled by the
 converge engine. Confirm them during the first live cluster attempt and fold the

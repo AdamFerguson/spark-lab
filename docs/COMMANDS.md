@@ -1,11 +1,10 @@
-# spark-lab — complete command & config inventory
+# spark-lab — command & config inventory
 
-Every command, option, and config key as of `fb5e160`, with the redesign
-verdict for each. **Status: COMPLETE on this branch** — every CUT landed,
-every NEW verb (`sync`, `expose`, `litellm status|restart`, `status --json`
-inventory) shipped, cloudflare kept per owner decision, `adopt` retained
-(`sync --write` drives the same per-host state refresh through it).
-Verdicts: **KEEP** (unchanged), **MOD** (kept, changed), **CUT** (removed), **NEW** (added).
+Every command, option, and config key with its redesign verdict. The design
+landed here in full: all **CUT** items are gone, all **NEW** verbs shipped,
+and `.sparkrun/registry.yaml` survives as a static, human-facing recipe
+index (no code consumes it). Verdicts: **KEEP** (unchanged), **MOD** (kept,
+changed), **CUT** (removed), **NEW** (added).
 
 The redesign target, in one line: *encapsulate the current state of the
 sparks (`status`), pull reality back into config (`sync`), edit config and
@@ -190,7 +189,3 @@ editable by hand too (raw LiteLLM `model_list` entries) — `expose` is sugar.
 - kept docs (rewritten in phase 4): README, SPEC, OPERATIONS, SETUP,
   MODEL_RECIPES, CLUSTERING, NETWORKING, REMOTE_OPERATOR_MODE, ARCHITECTURE,
   ADR 0001/0002/0005/0006/0007/0008/0009
-
-## Out of scope (backlog)
-Secret rotation (4 exposed creds), CLI temp-dir leak (`/tmp/sparklab-{dry,validate}-*`),
-`cli-simplify` → `main` merge, flash-next-nvfp4 launch decision.

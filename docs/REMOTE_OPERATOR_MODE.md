@@ -142,10 +142,11 @@ install:
 - [x] **10. Docs** — README: "Remote operator mode" section (config snippet, per-node
       `labs/<node>/` layout, "state lives on the node", ssh-key prerequisite).
       OPERATIONS.md: remote notes (login-shell PATH, long probes over SSH).
-      `config.example.yaml` / `config.example.v2.yaml`: documented `remote:` block.
+      `config.example.yaml`: the v3 `hosts:` entries carry the ssh/remote shape
+      (the v2 `install.remote` block + `config.example.v2.yaml` are since retired).
       ADR-0007: status note that the remote primitive shipped in this generalized form
       (control-plane/worker split still pending).
-- [ ] **11. Wire it up on pop-os (the payoff)** —
+- [x] **11. Wire it up on pop-os (the payoff)** —
   - `labs/luna/{config.yaml,.env}`: luna's current config values (incl. the tuned
     params/flags added 2026-08-26: mamba tuning, DSPARK, cache-report flags) +
     `install.remote.host: luna.tailnet.example`; `.env` copied from luna's
