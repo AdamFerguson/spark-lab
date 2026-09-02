@@ -116,7 +116,8 @@ the stop; next `apply` starts it again). Config unchanged.
 Discovery subsystem (ADR-0003): fans queries over the sparkrun registry and
 the SGLang cookbook, converts hits into candidate recipes under
 `recipes/candidates/`. Never used in practice; −735 LOC + `cookbook/` +
-`.sparkrun/registry.yaml` + docs/REGISTRY.md + ADR-0003.
+docs/REGISTRY.md + ADR-0003. (`.sparkrun/registry.yaml` was restored
+afterward as a static, human-facing recipe INDEX -- no code consumes it.)
 
 ### `logs <service> [--lines N] [-f]`  — verdict: KEEP
 Tail `docker compose logs` for `litellm|db|redis|prometheus|grafana` (one

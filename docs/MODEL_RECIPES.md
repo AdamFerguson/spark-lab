@@ -96,7 +96,9 @@ The static registry recipes under `recipes/` (incl. `recipes/qwen38-flash-next.y
 and its `recipes/flash-next/patches/`) are the same content in
 standard sparkrun-registry form for direct `sparkrun run` use; the cluster
 config is the source of truth for what `apply` converges, so keep the two in
-step when you tune one.
+step when you tune one. `.sparkrun/registry.yaml` is a static human-facing
+INDEX of those recipes (name → purpose → path) -- kept for reference since
+the discovery subsystem that once consumed it was retired.
 
 ## SGLang tuning knobs (the example `params`)
 
