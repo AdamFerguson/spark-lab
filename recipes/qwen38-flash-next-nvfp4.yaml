@@ -83,6 +83,24 @@ executor_config:
   security_opt:
     - seccomp=unconfined
 
+# Pre-serve hook (docker exec on each rank before serve). sparkrun's model
+# distribution pulls the weights + config but SKIPS the tokenizer/processor
+# metadata (tokenizer_config.json, vocab.json, *preprocessor_config.json,
+# model.safetensors.index.json). Serving offline (HF_HUB_OFFLINE below) then
+# can't build the tokenizer -> "Unrecognized processing class". This guarded
+# fetch is a no-op when the files are already cached (no network); only when
+# tokenizer_config.json is missing does it do a one-shot ONLINE pull of just
+# those small files (HF_TOKEN is injected; the container has network + hf CLI).
+# Fail-fast: if the fetch is needed and fails, the launch aborts loudly.
+pre_exec:
+  - >-
+    test -f /cache/huggingface/hub/models--RadixArk--Qwen3.8-Flash-Next-NVFP4/snapshots/7b719225242aacd3dbd3f9407468c2ee9a9d2594/tokenizer_config.json
+    || HF_HUB_OFFLINE=0 TRANSFORMERS_OFFLINE=0 hf download RadixArk/Qwen3.8-Flash-Next-NVFP4
+    --revision 7b719225242aacd3dbd3f9407468c2ee9a9d2594
+    --include tokenizer.json tokenizer_config.json vocab.json merges.txt special_tokens_map.json
+    added_tokens.json preprocessor_config.json video_preprocessor_config.json
+    model.safetensors.index.json config.json generation_config.json
+
 # Serve offline from sparkrun's distributed HF cache (no network at serve).
 env:
   PYTHONUNBUFFERED: '1'
@@ -128,16 +146,38 @@ metadata:
   # HF id (see the defaults note above).
   litellm:
     model_name: qwen3.8-flash-next-nvfp4-fast-qsa-bf16
+    # Thinking-mode sampling from the Qwen3.8-Flash-Next model card (thinking is
+    # ON by default via the chat template; --reasoning-parser qwen3 in `command`
+    # extracts <think>...</think> into reasoning_content). These match the
+    # gateway defaults but are pinned here so they don't drift. min_p 0.0 /
+    # presence_penalty 0.0 (the card's thinking values) are the engine defaults.
+    # To turn reasoning OFF per request, send
+    #   "chat_template_kwargs": {"enable_thinking": false}
+    # (now allowed through the gateway; for non-thinking the card recommends
+    # temperature 0.7 / top_p 0.80 / presence_penalty 1.5, set per request).
+    model_settings:
+      temperature: 1.0
+      top_p: 0.95
+      top_k: 20
     model_info:
       supports_vision: true
       supports_reasoning: true
-      # reasoning_effort is a no-op on this checkpoint build (measured on the
-      # single-node sibling) -- don't claim it.
-      supported_reasoning_efforts: []
-      # --context-length 110000 is the combined in+out budget per request;
-      # --allow-auto-truncate handles overflow.
-      max_input_tokens: 110000
-      max_output_tokens: 110000
+      # This build DOES honor reasoning_effort (verified live on the 2-node
+      # engine): 'none' turns thinking off, any level leaves it on -- the
+      # engine's switch is binary but it accepts the full OpenAI literal set
+      # (none/minimal/low/medium/high/xhigh/max). Advertise the same levels as
+      # the 27B so LiteLLM/pi register the model as thinking-capable and the
+      # thinking toggle works; an empty list rendered every
+      # supports_<lvl>_reasoning_effort false, so pi read it as no-thinking.
+      supported_reasoning_efforts: [low, medium, xhigh]
+      # Native context is 262144 (256K) for Qwen3.8-Flash-Next (confirmed on the
+      # HF model card; the Qwen3-Next family is 256K native, YaRN-extensible to
+      # ~1M). --context-length below = 262144 is the combined in+out budget per
+      # request; --allow-auto-truncate handles overflow. These two are separate
+      # gateway caps but the ENGINE enforces the 262144 COMBINED limit, so
+      # input+output can't both hit 262144 in one request.
+      max_input_tokens: 262144
+      max_output_tokens: 262144
       # Per-token costs for LiteLLM spend tracking (per-million / 1e6):
       # $0.15/M in, $0.50/M out, $0.016/M cache read.
       input_cost_per_token: 0.00000015
@@ -161,7 +201,9 @@ defaults:
   port: 8000
   tensor_parallel: 2
   gpu_memory_utilization: 0.8
-  max_model_len: 110000
+  max_model_len: 262144   # native 256K context (was 110000). KV pool is bounded
+                          # by max_total_tokens below, so this doesn't grow KV mem;
+                          # it lets a single request use up to 256K of that pool.
   max_num_seqs: 10
   served_model_name: RadixArk/Qwen3.8-Flash-Next-NVFP4
   revision: 7b719225242aacd3dbd3f9407468c2ee9a9d2594
@@ -196,8 +238,8 @@ command: |
         --speculative-eagle-topk 1 \
         --speculative-num-draft-tokens {speculative_num_draft_tokens} \
         --speculative-attention-mode decode \
-        --reasoning-parser auto \
-        --tool-call-parser auto \
+        --reasoning-parser qwen3 \
+        --tool-call-parser qwen3_coder \
         --allow-auto-truncate \
         --enable-metrics \
         --enable-mfu-metrics \

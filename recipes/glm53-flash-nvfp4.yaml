@@ -41,8 +41,10 @@
 # Unlike the MiaAI-Lab EXL3 kit, run.sh applies NO runtime python patches --
 # every sm_121 patch (NoPE FA2 backend, FlashInfer, NCCL, PDL-off, indexer
 # init, fp8 tile cap, dflash KV groups) is baked into the image at build time
-# via the Dockerfile chain. So there is nothing for a pre-serve hook to apply
-# here, and `entrypoint: ""` + a direct `vllm serve` is safe.
+# via the Dockerfile chain, so `entrypoint: ""` + a direct `vllm serve` is safe.
+# The one pre-serve hook here applies no patch: it just creates a stable
+# snapshots/main symlink so the target can be served from a local path while
+# still tracking main (see the pre_exec block and defaults.model_path).
 #
 # Model / draft (both public on the Hub; first launch downloads to BOTH nodes'
 # HF cache, mounted at /cache/huggingface, later boots reuse it):
@@ -55,7 +57,12 @@
 # and GB10 UMA OOMs above ~5.1 GiB. Packed-NVFP4-MLA-KV 1M is a different
 # backend/image, not a flag flip here.
 #
-# Direct (no gateway) smoke test once it is up (thinking is OFF by default):
+# Direct (no gateway) smoke test once it is up. Thinking is ON by default here
+# (--default-chat-template-kwargs enable_thinking:true below); the response
+# carries a <think>...</think> block, extracted into reasoning_content by
+# --reasoning-parser glm45. To turn thinking OFF for a request, send
+# "chat_template_kwargs": {"enable_thinking": false} (the gateway now allows
+# that param through).
 #   curl -sS http://<head>:8000/v1/chat/completions \
 #     -H 'Content-Type: application/json' \
 #     -d '{"model":"GLM-5.3-Flash-NVFP4",
@@ -64,20 +71,13 @@
 
 name: glm53-flash-nvfp4
 model: LibertAIDAI/GLM-5.3-Flash-NVFP4
-# No model_revision pin. sfxnz pins target snapshot aa28e1f54130286c95fee10d0705c74ce8743734
-# and draft snapshot 7d74cdd881ed7e32c31175984a67823127b66cfe. If you need
-# byte-identical weights, DON'T set a top-level model_revision (sparkrun leaks
-# it onto the auto-added draft -> 404, and never threads it into the serve
-# command -> offline LocalEntryNotFoundError). Instead pin per-entry:
-#   distribution_config:
-#     models:
-#       entries:
-#         - name: "{model}"
-#           revision: aa28e1f54130286c95fee10d0705c74ce8743734
-#         - name: incoai/GLM-5.3-Flash-DFlash2
-#           revision: 7d74cdd881ed7e32c31175984a67823127b66cfe
-# ...and add `--revision aa28e1f5...` to the serve command below IF you also set
-# HF_HUB_OFFLINE=1 (see env note). By default we track `main` on both.
+# No top-level model_revision (it leaks onto the auto-added draft -> 404 and
+# never reaches the serve command). Both repos are pinned per-entry in the
+# distribution_config block below (target + DFlash2 draft), each at its current
+# refs/main. The serve command loads from the resulting local snapshot paths
+# (defaults.model_path / speculative_config), so the pins and those paths must
+# move together. sfxnz's own run.sh resolves target main to this same
+# caca4e6a... snapshot.
 runtime: vllm-distributed
 min_nodes: 2
 max_nodes: 2
@@ -90,15 +90,37 @@ executor_config:
   entrypoint: ""
   ipc: host
   shm_size: 32g
+  # Keep a failed container around so its logs/exit code stay inspectable
+  # (sparkrun's step 1 sweeps stale containers on the next run).
+  auto_remove: false
   # RoCE/IB verbs need locked memory + the /dev/infiniband char devices. sfxnz
   # used only --cap-add IPC_LOCK + --ulimit memlock=-1 (no privileged / ptrace /
   # seccomp-unconfined, unlike the EXL3 kit).
   cap_add:
     - IPC_LOCK
+  # LIST of `type=soft[:hard]` strings. A MAP (memlock: "-1") renders as a bare
+  # `--ulimit memlock` with the value dropped, which docker REJECTS ("invalid
+  # ulimit argument: memlock") -- the keepalive container never starts and the
+  # launch dies at the first docker exec with "No such container". Same bug the
+  # EXL3 recipe hit.
   ulimit:
-    memlock: "-1"
+    - memlock=-1
   devices:
     - /dev/infiniband
+
+# Pre-serve hook (docker exec on each rank, after distribution, before serve).
+# The target must be served from a local snapshot dir (its processor can't
+# resolve an HF id -- see defaults.model_path), but we want to TRACK main rather
+# than pin a hash. The HF cache names snapshot dirs by commit hash and has no
+# stable "main" entry, so create one: symlink snapshots/main -> the hash that
+# refs/main currently points to. Runs on every node; the final test fails the
+# launch loudly if main didn't resolve to a complete snapshot.
+pre_exec:
+  - >-
+    D=/cache/huggingface/hub/models--LibertAIDAI--GLM-5.3-Flash-NVFP4;
+    H=$(cat "$D/refs/main");
+    ln -sfn "$H" "$D/snapshots/main";
+    test -f "$D/snapshots/main/processor_config.json"
 
 env:
   # --- NCCL over the RoCE fabric. GLOBAL knobs only; the per-node interface,
@@ -152,6 +174,21 @@ metadata:
 defaults:
   host: 0.0.0.0
   port: 8000
+  # Serve from a LOCAL snapshot dir, NOT the HF id. This image's custom
+  # Glm5NextProcessor.from_pretrained does a naive
+  # open(os.path.join(model, "processor_config.json")) and does NOT resolve HF
+  # ids -> FileNotFoundError on the bare repo-id string during multimodal
+  # (vision) budget init, which kills serve instantly with an empty serve.log.
+  # sfxnz's run.sh serves the resolved snapshot path for exactly this reason.
+  # (Only the TARGET needs this -- the DFlash2 draft has no multimodal
+  # processor and loads fine by HF id in speculative_config.)
+  #
+  # To track `main` without hardcoding a commit hash: the `snapshots/` dir has
+  # no stable "main" entry (dirs are named by hash), so the pre_exec hook above
+  # creates a `snapshots/main` symlink -> whatever refs/main currently resolves
+  # to (on each node, after distribution). This path follows main across
+  # re-pulls with no edit here.
+  model_path: /cache/huggingface/hub/models--LibertAIDAI--GLM-5.3-Flash-NVFP4/snapshots/main
   # 2 ranks across the 2 hosts. sparkrun's vllm-distributed runtime reads this
   # to emit --nnodes 2 + the per-node --node-rank / --master-addr /
   # --master-port (workers additionally get --headless).
@@ -161,6 +198,11 @@ defaults:
   # same JSON on --speculative-config. (sfxnz pointed "model" at a pinned draft
   # snapshot path; the HF id is the sparkrun-native form and resolves from the
   # distributed cache.)
+  # Draft stays an HF id: sparkrun auto-detects it here and distributes it (a
+  # local path fails its repo-id parse), and vLLM loads it fine by id -- the
+  # DFlash2 draft has no multimodal processor, so it is NOT hit by the
+  # snapshot-path bug that forces the TARGET to use model_path. The revision is
+  # pinned in distribution_config above (currently == refs/main).
   speculative_config: '{"method":"dflash","model":"incoai/GLM-5.3-Flash-DFlash2","num_speculative_tokens":7}'
   # CUDA-graph capture sizes: sfxnz computes 1,2,4 plus (num_spec+1)×{1..MAX_NUM_SEQS}.
   # For num_speculative_tokens=7 (step 8) and max-num-seqs 2 that is 1,2,4,8,16.
@@ -168,8 +210,8 @@ defaults:
   compilation_config: '{"cudagraph_capture_sizes":[1,2,4,8,16]}'
 
 command: |
-    vllm serve {model} \
-        --served-model-name GLM-5.3-Flash-NVFP4 {model} \
+    vllm serve {model_path} \
+        --served-model-name {model} \
         --host {host} \
         --port {port} \
         --tensor-parallel-size 2 \
@@ -186,5 +228,5 @@ command: |
         --tool-call-parser glm47 \
         --enable-auto-tool-choice \
         --reasoning-parser glm45 \
-        --default-chat-template-kwargs '{"enable_thinking": false}' \
+        --default-chat-template-kwargs '{"enable_thinking": true}' \
         --trust-remote-code
