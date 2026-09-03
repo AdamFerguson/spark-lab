@@ -273,13 +273,33 @@ class Config:
 
     def swap_ttl(self, alias: str, mdef: Dict[str, Any]) -> int:
         sw = mdef.get("swap") or {}
+        if sw.get("pinned"):
+            return 0
         if sw.get("ttl") is not None:
             return int(sw["ttl"])
+        if sw.get("script"):  # kit cold-starts are long -> default pinned
+            return 0
         return self.SWAP_TTL.get(str(sw.get("class", "mid")), 7200)
 
+    def swap_script(self, mdef: Dict[str, Any]) -> Dict[str, Any]:
+        """The kit contract block for script-mode zoo models ({} otherwise)."""
+        sc = (mdef.get("swap") or {}).get("script") or {}
+        return sc if isinstance(sc, dict) else {}
+
+    def swap_engine_port(self, alias: str, mdef: Dict[str, Any]) -> int:
+        """The engine port a zoo model binds (script models declare it via
+        swap.port -- their launch flags live in the kit, not the model dict)."""
+        sw = mdef.get("swap") or {}
+        if self.swap_script(mdef):
+            return int(sw.get("port", 0) or 0)
+        return int(mdef.get("port", 30000))
+
     def swap_served_id(self, mdef: Dict[str, Any]) -> str:
-        """The id the ENGINE serves (recipe defaults.served_model_name, else
-        the HF id) -- what llama-swap rewrites gateway requests to."""
+        """The id the ENGINE serves -- what llama-swap rewrites requests to.
+        Script models declare it explicitly (swap.served / swap.script.served)."""
+        sc = self.swap_script(mdef)
+        if sc:
+            return str(sc.get("served") or (mdef.get("swap") or {}).get("served") or "")
         return str((mdef.get("params") or {}).get("served_model_name") or mdef.get("hf_model") or "")
 
     def swap_gateway_name(self, alias: str, mdef: Dict[str, Any]) -> str:
@@ -375,8 +395,26 @@ class Config:
                     "the zoo is single-node per model (spanning models stay on the "
                     "managed converge path, ADR-0010)"
                 )
-            if "recipe" not in mdef:
-                raise ValueError(f"swap model '{alias}' must reference a recipe (recipe: <name>)")
+            sc = self.swap_script(mdef)
+            if sc:
+                # Script (kit) mode: the kit owns the launch, so no recipe /
+                # sparkrun constraints -- but the contract must be complete.
+                sw0 = mdef.get("swap") or {}
+                missing = [k for k in ("kit", "container") if not str(sc.get(k) or "").strip()]
+                if not str(sc.get("served") or sw0.get("served") or "").strip():
+                    missing.append("served")
+                if not int(sw0.get("port", 0) or 0):
+                    missing.append("port")
+                if missing:
+                    raise ValueError(
+                        f"script-mode swap model '{alias}' is missing required key(s) "
+                        f"{missing} (swap.script.kit, swap.script.container, "
+                        "swap.served (or swap.script.served), swap.port)"
+                    )
+            elif "recipe" not in mdef:
+                raise ValueError(
+                    f"swap model '{alias}' must reference a recipe (recipe: <name>) or declare swap.script"
+                )
             sw = mdef.get("swap") or {}
             if sw.get("class") is not None and sw.get("class") not in self.SWAP_TTL:
                 raise ValueError(
@@ -388,7 +426,9 @@ class Config:
                     f"swap model '{alias}' host '{host}' must run the control plane "
                     "(the gateway reaches llama-swap on that host)"
                 )
-            eport = int(mdef.get("port", 30000))
+            eport = self.swap_engine_port(alias, mdef)
+            if not eport:
+                raise ValueError(f"swap model '{alias}' has no resolvable engine port")
             key = (host, eport)
             if key in used:
                 raise ValueError(

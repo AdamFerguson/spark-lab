@@ -402,5 +402,101 @@ class TestInventory(unittest.TestCase):
         self.assertTrue(out["swap"]["reachable"])
 
 
+SCRIPT_CLUSTER = CLUSTER.replace(
+    """  bigzoo:
+    active: false
+    hosts: [sol]
+    recipe: bigmodel
+    swap:
+      enabled: true
+      ttl: 0""",
+    """  kitmodel:
+    active: false
+    hosts: [sol]
+    readiness_seconds: 2700
+    swap:
+      enabled: true
+      port: 8600
+      script:
+        kit: recipes/MiaAI-Lab/GLM-kit
+        container: glm
+        start_args: ["--no-download"]
+        served: GLM-Kit-Served""",
+)
+
+
+class TestScriptMode(unittest.TestCase):
+    def setUp(self):
+        self._env = mock.patch.dict(os.environ, SECRET_DUMMY)
+        self._env.start()
+        self.d, self.cp = _fixture(cluster_text=SCRIPT_CLUSTER)
+
+    def tearDown(self):
+        self._env.stop()
+
+    def test_script_model_needs_no_recipe_and_renders_kit_lifecycle(self):
+        cfg, sol = _view(self.cp, "sol")
+        self.assertEqual(sol.swap_aliases(), ["trial", "kitmodel"])
+        rendered = render.render(sol, Path(tempfile.mkdtemp()))
+        self.assertNotIn("sparkrun/recipes/kitmodel.yaml", rendered)  # kit owns the launch
+        text = render.render(sol, Path(tempfile.mkdtemp()))["llama-swap/config.yaml"].decode()
+        data = yaml.safe_load(text.replace("{install_dir}", "/opt/sparklab"))
+        entry = data["models"]["GLM-Kit-Served"]
+        self.assertIn("/opt/sparklab/recipes/MiaAI-Lab/GLM-kit", entry["cmd"])
+        self.assertIn("./start.sh --no-download", entry["cmd"])
+        self.assertIn("C=glm", entry["cmd"])
+        self.assertIn('exec docker wait "$C"', entry["cmd"])
+        self.assertIn("already running", entry["cmd"])  # resume-aware shim
+        self.assertIn("./stop.sh", entry["cmdStop"])
+        self.assertEqual(entry["ttl"], 0)  # kits default to pinned
+        self.assertEqual(entry["proxy"], "http://127.0.0.1:8600")
+        self.assertEqual(data["healthCheckTimeout"], 2820)  # kit readiness + headroom
+
+    def test_script_gateway_entry_uses_declared_served_and_port(self):
+        cfg, sol = _view(self.cp, "sol")
+        text = render.render(sol, Path(tempfile.mkdtemp()))["litellm/extra_models.yaml"].decode()
+        entry = next(m for m in yaml.safe_load(text)["model_list"] if m["model_name"] == "kitmodel")
+        self.assertEqual(entry["litellm_params"]["model"], "custom_openai/GLM-Kit-Served")
+        self.assertEqual(entry["litellm_params"]["api_base"], "http://host.docker.internal:9292/v1")
+        self.assertEqual(entry["litellm_params"]["timeout"], 3000)
+
+    def test_script_port_collision_detected(self):
+        # swap.script.port collides with the active model's engine port
+        text = SCRIPT_CLUSTER.replace("      port: 8600", "      port: 30000")
+        d, cp = _fixture(cluster_text=text)
+        with self.assertRaises(ValueError):
+            config_mod.load(cp)
+
+    def test_script_missing_keys_rejected(self):
+        text = SCRIPT_CLUSTER.replace("        container: glm\n", "")
+        d, cp = _fixture(cluster_text=text)
+        with self.assertRaises(ValueError) as cm:
+            config_mod.load(cp)
+        self.assertIn("container", str(cm.exception))
+
+    def test_zoo_prepare_kit_check_fails_actionably(self):
+        rt = FakeRuntime(available={"sh", "curl"}, fail={"sh": 1})
+        args = types.SimpleNamespace(config=str(self.cp), hosts="sol", runtime=rt)
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(zoo_cmd.run(args), 1)
+        self.assertIn("kit for swap model 'kitmodel' is not usable", buf.getvalue())
+
+    def test_zoo_import_prints_paste_ready_block(self):
+        env = 'PORT="8888"\nMODEL_ID="LibertAIDAI/GLM-5.3"\nSERVED_MODEL_NAME="GLM-5.3-Flash-EXL3"\nWORKER_IP="10.0.4.171"\n'
+        rt = FakeRuntime(captures={".env": (0, env), "CONTAINER_NAME=": (0, 'CONTAINER_NAME="glm-exl3"\n')})
+        args = types.SimpleNamespace(
+            config=str(self.cp), hosts="sol", runtime=rt, zoo_cmd="import", kit="recipes/MiaAI-Lab/GLM-kit", host="sol"
+        )
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(zoo_cmd.run(args), 0)
+        out = buf.getvalue()
+        self.assertIn("container: glm-exl3", out)
+        self.assertIn("served: GLM-5.3-Flash-EXL3", out)
+        self.assertIn("port: 8888", out)
+        self.assertIn("kit head", out)  # spanning kit noted
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

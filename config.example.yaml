@@ -154,6 +154,23 @@ models:
   #     # ttl: 3600           # explicit seconds override (beats class)
   #     aliases: [q27]        # extra gateway names for this model
 
+  # A kit-model (Mia-AiLab-style start.sh/stop.sh repo) in the zoo -- the kit
+  # owns the launch (even multi-node); generate this block with
+  # `bin/spark-lab zoo import --kit recipes/MiaAI-Lab/<kit> --host <head>`.
+  # glm-kit:
+  #   active: false
+  #   hosts: [sol]            # kit head = the zoo host that runs start.sh
+  #   readiness_seconds: 2700 # kit loads are long; sizes gateway timeouts too
+  #   swap:
+  #     enabled: true
+  #     pinned: true          # kit cold start = explicit `swap unload` only
+  #     port: 8888            # kit .env PORT (proxy + /health target)
+  #     script:
+  #       kit: recipes/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks
+  #       container: glm-exl3          # kit CONTAINER_NAME (docker-wait target)
+  #       start_args: ["--no-download"]
+  #       served: GLM-5.3-Flash-EXL3   # id the engine serves (routing key)
+
 # -----------------------------------------------------------------------------
 # Model swapping (zoo / llama-swap, ADR-0010). When enabled, the swap hosts
 # (any host with swap-enabled models) run a llama-swap daemon as a user

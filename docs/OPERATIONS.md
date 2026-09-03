@@ -100,6 +100,12 @@ ssh sol 'mkdir -p ~/AI/bin && cd /tmp && curl -sSLO \
 ./bin/spark-lab swap status         # what is resident right now
 ```
 
+Kits (Mia-AiLab-style `start.sh`/`stop.sh` repos, incl. multi-node ones) join
+as **script-mode** zoo models: `zoo import --kit <dir> --host <head>` prints
+the block, `zoo prepare` preflights the kit contract, and llama-swap drives
+the kit's own scripts (pinned by default -- kit cold starts are long; unload
+explicitly with `swap unload`).
+
 Then just ask the gateway for a zoo model by name (or its `swap.aliases`);
 the first request blocks while the engine loads (llama-swap streams a
 "loading" state), and it stays up until its TTL elapses. `swap unload <model>

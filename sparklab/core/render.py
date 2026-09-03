@@ -89,7 +89,11 @@ def target_mapping(cfg: config_mod.Config) -> List[Tuple[str, str]]:
     # config and its systemd user unit (installed by `spark-lab zoo prepare`).
     # No layout pin: single-node, launched with --hosts (scheduler placement).
     for alias in cfg.swap_aliases():
-        entries.append(("sparkrun_recipe.yaml.j2", f"sparkrun/recipes/{alias}.yaml"))
+        mdef = (cfg.data.get("models") or {}).get(alias) or {}
+        # Script-mode kits own their launch (kit start.sh/stop.sh) -- there is
+        # no sparkrun recipe to converge for them.
+        if not cfg.swap_script(mdef):
+            entries.append(("sparkrun_recipe.yaml.j2", f"sparkrun/recipes/{alias}.yaml"))
     if cfg.swap_aliases():
         entries.append(("llama_swap_config.yaml.j2", "llama-swap/config.yaml"))
         entries.append(("llama_swap_service.j2", "llama-swap/llama-swap.service"))
@@ -158,9 +162,22 @@ def _swap_ctx(cfg: config_mod.Config) -> dict:
         readiness = int(mdef.get("readiness_seconds", 600))
         readiness_max = max(readiness_max, readiness)
         recipe_path = "{install_dir}/sparkrun/recipes/" + alias + ".yaml"
-        cmds = converge_mod.swap_cmds(sparkrun, recipe_path, addr, cfg.swap_gateway_name(alias, mdef))
         name = cfg.swap_gateway_name(alias, mdef)
         served = cfg.swap_served_id(mdef) or name
+        sc = cfg.swap_script(mdef)
+        if sc:
+            # Script (kit) mode: lifecycle = kit's start.sh/stop.sh behind a
+            # docker-wait shim; port + served id are declared (the kit's .env
+            # is node-side and render must stay local).
+            kit = str(sc["kit"])
+            kit_path = kit if kit.startswith("/") else "{install_dir}/" + kit.lstrip("/")
+            cmds = converge_mod.swap_cmds_script(
+                kit_path, str(sc["container"]), sc.get("start_args"), str(sc.get("stop", "stop.sh"))
+            )
+            port = cfg.swap_engine_port(alias, mdef)
+        else:
+            cmds = converge_mod.swap_cmds(sparkrun, recipe_path, addr, name)
+            port = int(mdef.get("port", 30000))
         entries.append(
             {
                 "alias": alias,
@@ -172,7 +189,7 @@ def _swap_ctx(cfg: config_mod.Config) -> dict:
                 "model_id": served,
                 "name": str(sw.get("display_name") or name),
                 "addr": addr,
-                "port": int(mdef.get("port", 30000)),
+                "port": port,
                 "served": served,
                 "ttl": cfg.swap_ttl(alias, mdef),
                 "unload_timeout": int(sw.get("unload_timeout", 60)),

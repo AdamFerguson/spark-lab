@@ -197,6 +197,32 @@ def swap_cmds(sparkrun: str, recipe_path: str, host_addr: str, gateway_name: str
     }
 
 
+def swap_cmds_script(kit_path: str, container: str, start_args=None, stop: str = "stop.sh") -> Dict[str, str]:
+    """cmd/cmdStop for SCRIPT-mode zoo models (Mia-AiLab-style kit contracts).
+
+    The kit's ``start.sh`` launches detached and exits once healthy, but
+    llama-swap treats the cmd's lifetime as the server's -- so the cmd is a
+    shim: resume-aware (attach if the container is already running, e.g. after
+    a daemon restart), then block in ``docker wait`` for the container's real
+    death. ``cmdStop`` is the kit's own idempotent ``stop.sh`` (which owns
+    head+worker teardown for spanning kits); killing the shim alone can never
+    orphan a container. ``kit_path`` may embed the ``{install_dir}`` placeholder.
+    """
+    start = "./start.sh" + (" " + " ".join(shlex.quote(str(a)) for a in (start_args or [])) if start_args else "")
+    kitq = shlex.quote(kit_path)
+    inner = (
+        "C=" + shlex.quote(container) + "; "
+        'if [ "$(docker inspect -f "{{.State.Running}}" "$C" 2>/dev/null)" = "true" ]; then '
+        'echo "zoo: kit container already running -- attaching"; '
+        "else cd " + kitq + " && " + start + " || exit 1; fi; "
+        'exec docker wait "$C"'
+    )
+    return {
+        "cmd": "bash -lc " + shlex.quote(inner),
+        "cmd_stop": "bash -lc " + shlex.quote(f"cd {kitq} && ./" + shlex.quote(str(stop)) + " || true"),
+    }
+
+
 def build_plan(
     cfg, rendered: dict, state_files: dict, state_model, allow_restart: bool, runtime=None, launch_model: bool = True
 ) -> Plan:

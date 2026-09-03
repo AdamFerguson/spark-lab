@@ -74,3 +74,24 @@ models, and spanning models in the zoo pool.
 - zoo hosts expose llama-swap on the LAN/tailnet port (no auth): same trust
   class as engine ports today; the gateway remains the only authenticated
   surface. Do not expose the swap port beyond the private network.
+
+## Addendum (2026-09-03): script-mode kits (phase 3 arrives early)
+
+Mia-AiLab-style kit repos (`start.sh` / `stop.sh` / `.env` per model, hand-
+tuned for DGX Spark, often spanning nodes via their own ssh) join the zoo as
+**script-mode** models: `swap.script: {kit, container, start_args, stop}` +
+`swap.port` / `swap.served`. The kit's contract *is* the llama-swap
+cmd/cmdStop seam; because kit `start.sh` launches detached and exits, the
+rendered cmd is a resume-aware shim (`attach if running, else start; then
+exec docker wait <container>`) so llama-swap's lifetime tracking holds, and
+cmdStop is the kit's own idempotent `stop.sh` (which owns head+worker
+teardown for spanning kits -- multi-node needs nothing new from spark-lab).
+
+Consequences: script models need no recipe/min_nodes constraints (the kit
+owns placement semantics; placement names the zoo host = kit head); they
+default to `pinned` (kit cold starts run tens of minutes -- TTL would be
+self-harm); `zoo prepare` preflights the kit contract (dir + executable
+start/stop + .env) and `zoo import` prints a paste-ready model block from a
+kit's .env. This also supersedes the "spanning models are out of scope" line
+for kit-based spanning: they participate today; only sparkrun-managed
+spanning models remain phase-3 work.

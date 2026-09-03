@@ -18,6 +18,19 @@ from pathlib import Path
 from ..core import cluster, config as config_mod, converge, render
 
 
+def _kit_abs(cfg, runtime, kit: str) -> str:
+    """Absolute (quote-ready) node path for a kit dir.
+
+    `~` may lead EITHER the kit path or the install dir (~/AI) -- quoted, it
+    would never expand, so map it to the node home explicitly ($HOME when the
+    runtime cannot answer, which login shells expand)."""
+    full = kit if kit.startswith(("/", "~")) else f"{cfg.install_dir_raw.rstrip('/')}/{kit.lstrip('/')}"
+    if full.startswith("~"):
+        home = runtime.home_path() if runtime is not None else None
+        full = (home or "$HOME") + full[1:]
+    return shlex.quote(full)
+
+
 def _prepare_one(t, linger: bool) -> int:
     cfg, runtime = t.cfg, t.runtime
     fs, _st = t.env()
@@ -27,6 +40,31 @@ def _prepare_one(t, linger: bool) -> int:
     rendered = render.render(cfg, Path(tempfile.mkdtemp(prefix="sparklab-zoo-")))
     converge.write_files(cfg, rendered, dry_run=False, fs=fs)
     print(f"   converged zoo files on {t.name} ({len(rendered)} file(s) ensured)")
+
+    # Script-mode (kit) preflight: fail HERE, not at swap time (ADR-0010 add.).
+    for alias in cfg.swap_aliases():
+        mdef = (cfg.data.get("models") or {}).get(alias) or {}
+        sc = cfg.swap_script(mdef)
+        if not sc:
+            continue
+        stop = str(sc.get("stop", "stop.sh"))
+        kq = _kit_abs(cfg, runtime, str(sc["kit"]))
+        chk = runtime.run(
+            [
+                "sh",
+                "-lc",
+                f"test -d {kq} && test -x {kq}/start.sh && test -x {kq}/{shlex.quote(stop)} && test -f {kq}/.env",
+            ]
+        )
+        if chk.returncode != 0:
+            print(
+                f"[ERROR] kit for swap model '{alias}' is not usable on {t.name}: {str(sc['kit'])} "
+                f"-- need kit dir + executable start.sh + executable {stop} + .env "
+                "(clone the kit onto this node and configure its .env)",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"   kit ok for '{alias}'")
 
     home = runtime.home_path() if runtime is not None else None
     bin_raw = str(cfg.swap().get("bin") or (cfg.install_dir_raw.rstrip("/") + "/bin/llama-swap"))
@@ -86,8 +124,61 @@ def _prepare_one(t, linger: bool) -> int:
     return 0
 
 
+def _import_kit(t, kit: str) -> int:
+    """`zoo import`: read a kit's .env/scripts, print a paste-ready swap block
+    (no silent config rewriting -- the owner pastes what they want)."""
+    cfg, runtime = t.cfg, t.runtime
+    env_txt = runtime.run_capture(["sh", "-lc", f"cat {_kit_abs(cfg, runtime, kit)}/.env 2>/dev/null"]).stdout or ""
+    if "=" not in env_txt:
+        print(f"[ERROR] no readable .env in kit {kit} on {t.name} (clone it / copy .env.sample)", file=sys.stderr)
+        return 1
+    kv = {}
+    for line in env_txt.splitlines():
+        line = line.strip()
+        if line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        kv[k.strip()] = v.strip().strip('"').strip("'")
+    kitdir = _kit_abs(cfg, runtime, kit)
+    grep = (
+        runtime.run_capture(
+            ["sh", "-lc", f"grep -rhoE 'CONTAINER_NAME=.{{0,40}}' {kitdir} --include='*.sh' 2>/dev/null | head -1"]
+        ).stdout
+        or ""
+    )
+    cont = grep.strip().split("=", 1)[-1].strip('"').strip("'") or "<container>"
+    port = kv.get("PORT", "<port>")
+    served = kv.get("SERVED_MODEL_NAME") or kv.get("MODEL_ID") or "<served-id>"
+    spanning = "WORKER_IP" in kv and bool(str(kv.get("WORKER_IP", "")).strip())
+    alias = Path(kit.rstrip("/")).name.lower().replace(" ", "-")
+    host_note = "   # kit head: the zoo daemon runs where start.sh runs" if spanning else ""
+    print(
+        f"  {alias}:\n"
+        f"    active: false\n"
+        f"    hosts: [{t.name}]{host_note}\n"
+        f"    swap:\n"
+        f"      enabled: true\n"
+        f"      pinned: true          # kit cold starts are long -- explicit `swap unload` only\n"
+        f"      port: {port}          # kit .env PORT\n"
+        f"      script:\n"
+        f"        kit: {kit}\n"
+        f"        container: {cont}   # kit CONTAINER_NAME (docker-wait target)\n"
+        f'        start_args: ["--no-download"]\n'
+        f"        served: {served}\n"
+    )
+    print(f"# paste under `models:` in config.yaml, then: apply --hosts {t.name} && zoo prepare --hosts {t.name}")
+    return 0
+
+
 def run(args) -> int:
     cfg = config_mod.load(args.config)
+    if getattr(args, "zoo_cmd", "prepare") == "import":
+        host = getattr(args, "host", None) or cfg.host_specs[0].name
+        tt = next((x for x in cluster.targets(cfg, [host], runtime=getattr(args, "runtime", None))), None)
+        if tt is None:
+            print(f"unknown host '{host}'", file=sys.stderr)
+            return 1
+        return _import_kit(tt, args.kit)
     if not cfg.swap_enabled():
         print(
             "swap.enabled is false -- nothing to prepare (add swap.enabled + swap-enabled models to config.yaml).",

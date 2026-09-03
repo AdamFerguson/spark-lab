@@ -157,6 +157,11 @@ editable by hand too (raw LiteLLM `model_list` entries) — `expose` is sugar.
   requesting a zoo model through the gateway loads it, TTLs unload idle ones.
 - `swap status`: which zoo models are resident, per host (also folded into
   `status` / `status --json`). `swap unload [model] --yes`: force-unload.
+- `zoo import --kit <dir> [--host h]`: reads a kit's .env/scripts and prints a
+  paste-ready script-mode `swap:` block (no silent config rewriting).
+- Script-mode models (`swap.script: {kit, container, start_args, stop}` +
+  `swap.port`/`swap.served`) hand the engine lifecycle to the kit's own
+  start/stop scripts behind a docker-wait shim -- spanning kits included.
 
 ## Config surface (`config.yaml`, schema v3)
 

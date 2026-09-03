@@ -125,6 +125,12 @@ def main(argv=None) -> int:
         help="converge zoo files + install/start the llama-swap user service (idempotent)",
     )
     p_zoo_prepare.set_defaults(func=zoo.run)
+    p_zoo_import = zoo_sub.add_parser(
+        "import", parents=[common], help="print a swap block for a Mia-AiLab-style kit (paste-ready)"
+    )
+    p_zoo_import.add_argument("--kit", required=True, help="kit dir (install-dir-relative or absolute)")
+    p_zoo_import.add_argument("--host", help="kit-head host name (default: the first host)")
+    p_zoo_import.set_defaults(func=zoo.run)
 
     p_swap = sub.add_parser(
         "swap",
