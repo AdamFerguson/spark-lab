@@ -79,6 +79,43 @@ Pinning versions: edit `model.image`, `litellm`/`monitoring` image tags in
 `config.yaml` to exact tags (instead of `main-stable`/`latest`) for reproducible
 upgrades — per-host pins via the host entry's `images:` overrides.
 
+## Model zoo (swap without thinking)
+
+Want to try a new model without a manual stop/start dance? Add it as a **zoo
+model** (`swap.enabled: true` under `swap:` + an `active: false` model with a
+`swap:` block — see `config.example.yaml`). Requesting it through the gateway
+loads it; idle models unload (`swap.ttl`) so the other Spark's RAM frees up
+automatically. Full design: [ADR-0010](adr/0010-zoo-model-swapping.md).
+
+```bash
+# one-time per zoo host: install the llama-swap binary (deliberate, not fetched
+# by spark-lab). GB10 = linux_arm64, pinned v252:
+ssh sol 'mkdir -p ~/AI/bin && cd /tmp && curl -sSLO \
+  https://github.com/mostlygeek/llama-swap/releases/download/v252/llama-swap_252_linux_arm64.tar.gz \
+  && tar xzf llama-swap_252_linux_arm64.tar.gz \
+  && install -m755 llama-swap ~/AI/bin/llama-swap'
+
+./bin/spark-lab apply --hosts sol   # render zoo config + unit (no daemon yet)
+./bin/spark-lab zoo prepare --hosts sol   # install + start the llama-swap service
+./bin/spark-lab swap status         # what is resident right now
+```
+
+Then just ask the gateway for a zoo model by name (or its `swap.aliases`);
+the first request blocks while the engine loads (llama-swap streams a
+"loading" state), and it stays up until its TTL elapses. `swap unload <model>
+--yes` reclaims its RAM on demand; `unload --yes` clears the whole zoo.
+
+Notes:
+- The llama-swap port (default `9292`) is LAN/tailnet-only — never expose it;
+  the gateway (port 4000) stays the only public/authenticated surface.
+- Zoo models are `active: false` — `apply` never launches them and
+  `model up/down` refuse them (llama-swap owns the lifecycle via sparkrun).
+- First `zoo prepare` needs the binary present (the command prints the exact
+  install line if it is missing). The user service persists across reboots
+  only if lingering is enabled (`zoo prepare` enables it, prompting for sudo).
+- `swap.fast_resume` (seconds-scale suspend/restore via vllm-snapshot) is a
+  planned opt-in per model — not yet implemented.
+
 ## Monitoring
 
 - **Grafana** — `http://<spark>:3000` (over Tailscale, use the mesh name).

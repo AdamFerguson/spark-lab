@@ -104,6 +104,9 @@ spark-lab sync [--write]                   # PULL: unexposed engines / ghosts /
 spark-lab expose <host[:port]> [--dry-run] # run it by hand -> one command to
                                            # serve it through the gateway
 spark-lab litellm status|restart           # gateway: health, staleness, restart
+spark-lab zoo prepare                      # install/start the llama-swap zoo daemon (swap hosts)
+spark-lab swap status                      # which zoo models are resident now
+spark-lab swap unload [m] --yes            # force-unload a zoo model (or all)
 spark-lab model up <m> [--hosts a,b]       # scale a model up
 spark-lab model down <m> --yes [--hosts]   # scale a model down (stops workloads)
 spark-lab model stop --yes                 # stop now; config unchanged; next apply restarts

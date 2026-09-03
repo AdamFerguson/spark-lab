@@ -150,6 +150,14 @@ editable by hand too (raw LiteLLM `model_list` entries) — `expose` is sugar.
   restart litellm`, poll `/health`, print the served model list. The manual
   restart you've been doing, made one command and verified.
 
+### `zoo prepare` / `swap status|unload [model] --yes` — NEW (ADR-0010, post-redesign)
+- `zoo prepare`: converge the zoo files + install/start the llama-swap user
+  service on swap hosts (idempotent; the binary install stays a documented
+  one-time step). Daily model tries afterwards need no command at all:
+  requesting a zoo model through the gateway loads it, TTLs unload idle ones.
+- `swap status`: which zoo models are resident, per host (also folded into
+  `status` / `status --json`). `swap unload [model] --yes`: force-unload.
+
 ## Config surface (`config.yaml`, schema v3)
 
 | Key | Meaning | Verdict |
@@ -158,6 +166,8 @@ editable by hand too (raw LiteLLM `model_list` entries) — `expose` is sugar.
 | `install.name` | lab name (tailscale/cli branding) | KEEP |
 | `install.install_dir` | node install dir (`~` allowed; `{install_dir}` recipe placeholder resolves against it) | KEEP |
 | `install.repo_dir` | node-side spark-lab checkout (remote state lives here) | KEEP |
+| `swap.{enabled, listen, bin, sparkrun_bin}` | model zoo (llama-swap) master switch + daemon settings | NEW (ADR-0010) |
+| `models.<alias>.swap.{enabled, class, ttl, aliases, display_name}` | zoo membership + unload policy (classes: small 30m / mid 2h / large|pinned never) | NEW (ADR-0010) |
 | `install.repo_url` | clone source for `init --hosts` bootstrap | CUT (with bootstrap) |
 | `hosts: [{name, ip, ssh, remote, user, port, identity_file}]` | managed nodes; `ssh`/`remote` = converge over SSH, `ip` = sparkrun placement address | KEEP |
 | `models.<alias>.active` | participate in placement/validation | KEEP |

@@ -144,6 +144,11 @@ pick a `recipes/<name>.yaml`) and adjust `hosts:` / gateway metadata in the
 recipe's `metadata.litellm:`. Keep `--enable-metrics` in the `command:` so
 the dashboards keep working.
 
+For hands-free trying of new models, register the recipe as a **zoo model**
+(`swap.enabled` on an inactive model block): llama-swap loads it on request
+and unloads it when idle -- see [ADR-0010](adr/0010-zoo-model-swapping.md)
+and the OPERATIONS "Model zoo" runbook.
+
 For gated models, set `HF_TOKEN` in `.env` (and keep `hf_token_env` pointing
 at it); spark-lab injects it into the rendered recipe at deploy time. It is
 never written to the repo.

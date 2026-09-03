@@ -35,7 +35,7 @@ spark-lab/
     util.py
     commands/                    # one module per CLI verb
       init.py apply.py status.py teardown.py check.py adopt.py
-      sync.py expose.py litellm.py model.py logs.py
+      sync.py expose.py litellm.py zoo.py swap.py model.py logs.py
     core/
       config.py                  # load+validate v3, env-ref + recipe resolution
       inventory.py               # live engine/gateway probe (status/sync/expose)
@@ -102,8 +102,15 @@ Authoritative in `config.example.yaml`. Top-level sections: `version`,
 - **`install:`** — `name`, `install_dir` (where recipes + the litellm stack
   live on each node; `~/...` expands **on the node**), `repo_dir`
   (node-side checkout holding state).
-- **`litellm:` / `monitoring:` / `network:` / `images:`** — defaults for the
+- **`litellm:` / `monitoring:` / `network:` / `images:` / `swap:`** — defaults for the
   shared stack; env `SPARKLAB_IMAGE_<KEY>` overrides any image.
+- **Zoo models (ADR-0010)** — an `active: false` model with a `swap:` block is
+  loaded on demand by a per-host llama-swap daemon (which invokes `sparkrun
+  run --ensure`/`stop`); `apply` never launches it, `model up/down` refuse it.
+  Zoo files (`llama-swap/config.yaml`, its systemd user unit, the node-side
+  recipe) are converged from the same config; the daemon is asserted on every
+  apply and restarted when its config changes (best-effort -- `zoo prepare`
+  must have installed it).
 - Older schema shapes (v1/v2) are retired; `load` rejects them outright.
 
 ## 4. CLI contract (`bin/spark-lab`)
@@ -119,6 +126,9 @@ from `pyproject.toml` + `uv.lock`; falls back to `python3 -m venv` +
 | `status [--hosts] [--json]` | Live view per host: sparkrun + compose + EVERY engine answering /v1/models (managed or hand-started) + the gateway's actually-served list + placement table. `--json` = one machine-readable object. |
 | `model up <m> --hosts a,b` / `model down <m> --yes --hosts a,b` | Scale a model: add/remove hosts from its `hosts:` (rewrites config) + converge. Down keeps the recipe file on disk. |
 | `model stop <m>` | Stop the model workload now (config unchanged; next apply restarts). |
+| `zoo prepare` | Converge zoo files + install/start the llama-swap user daemon on swap hosts (idempotent). |
+| `swap status` | Which zoo models llama-swap holds resident, per host. |
+| `swap unload [m] --yes` | Force-unload one zoo model (or all with `--yes`). |
 | `check` | Config valid + renderable + binaries present on every selected host + boot-survival probe (restart policies, enabled-at-boot units). Read-only. |
 | `sync [--write]` | PULL live reality: engines running but unexposed, gateway ghosts, missing models, file drift. `--write` adds extra_models entries + refreshes node state; model workloads never touched. |
 | `expose <host[:port]> [--served-model] [--public-name] [--dry-run]` | Probe an engine's /v1/models, append a litellm.extra_models entry to config.yaml, converge gateways only (verified restart). |

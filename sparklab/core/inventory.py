@@ -55,10 +55,10 @@ def _models_argv(port: int, key: str) -> List[str]:
 
 
 def discover(runtime, cfg) -> Dict[str, Any]:
-    """The live view for the runtime's node: engines + (gateway served list
-    on control-plane hosts). Best-effort: a missing docker/curl yields
-    empty lists, never an exception."""
-    out: Dict[str, Any] = {"engines": [], "gateway": None}
+    """The live view for the runtime's node: engines + (gateway served list on
+    control-plane hosts) + (zoo resident list on swap hosts). Best-effort: a
+    missing docker/curl yields empty lists, never an exception."""
+    out: Dict[str, Any] = {"engines": [], "gateway": None, "swap": None}
     if runtime is None or not runtime.available("docker"):
         return out
     gw_port = int((cfg.litellm or {}).get("port", 4000))
@@ -74,4 +74,30 @@ def discover(runtime, cfg) -> Dict[str, Any]:
         g = runtime.run_capture(_models_argv(gw_port, key))
         served: List[str] = [s.strip() for s in (g.stdout or "").splitlines() if s.strip()]
         out["gateway"] = {"port": gw_port, "served": served, "reachable": g.returncode == 0 and bool(served)}
+    if getattr(cfg, "swap_for_host", lambda: False)():
+        # Who the zoo currently holds resident (llama-swap /running).
+        r = runtime.run_capture(["sh", "-c", f"curl -sf -m 3 http://127.0.0.1:{cfg.swap_port()}/running || true"])
+        out["swap"] = {
+            "port": cfg.swap_port(),
+            "resident": swap_resident(r.stdout or ""),
+            "reachable": r.returncode == 0 and bool((r.stdout or "").strip()),
+        }
+    return out
+
+
+def swap_resident(text: str) -> List[str]:
+    """Model ids from llama-swap's /running (tolerant of shape drift)."""
+    import json as _json
+
+    try:
+        data = _json.loads(text or "")
+    except _json.JSONDecodeError:
+        return []
+    items = data if isinstance(data, list) else (data.get("models") or data.get("running") or [])
+    out: List[str] = []
+    for it in items:
+        if isinstance(it, dict):
+            out.append(str(it.get("id") or it.get("model") or it))
+        else:
+            out.append(str(it))
     return out

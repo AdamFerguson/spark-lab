@@ -170,6 +170,33 @@ def gateway_health_argv(port) -> list:
     ]
 
 
+def user_systemd_argv(inner: str) -> List[str]:
+    """Run a ``systemctl --user`` command against the node user's manager.
+
+    SSH (and fabric's login shell) do not always export XDG_RUNTIME_DIR; the
+    explicit export makes user-service control work regardless (the unit must
+    exist -- `spark-lab zoo prepare` installs it).
+    """
+    return ["sh", "-c", f"export XDG_RUNTIME_DIR=/run/user/$(id -u); {inner}"]
+
+
+def swap_cmds(sparkrun: str, recipe_path: str, host_addr: str, gateway_name: str) -> Dict[str, str]:
+    """The cmd/cmdStop strings llama-swap uses to start/stop one zoo engine.
+
+    Both go through ``bash -lc`` so the login-shell PATH finds sparkrun (the
+    user daemon does not inherit it). The stop reuses the EXACT tolerant
+    pattern converge uses ("No running workload matches intent" == already
+    stopped) so a TTL unload never trips on an already-gone workload. Paths use
+    the ``{install_dir}`` placeholder (expanded at write time).
+    """
+    run = shlex.join([sparkrun, "run", recipe_path, "--ensure", "--hosts", host_addr])
+    stop_script = tolerant_stop_argv(sparkrun, recipe_path, ["--hosts", host_addr])[-1]
+    return {
+        "cmd": "bash -lc " + shlex.quote(f"exec {run}"),
+        "cmd_stop": "bash -lc " + shlex.quote(stop_script),
+    }
+
+
 def build_plan(
     cfg, rendered: dict, state_files: dict, state_model, allow_restart: bool, runtime=None, launch_model: bool = True
 ) -> Plan:
@@ -404,6 +431,39 @@ def build_plan(
         plan.commands.append((cf_desc, ["systemctl", "enable", "--now", "cloudflared"]))
         plan.best_effort.add(cf_desc)
 
+    # --- model swapping (zoo / llama-swap, ADR-0010) -------------------------
+    # llama-swap runs as a USER systemd service on the zoo host; the unit is
+    # installed by `spark-lab zoo prepare`, so every interaction is best-effort
+    # (a missing unit must not abort an otherwise valid converge).
+    if getattr(cfg, "swap_for_host", lambda: False)():
+        swap_desc = "Ensure llama-swap service running (zoo)"
+        plan.commands.append((swap_desc, user_systemd_argv("systemctl --user --no-block start llama-swap")))
+        plan.best_effort.add(swap_desc)
+        if "llama-swap/config.yaml" in changed and state_files:
+            # The daemon reads its model config at start (and reloads on
+            # change, but converge restarts deterministically so a partial
+            # reload can never leave a half-applied zoo).
+            rs_desc = "Restart llama-swap (zoo config changed)"
+            plan.commands.append((rs_desc, user_systemd_argv("systemctl --user restart llama-swap")))
+            plan.best_effort.add(rs_desc)
+            v_desc = "Verify llama-swap is healthy"
+            plan.commands.append(
+                (
+                    v_desc,
+                    [
+                        "sh",
+                        "-c",
+                        "for i in $(seq 1 15); do curl -fsS -o /dev/null http://127.0.0.1:"
+                        f"{cfg.swap_port()}/health && exit 0; sleep 2; done; exit 1",
+                    ],
+                )
+            )
+            plan.best_effort.add(v_desc)
+        plan.notes.append(
+            "zoo active on this host: if llama-swap is not installed yet, run "
+            "`spark-lab zoo prepare` (downloads stay a deliberate step)."
+        )
+
     return plan
 
 
@@ -422,7 +482,11 @@ def expand_install_dir(rel: str, data: bytes, base: Optional[str]) -> bytes:
     before they land in the install dir; a no-op otherwise (byte-identity
     for placeholder-free recipes is preserved).
     """
-    if base and rel.startswith("sparkrun/recipes/") and INSTALL_DIR_PLACEHOLDER.encode() in data:
+    if (
+        base
+        and (rel.startswith("sparkrun/recipes/") or rel.startswith("llama-swap/"))
+        and INSTALL_DIR_PLACEHOLDER.encode() in data
+    ):
         return data.replace(INSTALL_DIR_PLACEHOLDER.encode(), base.encode())
     return data
 

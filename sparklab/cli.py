@@ -12,7 +12,21 @@ import argparse
 
 from .core import config as config_mod
 from .core import runtime as runtime_mod
-from .commands import adopt, apply, check as check_cmd, expose, init, litellm, logs, model, status, sync, teardown
+from .commands import (
+    adopt,
+    apply,
+    check as check_cmd,
+    expose,
+    init,
+    litellm,
+    logs,
+    model,
+    status,
+    swap,
+    sync,
+    teardown,
+    zoo,
+)
 
 
 def main(argv=None) -> int:
@@ -102,6 +116,27 @@ def main(argv=None) -> int:
         "restart", parents=[common], help="write stale gateway files, restart, verify health, show served list"
     )
     p_lit_restart.set_defaults(func=litellm.run)
+
+    p_zoo = sub.add_parser("zoo", help="model zoo (llama-swap, ADR-0010)")
+    zoo_sub = p_zoo.add_subparsers(dest="zoo_cmd", required=True)
+    p_zoo_prepare = zoo_sub.add_parser(
+        "prepare",
+        parents=[common],
+        help="converge zoo files + install/start the llama-swap user service (idempotent)",
+    )
+    p_zoo_prepare.set_defaults(func=zoo.run)
+
+    p_swap = sub.add_parser(
+        "swap",
+        help="inspect / steer the model zoo (daily use: none -- requesting a zoo model loads it automatically)",
+    )
+    swap_sub = p_swap.add_subparsers(dest="swap_cmd", required=True)
+    p_swap_status = swap_sub.add_parser("status", parents=[common], help="which zoo models are resident now")
+    p_swap_status.set_defaults(func=swap.run)
+    p_swap_unload = swap_sub.add_parser("unload", parents=[common], help="force-unload a model (or all with --yes)")
+    p_swap_unload.add_argument("model", nargs="?", help="zoo model alias (default: all)")
+    p_swap_unload.add_argument("--yes", action="store_true", help="required to unload ALL")
+    p_swap_unload.set_defaults(func=swap.run)
 
     p_model = sub.add_parser("model", help="model workload actions (the stack keeps running)")
     model_sub = p_model.add_subparsers(dest="model_cmd", required=True)

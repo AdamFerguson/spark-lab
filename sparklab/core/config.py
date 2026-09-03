@@ -174,6 +174,7 @@ class Config:
         self._view_base = _base
         self._active_alias, self._active_model = self._select_active()
         self._validate_recipe_spans()
+        self._validate_swap()
 
     # -- active-model selection ---------------------------------------------
     def _validate_recipe_spans(self) -> None:
@@ -230,6 +231,181 @@ class Config:
     def view_host(self) -> Optional[str]:
         """The host this config is a view for (None for the base/legacy config)."""
         return self._view_host
+
+    # -- model swapping (zoo / llama-swap, ADR-0010) --------------------------
+    #
+    # A swap-enabled model is an INACTIVE model: llama-swap (a per-host
+    # daemon) owns its engine lifecycle through sparkrun (`run --ensure` /
+    # `stop`), triggered by gateway requests. spark-lab converges the node-
+    # side recipes + the llama-swap config; it never launches or stops swap
+    # models through the normal converge path.
+    SWAP_TTL = {"small": 1800, "mid": 7200, "large": 0, "pinned": 0}
+
+    def swap(self) -> Dict[str, Any]:
+        return self.data.get("swap") or {}
+
+    def swap_enabled(self) -> bool:
+        return bool(self.swap().get("enabled"))
+
+    def swap_listen(self) -> str:
+        return str(self.swap().get("listen", "0.0.0.0:9292"))
+
+    def swap_port(self) -> int:
+        return int(self.swap_listen().rsplit(":", 1)[-1])
+
+    def _swap_defs(self) -> Dict[str, Any]:
+        """swap.enabled model blocks (cluster-wide)."""
+        out: Dict[str, Any] = {}
+        for a, m in (self.data.get("models") or {}).items():
+            sw = (m or {}).get("swap") or {}
+            if sw.get("enabled"):
+                out[a] = m or {}
+        return out
+
+    def swap_aliases(self) -> List[str]:
+        """Swap-model aliases placed on THIS view's host."""
+        if not self.swap_enabled():
+            return []
+        return [a for a in self._swap_defs() if self._view_host in self.model_host_list(a)]
+
+    def swap_for_host(self) -> bool:
+        return bool(self.swap_enabled() and self.swap_aliases())
+
+    def swap_ttl(self, alias: str, mdef: Dict[str, Any]) -> int:
+        sw = mdef.get("swap") or {}
+        if sw.get("ttl") is not None:
+            return int(sw["ttl"])
+        return self.SWAP_TTL.get(str(sw.get("class", "mid")), 7200)
+
+    def swap_served_id(self, mdef: Dict[str, Any]) -> str:
+        """The id the ENGINE serves (recipe defaults.served_model_name, else
+        the HF id) -- what llama-swap rewrites gateway requests to."""
+        return str((mdef.get("params") or {}).get("served_model_name") or mdef.get("hf_model") or "")
+
+    def swap_gateway_name(self, alias: str, mdef: Dict[str, Any]) -> str:
+        """The public gateway name clients ask for (= llama-swap model id)."""
+        return str(((mdef.get("litellm") or {}).get("model_name")) or alias)
+
+    def swap_gateway_entries(self) -> List[Dict[str, Any]]:
+        """Gateway model_list entries for the zoo: api_base is llama-swap
+        (localhost on the zoo's host, the host's address elsewhere), never an
+        engine port. Entries render into litellm/extra_models.yaml."""
+        if not self.swap_enabled():
+            return []
+        base = self._view_base if self._view_base is not None else self
+        out: List[Dict[str, Any]] = []
+        for alias, defs_all in base._swap_defs().items():
+            mdef = (self.data.get("models") or {}).get(alias) or defs_all
+            run_hosts = base.model_host_list(alias)
+            if not run_hosts:
+                continue
+            lit = mdef.get("litellm") or {}
+            name = self.swap_gateway_name(alias, mdef)
+            served = self.swap_served_id(mdef) or name
+            if self._view_host == run_hosts[0]:
+                host = self.litellm.get("model_api_base_host", "host.docker.internal")
+            else:
+                spec = base.select_hosts([run_hosts[0]])[0]
+                host = spec.ip or spec.ssh_host or spec.name
+            readiness = int(mdef.get("readiness_seconds", 600))
+            info = lit.get("model_info") or {}
+            entry: Dict[str, Any] = {
+                "model_name": name,
+                "litellm_params": {
+                    "model": f"custom_openai/{served}",
+                    "api_base": f"http://{host}:{self.swap_port()}/v1",
+                    "api_key": "not-needed",
+                    # A cold zoo load blocks the first request: size the
+                    # deployment timeout to the model's readiness bound.
+                    "timeout": readiness + 300,
+                },
+                "model_info": {"id": served},
+            }
+            for k in (
+                "supports_vision",
+                "supports_reasoning",
+                "max_input_tokens",
+                "max_output_tokens",
+                "input_cost_per_token",
+                "output_cost_per_token",
+                "cache_read_input_token_cost",
+            ):
+                if k in info:
+                    entry["model_info"][k] = info[k]
+            out.append(entry)
+        return out
+
+    def _validate_swap(self) -> None:
+        """Cluster-level zoo sanity (base config only, load-time): inactive
+        single-node recipe-referencing models, one host each, control-plane
+        host, unique engine ports vs every co-resident model."""
+        if self._view_host is not None:
+            return
+        defs = self._swap_defs()
+        if not self.swap_enabled():
+            if defs:
+                raise ValueError(
+                    "model(s) declare swap.enabled but top-level swap.enabled is "
+                    "false -- set swap.enabled: true to activate the zoo"
+                )
+            return
+        try:
+            port = self.swap_port()
+        except (ValueError, IndexError):
+            raise ValueError(f"swap.listen must be host:port (got {self.swap_listen()!r})")
+        if port == int((self.litellm or {}).get("port", 4000)):
+            raise ValueError("swap.listen port must differ from the gateway port")
+        host_names = {s.name for s in self.host_specs}
+        used: Dict[Any, str] = {}
+        for alias, mdef in defs.items():
+            if mdef.get("active"):
+                raise ValueError(
+                    f"swap model '{alias}' must be active: false -- llama-swap owns "
+                    "its lifecycle (request it through the gateway)"
+                )
+            hosts = self.model_host_list(alias)
+            unknown = [h for h in hosts if h not in host_names]
+            if unknown:
+                raise ValueError(f"swap model '{alias}' hosts: unknown host(s) {unknown}")
+            if len(hosts) != 1:
+                raise ValueError(
+                    f"swap model '{alias}' must be placed on exactly one host (hosts: [<swap-host>]) -- got {hosts}"
+                )
+            if int(mdef.get("min_nodes", 1) or 1) > 1:
+                raise ValueError(
+                    f"swap model '{alias}' spans {mdef.get('min_nodes')} hosts -- "
+                    "the zoo is single-node per model (spanning models stay on the "
+                    "managed converge path, ADR-0010)"
+                )
+            if "recipe" not in mdef:
+                raise ValueError(f"swap model '{alias}' must reference a recipe (recipe: <name>)")
+            sw = mdef.get("swap") or {}
+            if sw.get("class") is not None and sw.get("class") not in self.SWAP_TTL:
+                raise ValueError(
+                    f"swap model '{alias}' swap.class must be one of {sorted(self.SWAP_TTL)} (or set swap.ttl seconds)"
+                )
+            host = hosts[0]
+            if not self.view_for(host).control_plane_enabled():
+                raise ValueError(
+                    f"swap model '{alias}' host '{host}' must run the control plane "
+                    "(the gateway reaches llama-swap on that host)"
+                )
+            eport = int(mdef.get("port", 30000))
+            key = (host, eport)
+            if key in used:
+                raise ValueError(
+                    f"engine port collision on '{host}': swap models '{used[key]}' and '{alias}' both bind :{eport}"
+                )
+            used[key] = alias
+            for other, om in (self.data.get("models") or {}).items():
+                om = om or {}
+                if other == alias or not om.get("active"):
+                    continue
+                if host in self.model_host_list(other) and int(om.get("port", 30000)) == eport:
+                    raise ValueError(
+                        f"engine port collision on '{host}': active model '{other}' and "
+                        f"swap model '{alias}' both bind :{eport}"
+                    )
 
     # -- v3 monitoring roles (ADR-0008 addendum) ----------------------------
     def monitoring_role(self) -> str:
@@ -389,6 +565,25 @@ class Config:
                     )
                 else:
                     seen[name] = str(entry["alias"])
+            # The final model_list also carries the zoo (llama-swap) entries
+            # and any hand-written extra_models -- same duplicate-name rule.
+            for entry in view.swap_gateway_entries():
+                name = str(entry["model_name"])
+                if name in seen:
+                    problems.append(
+                        f"gateway on '{spec.name}': '{seen[name]}' and swap model "
+                        f"'{name}' would both be served under the same name"
+                    )
+                else:
+                    seen[name] = "swap"
+            for m in view.litellm.get("extra_models") or []:
+                name = str((m or {}).get("model_name") or "")
+                if name and name in seen:
+                    problems.append(
+                        f"gateway on '{spec.name}': '{seen[name]}' and an extra_models entry both serve '{name}'"
+                    )
+                elif name:
+                    seen[name] = "extra_models"
         return problems
 
     def remote_scrape_targets(self) -> List[Dict[str, Any]]:

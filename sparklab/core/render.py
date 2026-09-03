@@ -54,10 +54,11 @@ def target_mapping(cfg: config_mod.Config) -> List[Tuple[str, str]]:
             ("litellm_model_config.yaml.j2", "litellm/model_config.yaml"),
             ("litellm.env.j2", "litellm/.env"),
         ]
-        # Externally-run models (config.yaml `litellm.extra_models`): a second
-        # included model_list the gateway serves but spark-lab never launches.
-        # Only rendered when declared, so the `include:` entry stays conditional.
-        if cfg.litellm.get("extra_models"):
+        # Externally-run models (config.yaml `litellm.extra_models`) AND the
+        # generated zoo (llama-swap) entries: a second included model_list the
+        # gateway serves but spark-lab never launches. Only rendered when there
+        # is at least one, so the `include:` entry stays conditional.
+        if cfg.litellm.get("extra_models") or cfg.swap_gateway_entries():
             entries.append(("litellm_extra_models.yaml.j2", "litellm/extra_models.yaml"))
     if role == "full":
         # Central observability stack: prometheus config + the grafana
@@ -83,6 +84,15 @@ def target_mapping(cfg: config_mod.Config) -> List[Tuple[str, str]]:
     # config/host view (a v3 host may serve no model at all -- control plane only).
     if recipe:
         entries.insert(0, ("sparkrun_recipe.yaml.j2", f"sparkrun/recipes/{recipe}.yaml"))
+    # Zoo (ADR-0010): every swap model placed on this host gets its node-side
+    # recipe converged (llama-swap launches BY PATH) plus the llama-swap model
+    # config and its systemd user unit (installed by `spark-lab zoo prepare`).
+    # No layout pin: single-node, launched with --hosts (scheduler placement).
+    for alias in cfg.swap_aliases():
+        entries.append(("sparkrun_recipe.yaml.j2", f"sparkrun/recipes/{alias}.yaml"))
+    if cfg.swap_aliases():
+        entries.append(("llama_swap_config.yaml.j2", "llama-swap/config.yaml"))
+        entries.append(("llama_swap_service.j2", "llama-swap/llama-swap.service"))
     return entries
 
 
@@ -122,9 +132,71 @@ def _env_lines(model_env: Dict[str, Any], hf_token: str) -> List[str]:
     return lines
 
 
-def build_context(cfg: config_mod.Config) -> dict:
-    """Assemble the flat context the templates read from."""
-    model, litellm = cfg.model, cfg.litellm
+def _swap_ctx(cfg: config_mod.Config) -> dict:
+    """llama-swap render context (ADR-0010): per-model cmd/cmdStop + ttl +
+    proxy, plus the systemd user-unit ExecStart.
+
+    cmd/cmdStop reference the node recipe by path with the ``{install_dir}``
+    placeholder (expanded at write time, same seam as recipes) and run through
+    ``bash -lc`` so the user daemon finds sparkrun on the login PATH. The unit
+    uses systemd's ``%h`` for home (ExecStart does not expand ``~``).
+    """
+    from . import converge as converge_mod  # local import: no import cycle
+
+    out = {"swap_entries": [], "swap_healthcheck_timeout": 600, "swap_unit_execstart": ""}
+    aliases = cfg.swap_aliases()
+    if not aliases:
+        return out
+    spec = cfg.select_hosts([cfg.view_host])[0]
+    addr = spec.sparkrun_address
+    sparkrun = str(cfg.swap().get("sparkrun_bin") or "sparkrun")
+    entries: List[dict] = []
+    readiness_max = 600
+    for alias in aliases:
+        mdef = (cfg.data.get("models") or {}).get(alias) or {}
+        sw = mdef.get("swap") or {}
+        readiness = int(mdef.get("readiness_seconds", 600))
+        readiness_max = max(readiness_max, readiness)
+        recipe_path = "{install_dir}/sparkrun/recipes/" + alias + ".yaml"
+        cmds = converge_mod.swap_cmds(sparkrun, recipe_path, addr, cfg.swap_gateway_name(alias, mdef))
+        name = cfg.swap_gateway_name(alias, mdef)
+        entries.append(
+            {
+                "alias": alias,
+                "model_id": name,
+                "name": str(sw.get("display_name") or name),
+                "addr": addr,
+                "port": int(mdef.get("port", 30000)),
+                "served": cfg.swap_served_id(mdef) or name,
+                "ttl": cfg.swap_ttl(alias, mdef),
+                "unload_timeout": int(sw.get("unload_timeout", 60)),
+                "aliases": [str(a) for a in (sw.get("aliases") or [])],
+                "readiness": readiness,
+                **cmds,
+            }
+        )
+    out["swap_entries"] = entries
+    out["swap_healthcheck_timeout"] = readiness_max + 120  # cold-load headroom
+    raw = cfg.install_dir_raw.rstrip("/")
+    bin_raw = str(cfg.swap().get("bin") or (raw + "/bin/llama-swap"))
+    conf = raw + "/llama-swap/config.yaml"
+
+    def _sysd(p: str) -> str:
+        return "%h" + p[1:] if p.startswith("~") else p
+
+    out["swap_unit_execstart"] = f"{_sysd(bin_raw)} --config {_sysd(conf)} --listen {cfg.swap_listen()}"
+    return out
+
+
+def build_context(cfg: config_mod.Config, zoo_model: Dict[str, Any] | None = None) -> dict:
+    """Assemble the flat context the templates read from.
+
+    ``zoo_model`` renders the recipe template FOR A SWAP MODEL (the config's
+    active model is untouched: zoo models are inactive by validation, so their
+    node-side recipes render with this override -- no layout pin, single-node,
+    scheduler placement via --hosts at launch).
+    """
+    model, litellm = (zoo_model or cfg.model), cfg.litellm
     monitoring = cfg.monitoring
     db = cfg.db()
     redis = cfg.redis()
@@ -132,10 +204,19 @@ def build_context(cfg: config_mod.Config) -> dict:
     executor_final: Dict[str, object] = dict(EXECUTOR_CONFIG_BASE)
     executor_final.update(executor_overrides)
     hf_token = cfg.secret(model.get("hf_token_env"))
-    # Placement pin is a v3 (cluster) feature: v1/v2 renders stay byte-frozen
-    # (their single-node placement needs no pin, and legacy goldens must not
-    # move).
-    layout_placements = recipe_mod.layout_for_view(cfg)
+    # Placement pin is a v3 (cluster) feature for the ACTIVE model; zoo recipes
+    # carry no pin (launched with --hosts, scheduler placement -- the same
+    # form direct `sparkrun run` users get).
+    layout_placements = [] if zoo_model else recipe_mod.layout_for_view(cfg)
+    if zoo_model:
+        params = dict(model.get("params") or {})
+        mfs = (model.get("resources") or {}).get("mem_fraction_static")
+        if mfs is not None:
+            params["mem_fraction_static"] = mfs
+        model_image = str(model.get("image") or "")
+    else:
+        params = cfg.effective_params()
+        model_image = cfg.image_model()
     return {
         "cfg": cfg.data,
         "install": cfg.install,
@@ -156,18 +237,19 @@ def build_context(cfg: config_mod.Config) -> dict:
         # model runs on this host, remote (tailnet/LAN address) otherwise.
         "served_models": cfg.serving_entries(),
         # Externally-run models spark-lab registers in the gateway but never
-        # launches/stops -- verbatim litellm model_list entries from
-        # config.yaml's `litellm.extra_models`, rendered into
-        # litellm/extra_models.yaml and merged via the gateway `include:`.
-        "has_extra_models": bool(litellm.get("extra_models")),
+        # launches/stops: hand-written `litellm.extra_models` entries PLUS the
+        # generated zoo (llama-swap) entries -- merged into one
+        # litellm/extra_models.yaml (api_base = llama-swap, never an engine
+        # port; ADR-0010).
+        "has_extra_models": bool((litellm.get("extra_models") or []) or cfg.swap_gateway_entries()),
         "extra_models_yaml": (
             yaml_mod.safe_dump(
-                {"model_list": litellm.get("extra_models")},
+                {"model_list": (litellm.get("extra_models") or []) + cfg.swap_gateway_entries()},
                 sort_keys=False,
                 default_flow_style=False,
                 allow_unicode=True,
             ).rstrip()
-            if litellm.get("extra_models")
+            if (litellm.get("extra_models") or cfg.swap_gateway_entries())
             else ""
         ),
         "hf_model": model.get("hf_model", ""),
@@ -178,7 +260,7 @@ def build_context(cfg: config_mod.Config) -> dict:
         "params": cfg.effective_params(),
         "extra_flags": model.get("extra_flags", []),
         "flag_map": model.get("flag_map", {}),
-        "model_image": cfg.image_model(),
+        "model_image": cfg.image_model() if zoo_model is None else model_image,
         "hf_token": cfg.secret(model.get("hf_token_env")),
         # Optional per-model recipe overrides (empty by default -> byte-identical
         # renders): executor_config keys added to / replacing the base block,
@@ -233,6 +315,8 @@ def build_context(cfg: config_mod.Config) -> dict:
         "cloudflare_enabled": bool(cfg.cloudflare().get("enabled", False)),
         "cf_token": cfg.secret(cfg.cloudflare().get("tunnel_token_env")),
         "cf_hostname": cfg.cloudflare().get("public_hostname", ""),
+        # zoo / llama-swap (ADR-0010)
+        **_swap_ctx(cfg),
     }
 
 
@@ -280,6 +364,12 @@ def render(cfg: config_mod.Config, deploy_dir: Path) -> Dict[str, bytes]:
     jenv.filters["yaml_block"] = yaml_block
     jenv.filters["yaml_scalar"] = yaml_scalar
     ctx = build_context(cfg)
+    # Zoo node-side recipes render with a per-model context (the config's
+    # active model is untouched; zoo models are inactive by validation).
+    zoo_ctxs: Dict[str, dict] = {}
+    for alias in cfg.swap_aliases():
+        mdef = (cfg.data.get("models") or {}).get(alias) or {}
+        zoo_ctxs[f"sparkrun/recipes/{alias}.yaml"] = build_context(cfg, zoo_model=mdef)
     rendered: Dict[str, bytes] = {}
 
     for src_rel, tgt_rel in target_mapping(cfg):
@@ -289,7 +379,7 @@ def render(cfg: config_mod.Config, deploy_dir: Path) -> Dict[str, bytes]:
         dest = deploy_dir / tgt_rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         if src_rel.endswith(".j2"):
-            text = jenv.get_template(src_rel).render(**ctx)
+            text = jenv.get_template(src_rel).render(**(zoo_ctxs.get(tgt_rel, ctx)))
             dest.write_text(text)
             rendered[tgt_rel] = text.encode("utf-8")
         else:

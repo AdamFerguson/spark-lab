@@ -68,6 +68,13 @@ def up(args) -> int:
         print("[ERROR] `model up` runs against the cluster config, not a single-host view.", file=sys.stderr)
         return 1
     model = args.model
+    if model in cfg._swap_defs():
+        print(
+            f"'{model}' is a zoo (swap) model -- llama-swap owns its lifecycle "
+            "(request it through the gateway, or `spark-lab swap`).",
+            file=sys.stderr,
+        )
+        return 1
     models = cfg.data.get("models") or {}
     if model not in models:
         print(f"[ERROR] no such model '{model}' (models: {', '.join(models) or '(none)'}).", file=sys.stderr)
@@ -126,6 +133,13 @@ def down(args) -> int:
         print("[ERROR] `model down` runs against the cluster config, not a single-host view.", file=sys.stderr)
         return 1
     model = args.model
+    if model in cfg._swap_defs():
+        print(
+            f"'{model}' is a zoo (swap) model -- llama-swap owns its lifecycle "
+            "(request it through the gateway, or `spark-lab swap`).",
+            file=sys.stderr,
+        )
+        return 1
     models = cfg.data.get("models") or {}
     if model not in models:
         print(f"[ERROR] no such model '{model}' (models: {', '.join(models) or '(none)'}).", file=sys.stderr)

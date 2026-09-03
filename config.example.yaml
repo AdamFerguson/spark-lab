@@ -135,6 +135,38 @@ models:
     recipe: glm53-flash-exl3      # recipes/glm53-flash-exl3.yaml (min_nodes: 2)
     hf_token_env: HF_TOKEN
 
+  # ------------------------------------------------------------------------
+  # A ZOO model (ADR-0010): an INACTIVE model that llama-swap starts on demand
+  # when you request it through the gateway, and unloads after `swap.ttl`.
+  # Requires top-level `swap.enabled: true`, `active: false`, exactly one host
+  # (which must run the control plane), and a single-node recipe. Manage the
+  # daemon with `bin/spark-lab zoo prepare` / `swap status`. Swap models are
+  # launched by llama-swap (via sparkrun), never by `apply` -- so `model
+  # up/down` refuse them and their engine RAM is reclaimed automatically.
+  # ------------------------------------------------------------------------
+  # nemotron35-lightning:
+  #   active: false
+  #   hosts: [sol]
+  #   recipe: nemotron35-lightning
+  #   swap:
+  #     enabled: true
+  #     class: small          # small=30m, mid=2h, large/pinned=never (or set ttl)
+  #     # ttl: 3600           # explicit seconds override (beats class)
+  #     aliases: [q27]        # extra gateway names for this model
+
+# -----------------------------------------------------------------------------
+# Model swapping (zoo / llama-swap, ADR-0010). When enabled, the swap hosts
+# (any host with swap-enabled models) run a llama-swap daemon as a user
+# service; requesting a zoo model through the gateway loads it (idle models
+# unload). `bin/spark-lab zoo prepare` installs/starts the daemon; downloading
+# the llama-swap binary itself stays a deliberate, documented step (OPERATIONS).
+# -----------------------------------------------------------------------------
+swap:
+  enabled: false
+  # listen: "0.0.0.0:9292"           # where llama-swap (and the gateway) reach it
+  # bin: "~/AI/bin/llama-swap"       # node-side binary path (zoo prepare checks it)
+  # sparkrun_bin: sparkrun           # how the daemon's cmd/cmdStop invoke sparkrun
+
 # -----------------------------------------------------------------------------
 # Shared stack images (per-host overridable under hosts:). env
 # SPARKLAB_IMAGE_<KEY> still wins over everything (see core/config.py).

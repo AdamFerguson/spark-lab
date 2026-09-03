@@ -40,6 +40,17 @@ def _status_one(t) -> int:
         else:
             print(f"\n== gateway (:{gw['port']}) NOT reachable ==")
 
+    if inv.get("swap") is not None:
+        sw = inv["swap"]
+        print(f"\n== model zoo (llama-swap :{sw['port']}) ==")
+        if not sw["resident"] and not sw["reachable"]:
+            print("   daemon not reachable -- `spark-lab zoo prepare`?")
+        elif not sw["resident"]:
+            print("   resident: (none -- idle)")
+        else:
+            for m in sw["resident"]:
+                print(f"   resident: {m}")
+
     print("\n== tailscale ==")
     run_command(["tailscale", "status"], ok=True, runtime=runtime)
     if cfg.cloudflare().get("enabled", False):
