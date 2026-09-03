@@ -341,14 +341,12 @@ class Config:
         host, unique engine ports vs every co-resident model."""
         if self._view_host is not None:
             return
-        defs = self._swap_defs()
         if not self.swap_enabled():
-            if defs:
-                raise ValueError(
-                    "model(s) declare swap.enabled but top-level swap.enabled is "
-                    "false -- set swap.enabled: true to activate the zoo"
-                )
+            # Model-level swap declarations under a disabled zoo are inert
+            # (same convention as parked models): nothing renders, nothing is
+            # placed, nothing to validate.
             return
+        defs = self._swap_defs()
         try:
             port = self.swap_port()
         except (ValueError, IndexError):

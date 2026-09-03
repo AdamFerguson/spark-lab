@@ -160,17 +160,23 @@ def _swap_ctx(cfg: config_mod.Config) -> dict:
         recipe_path = "{install_dir}/sparkrun/recipes/" + alias + ".yaml"
         cmds = converge_mod.swap_cmds(sparkrun, recipe_path, addr, cfg.swap_gateway_name(alias, mdef))
         name = cfg.swap_gateway_name(alias, mdef)
+        served = cfg.swap_served_id(mdef) or name
         entries.append(
             {
                 "alias": alias,
-                "model_id": name,
+                # llama-swap's model id = the id litellm FORWARDS to it
+                # (custom_openai strips to the upstream model, i.e. the
+                # engine's served id) -- the gateway-facing public name lives
+                # on the litellm side; the alias below keeps direct calls with
+                # the public name routable too.
+                "model_id": served,
                 "name": str(sw.get("display_name") or name),
                 "addr": addr,
                 "port": int(mdef.get("port", 30000)),
-                "served": cfg.swap_served_id(mdef) or name,
+                "served": served,
                 "ttl": cfg.swap_ttl(alias, mdef),
                 "unload_timeout": int(sw.get("unload_timeout", 60)),
-                "aliases": [str(a) for a in (sw.get("aliases") or [])],
+                "aliases": sorted({str(a) for a in (sw.get("aliases") or [])} | ({name} if name != served else set())),
                 "readiness": readiness,
                 **cmds,
             }
@@ -257,7 +263,7 @@ def build_context(cfg: config_mod.Config, zoo_model: Dict[str, Any] | None = Non
         "min_nodes": model.get("min_nodes", 1),
         "runtime": model.get("runtime", "sglang"),
         "serve_command": str(model.get("serve_command") or "").rstrip(),
-        "params": cfg.effective_params(),
+        "params": params,  # zoo-aware (see zoo_model override)
         "extra_flags": model.get("extra_flags", []),
         "flag_map": model.get("flag_map", {}),
         "model_image": cfg.image_model() if zoo_model is None else model_image,

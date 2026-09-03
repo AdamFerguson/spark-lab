@@ -1,0 +1,37 @@
+name: qwen3-1.7b
+# Tiny zoo pilot model (ADR-0010 P6): fits alongside the resident flash-next
+# span in the ~8 GiB sol leaves free, so the swap cycle can be exercised
+# without earlyoom eyeing the production engine. Hard-capped on purpose --
+# do not "helpfully" raise the memory numbers while the span is resident.
+model: Qwen/Qwen3-1.7B
+runtime: vllm
+min_nodes: 1
+# Locally proven GB10 (SM121, arm64) vLLM build -- already pulled on both
+# nodes; zero new downloads, no stock-image sm_121 kernel gamble for a pilot.
+container: vllm/vllm-openai:qwen38-flash-next
+executor_config:
+  # The image bakes flash-next's wrapper entrypoint; sparkrun must run the
+  # plain vllm command instead (same treatment the glm53 vllm recipe uses).
+  entrypoint: ""
+metadata:
+  model_dtype: bf16
+  readiness_seconds: 420
+  litellm:
+    model_name: qwen-small
+    model_info:
+      supports_vision: false
+      supports_reasoning: false
+      max_input_tokens: 2048
+      max_output_tokens: 1024
+defaults:
+  host: 0.0.0.0
+  port: 30020
+  served_model_name: Qwen/Qwen3-1.7B
+  max_model_len: 2048
+  gpu_memory_utilization: 0.04
+command: |
+  vllm serve {model} --host {host} --port {port} \
+    --served-model-name {served_model_name} \
+    --max-model-len {max_model_len} \
+    --gpu-memory-utilization {gpu_memory_utilization} \
+    --enforce-eager

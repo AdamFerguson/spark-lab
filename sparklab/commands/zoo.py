@@ -30,7 +30,11 @@ def _prepare_one(t, linger: bool) -> int:
 
     home = runtime.home_path() if runtime is not None else None
     bin_raw = str(cfg.swap().get("bin") or (cfg.install_dir_raw.rstrip("/") + "/bin/llama-swap"))
-    rc = runtime.run(["sh", "-lc", f"test -x {shlex.quote(bin_raw)}"]).returncode
+    # `~` must expand: quote-protection would suppress it. Map to the node
+    # user's home explicitly (remote home when known, $HOME otherwise).
+    h = home or "$HOME"
+    tilde_home = h + bin_raw[1:] if bin_raw.startswith("~") else (h if bin_raw == "~" else bin_raw)
+    rc = runtime.run(["sh", "-lc", f'test -x "{tilde_home}"']).returncode
     if rc != 0:
         print(f"[ERROR] llama-swap binary not found on {t.name}: {bin_raw}", file=sys.stderr)
         print("        download the release binary there once (see OPERATIONS 'model zoo'),", file=sys.stderr)
@@ -49,11 +53,16 @@ def _prepare_one(t, linger: bool) -> int:
         return 1
 
     if linger:
-        r = runtime.run_sudo(["loginctl", "enable-linger"])
-        if r.returncode != 0:
+        try:
+            r = runtime.run_sudo(["loginctl", "enable-linger"])
+            linger_ok = r.returncode == 0
+        except Exception:
+            linger_ok = False
+        if not linger_ok:
             print(
-                "   note: enable-linger needs root -- the user manager may stop when no "
-                "session is active. Run `sudo loginctl enable-linger` on the node.",
+                "   note: lingering not enabled (needs sudo from a terminal). Without it "
+                "the user manager can stop at logout/boot -- run `sudo loginctl "
+                "enable-linger` on the node.",
                 file=sys.stderr,
             )
 

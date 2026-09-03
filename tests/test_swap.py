@@ -154,11 +154,16 @@ class TestSchema(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     config_mod.load(cp)
 
-    def test_swap_models_without_top_level_flag(self):
+    def test_swap_models_without_top_level_flag_are_inert(self):
         text = CLUSTER.replace("swap:\n  enabled: true", "swap:\n  enabled: false")
         d, cp = _fixture(cluster_text=text)
-        with self.assertRaises(ValueError):
-            config_mod.load(cp)
+        cfg = config_mod.load(cp)  # loads fine; zoo declarations stay parked
+        self.assertFalse(cfg.swap_enabled())
+        sol = cfg.view_for("sol")
+        self.assertEqual(sol.swap_aliases(), [])
+        rendered = render.render(sol, Path(tempfile.mkdtemp()))
+        self.assertNotIn("llama-swap/config.yaml", rendered)
+        self.assertNotIn("sparkrun/recipes/trial.yaml", rendered)
 
     def test_model_up_down_reject_zoo_models(self):
         args = types.SimpleNamespace(config=str(self.cp), hosts=None, model="trial", runtime=FakeRuntime(), yes=True)
@@ -197,7 +202,10 @@ class TestRender(unittest.TestCase):
         data = yaml.safe_load(text.replace("{install_dir}", "/opt/sparklab"))
         self.assertEqual(data["healthCheckTimeout"], 720)  # 600 default + 120 headroom
         self.assertEqual(data["globalTTL"], 0)
-        trial = data["models"]["trial"]
+        # llama-swap keys = the id litellm forwards (engine served id);
+        # the public/gateway name rides along as an alias.
+        trial = data["models"]["test-llm/trialmodel"]
+        self.assertEqual(trial["name"], "trial")
         self.assertEqual(trial["ttl"], 1800)
         self.assertEqual(trial["proxy"], "http://127.0.0.1:8100")  # port from its recipe defaults
         self.assertIn("No running workload matches intent", trial["cmdStop"])
@@ -205,8 +213,8 @@ class TestRender(unittest.TestCase):
         self.assertIn("/opt/sparklab/sparkrun/recipes/trial.yaml", trial["cmd"])
         self.assertIn("--hosts 10.0.4.27", trial["cmd"])
         self.assertEqual(trial["useModelName"], "test-llm/trialmodel")
-        self.assertEqual(trial["aliases"], ["try-it"])
-        self.assertEqual(data["models"]["bigzoo"]["ttl"], 0)
+        self.assertEqual(trial["aliases"], ["trial", "try-it"])  # public name joins swap aliases
+        self.assertEqual(data["models"]["test-llm/bigmodel"]["ttl"], 0)
 
     def test_zoo_node_recipe_has_no_layout_pin(self):
         cfg, sol = _view(self.cp, "sol")

@@ -106,6 +106,13 @@ the first request blocks while the engine loads (llama-swap streams a
 --yes` reclaims its RAM on demand; `unload --yes` clears the whole zoo.
 
 Notes:
+- **Resource safety (learned the hard way):** llama-swap can only reclaim
+  engines *it owns*. Hand-started residents (a manual flash-next span, for
+  instance) are NOT unloaded on swap — requesting a zoo model while one holds
+  the node can OOM both the zoo load and the resident engine (earlyoom
+  preferentially kills vllm/sglang). Only pilot the zoo on a quiet cluster,
+  or bring the big spans under spark-lab management first (ADR-0010 phase 3)
+  so llama-swap can unload them too.
 - The llama-swap port (default `9292`) is LAN/tailnet-only — never expose it;
   the gateway (port 4000) stays the only public/authenticated surface.
 - Zoo models are `active: false` — `apply` never launches them and

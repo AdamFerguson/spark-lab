@@ -162,7 +162,9 @@ models:
 # the llama-swap binary itself stays a deliberate, documented step (OPERATIONS).
 # -----------------------------------------------------------------------------
 swap:
-  enabled: false
+  enabled: false            # WARNING: only enable while no unmanaged giant engine holds
+                            # the node's memory (llama-swap cannot unload what it does not
+                            # own; see OPERATIONS 'Resource safety')
   # listen: "0.0.0.0:9292"           # where llama-swap (and the gateway) reach it
   # bin: "~/AI/bin/llama-swap"       # node-side binary path (zoo prepare checks it)
   # sparkrun_bin: sparkrun           # how the daemon's cmd/cmdStop invoke sparkrun
